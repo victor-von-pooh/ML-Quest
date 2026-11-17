@@ -193,6 +193,8 @@ def test_check_finds_inconsistencies() -> None:
     ]:
         exit_only = answer(exit_only, key, value)
     assert levels(exit_only)["error"] == []
+    without = answer(exit_only, "action.what", None)
+    assert "action.what" in levels(without)["error"]
     with pytest.raises(ValueError, match="渡すもの"):
         handoff(exit_only)
 

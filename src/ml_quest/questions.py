@@ -109,7 +109,8 @@ QUESTIONS: list[dict[str, Any]] = [
              "代わりに何をするか"},
     {"id": "ml.predict", "section": 5, "kind": "text", "required": True,
      "when": USES_ML, "title": "何を予測しますか",
-     "help": "文で. 例: 翌日の品ごとの売れる数"},
+     "help": "4 で決めることのために, 何が分かればよいか. 文で. 例: 作る量"
+             "を決めるために, 翌日の品ごとの売れる数"},
     {"id": "ml.row", "section": 5, "kind": "text", "required": True,
      "when": USES_ML, "title": "1 行 (1 件) は何ですか",
      "help": "予測の単位. 例: 店, 品, 日ごとの 1 行"},
@@ -127,8 +128,8 @@ QUESTIONS: list[dict[str, Any]] = [
     {"id": "ml.task", "section": 5, "kind": "choice", "required": True,
      "when": USES_ML, "choices": TASKS, "title": "どの種類の問題ですか",
      "help": "目的の値がクラスなら分類, 値なら回帰. 時刻の順に過去から先を"
-             "予測するなら時系列の予測. 量を決める行動なら回帰か時系列の予測, "
-             "対象を選ぶ, 振り分ける行動なら分類"},
+             "予測するなら時系列の予測. 4 で決めることが量なら回帰か時系列の"
+             "予測, 対象を選ぶか振り分けるなら分類"},
     {"id": "ml.target", "section": 5, "kind": "column", "required": True,
      "when": USES_ML, "title": "目的の列は",
      "help": "予測する値の列"},
@@ -148,7 +149,8 @@ QUESTIONS: list[dict[str, Any]] = [
     {"id": "ml.available_lag", "section": 5, "kind": "number",
      "required": True,
      "when": [USES_ML, {"id": "ml.task", "equals": "forecasting"}],
-     "title": "決める時点で, 目的の値は何期前の分まで分かっていますか",
+     "title": "決める時点 (4 の「いつ決めますか」) で, 目的の値は何期前の"
+              "分まで分かっていますか",
      "help": "過去の値の列に使ってよい, 最も新しい値. 例: 前の日の 17 時に"
              "翌日の量を決めるなら, 前の日の売れた数はまだ確定しないので 2 "
              "(2 日前まで). 前の日が締まってから決めるなら 1. 分からない値を"
