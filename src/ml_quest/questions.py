@@ -100,6 +100,12 @@ QUESTIONS: list[dict[str, Any]] = [
     {"id": "ml.row", "section": 4, "kind": "text", "required": True,
      "when": USES_ML, "title": "1 行 (1 件) は何ですか",
      "help": "予測の単位. 例: 店, 品, 日ごとの 1 行"},
+    {"id": "data.source", "section": 4, "kind": "source",
+     "required": False, "when": USES_ML, "title": "手元のデータは",
+     "help": "あれば入れると, 後の問いの答えの候補 (目的の列, 時刻の列, 漏れ"
+             "の疑いのある列など) と確かめが出る. データは写さず, 場所と読み"
+             "方だけを持つ. 課題と指標と分解はデータ無しで答える (データから"
+             "考え始めると, 何が予測できるかが先に立つため)"},
     {"id": "information.columns", "section": 4, "kind": "list",
      "required": True, "when": USES_ML, "title": "使えるデータの列は",
      "help": "データのファイルから読める (画面では「ファイルから読む」). "
@@ -168,6 +174,11 @@ QUESTIONS: list[dict[str, Any]] = [
      "required": False, "when": USES_ML,
      "title": "予測の時点では分からない列は",
      "help": "学習に使わない列 (当日の客数など. 予測のときに分からない)"},
+    {"id": "data.missing", "section": 6, "kind": "list", "required": False,
+     "when": USES_ML, "title": "要るのに手元に無いデータは",
+     "help": "課題を解くのに要るが, まだ集めていないデータ. 例: 天気予報の"
+             "記録. 要るデータが無いなら, まずデータを集めることが答えになる"
+             "こともある"},
     {"id": "information.forbidden", "section": 6, "kind": "columns",
      "required": False, "when": USES_ML,
      "title": "分かっていても使ってはいけない列は",
