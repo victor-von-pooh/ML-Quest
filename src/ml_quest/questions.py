@@ -193,6 +193,15 @@ QUESTIONS: list[dict[str, Any]] = [
              "当たり 1 件の価値, 行動 1 件の費用, 行動で防げる割合 (仮定), "
              "件数か費用の上限. 振り分ける: 見逃しの損と空振りの損, 回せる件数"
              ". 人が予測を見て決めるなら「意思決定しない」"},
+    {"id": "action.current", "section": 7, "kind": "baseline",
+     "required": False,
+     "when": [USES_ML, {"id": "action.decision.type",
+                        "in": ["quantity", "select", "triage"]}],
+     "title": "今のやり方をデータで書くと",
+     "help": "1 の「今のやり方」を, データの上の決まりにする. 量なら k 期前と同じ"
+             " (前の週の同じ曜日なら 7) か, 直前の k 期の平均か, 今のやり方の"
+             "値の列. 選ぶと振り分けなら, 行動したかの列. 書くと, データから"
+             "今のやり方の損 (指標の今の値の候補) が出る"},
     {"id": "action.basis", "section": 7, "kind": "text", "required": False,
      "when": USES_ML, "title": "損得の値の根拠は",
      "help": "例: 欠品は粗利 200 円, 廃棄は原価 150 円. 根拠の無い値では, "

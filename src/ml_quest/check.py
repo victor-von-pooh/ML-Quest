@@ -410,6 +410,15 @@ def check_decision(problem: dict) -> list[dict]:
             continue
         found += amount_range(field, value)
 
+    # 今のやり方の書き方と行動の型 (k 期前と平均は量だけ)
+    current = active_value(problem, "action.current") or {}
+    if current.get("type") in ("lag", "mean") and kind != "quantity":
+        found.append(finding(
+            "error", "action.current",
+            f"{DECISION_NAMES[kind]}の今のやり方は, 行動したかの列で書いて"
+            "ください (k 期前と平均は量を決める行動だけ)"
+        ))
+
     # 根拠の無い損得と, 仮定の効果
     if kind != "none" and not get_value(problem, "action.basis"):
         found.append(finding(

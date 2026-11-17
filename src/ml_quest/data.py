@@ -1,7 +1,9 @@
 import copy
 from pathlib import Path
+import shutil
 from typing import Any, Optional, Union
 
+import numpy as np
 import pandas as pd
 
 from ml_quest.check import finding
@@ -121,11 +123,116 @@ def source_of(data: Any) -> dict:
     return source
 
 
-def attach_data(problem: dict, path: Union[str, Path]) -> dict:
+def copy_data(location: Path, copy_to: Path) -> Path:
+    """
+    データのファイルかディレクトリを, 写し先のディレクトリに写す関数
+
+    Parameters
+    ----------
+    location: Path
+        元の場所
+    copy_to: Path
+        写し先のディレクトリ (絶対パス. 無ければ作る. 同じ名前は置き換える)
+
+    Returns
+    ----------
+    copied: Path
+        写した場所
+
+    Raises
+    ----------
+    ValueError
+        写し先が相対パスか, 元のディレクトリの中の場合
+    """
+    # 写し先の確かめ (相対パスと, 元のディレクトリの中は誤り)
+    if not copy_to.is_absolute():
+        raise ValueError(f"{copy_to} は絶対パスにしてください")
+    copied = copy_to / location.name
+    if copied.resolve() == location.resolve():
+        return copied
+    if location.is_dir() and copy_to.resolve().is_relative_to(
+        location.resolve()
+    ):
+        raise ValueError("写し先が元のディレクトリの中です")
+
+    # 大きさと更新の時刻が同じなら写さない. 一時の名前に写してから置き換え
+    # (途中で失敗しても前の写しが残る)
+    if copied.is_file() and location.is_file():
+        old, new = copied.stat(), location.stat()
+        if (old.st_size, int(old.st_mtime)) == (new.st_size,
+                                                 int(new.st_mtime)):
+            return copied
+    copy_to.mkdir(parents=True, exist_ok=True)
+    temporary = copy_to / f".{location.name}.copying"
+    remove_path(temporary)
+    if location.is_dir():
+        shutil.copytree(location, temporary)
+    else:
+        shutil.copy2(location, temporary)
+    remove_path(copied)
+    temporary.rename(copied)
+
+    return copied
+
+
+def remove_path(path: Path) -> None:
+    """
+    ファイル, ディレクトリ, シンボリックリンクを消す関数
+
+    Parameters
+    ----------
+    path: Path
+        消す場所 (無ければ何もしない)
+
+    Returns
+    ----------
+    None
+    """
+    # リンクは指す先を消さずにリンクだけを消去
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
+def interval_of(data: Any, time: Optional[str]) -> Optional[float]:
+    """
+    時刻の列の間隔 (秒) を, 最も多い差から求める関数
+
+    Parameters
+    ----------
+    data: Any
+        ML-EDA の Data
+    time: Optional[str]
+        時刻の列
+
+    Returns
+    ----------
+    seconds: Optional[float]
+        間隔 (時刻の列が無いか読めなければ None)
+    """
+    # 重ならない時刻の差の最頻値
+    if not time or time not in data.frame.columns:
+        return None
+    times = pd.to_datetime(data.frame[time], errors="coerce").dropna()
+    steps = pd.Series(np.sort(times.unique())).diff().dropna()
+    steps = steps[steps > pd.Timedelta(0)]
+    if steps.empty:
+        return None
+    seconds = float(steps.mode().iloc[0].total_seconds())
+
+    return seconds
+
+
+def attach_data(
+    problem: dict, path: Union[str, Path],
+    copy_to: Optional[Union[str, Path]] = None
+) -> dict:
     """
     手元のデータを読み, 場所と読み方と列の名前を入れる関数
 
-    元の問題の設定は変えない
+    元の問題の設定は変えない. 写し先を渡すとデータを写し, 写した場所を
+    データの場所にする
 
     Parameters
     ----------
@@ -133,33 +240,45 @@ def attach_data(problem: dict, path: Union[str, Path]) -> dict:
         問題の設定
     path: Union[str, Path]
         データの場所 (絶対パス)
+    copy_to: Optional[Union[str, Path]] = None
+        写し先のディレクトリ (絶対パス. None なら写さない)
 
     Returns
     ----------
     updated: dict
-        data (source, loader, options, size, modified) と
-        information.columns を入れた問題の設定
+        data (source, origin, loader, options, size, modified,
+        interval_seconds) と information.columns を入れた問題の設定
 
     Raises
     ----------
     ValueError
         相対パスの場合, ML-EDA が無い場合, 読めない場合
     """
-    # 絶対パスだけ (読めない誤りは ML-EDA の文のまま)
+    # 絶対パスだけ. 写してから 1 回だけ読み, 読めなければ写しを消す
     location = Path(path).expanduser()
-    if not location.is_absolute():
-        raise ValueError(f"{path} は絶対パスで書いてください")
+    target = Path(copy_to).expanduser() if copy_to is not None else None
+    if not location.is_absolute() or (target and not target.is_absolute()):
+        raise ValueError(f"{path} と写し先は絶対パスで書いてください")
+    copied = None
     try:
-        data, _ = read_data(location, None, {}, None)
-    except ValueError:
-        raise
+        if target is not None:
+            copied = copy_data(location, target)
+        data, _ = read_data(copied or location, None, {}, None)
     except Exception as error:
+        if copied is not None and copied != location:
+            remove_path(copied)
+        if isinstance(error, ValueError):
+            raise
         raise ValueError(f"データを読めません: {error}") from error
 
-    # 場所と読み方と列の名前
-    updated = answer(problem, "data.source", str(location))
+    # 場所と読み方と列の名前 (写したなら元の場所も. 時刻の間隔も)
+    updated = answer(problem, "data.source", str(copied or location))
+    set_value(updated, "data.origin",
+              str(location) if copied is not None else None)
     for key, value in source_of(data).items():
         set_value(updated, f"data.{key}", copy.deepcopy(value))
+    time = active_value(problem, "ml.time_column") or data.roles.get("time")
+    set_value(updated, "data.interval_seconds", interval_of(data, time))
     columns = [str(name) for name in data.frame.columns]
     updated = answer(updated, "information.columns", columns)
 
@@ -658,6 +777,251 @@ def horizon_findings(problem: dict, profiled: dict) -> list[dict]:
     return found
 
 
+def amount_values(frame: pd.DataFrame, value: Any) -> pd.Series:
+    """
+    損得の値を, 行ごとの数の並びにする関数
+
+    Parameters
+    ----------
+    frame: pd.DataFrame
+        データの表
+    value: Any
+        数か列の名前
+
+    Returns
+    ----------
+    values: pd.Series
+        行ごとの値 (列の値の欠損は欠損のまま)
+    """
+    # 列の名前なら列の値, 数なら全ての行に同じ値
+    if isinstance(value, str):
+        values = pd.to_numeric(frame[value], errors="coerce")
+    else:
+        values = pd.Series(float(value), index=frame.index)
+
+    return values
+
+
+def acted(column: pd.Series) -> pd.Series:
+    """
+    行動したかの列を真偽値にする関数
+
+    Parameters
+    ----------
+    column: pd.Series
+        列 (真偽値, 数, yes や true の文字)
+
+    Returns
+    ----------
+    flags: pd.Series
+        行動したか (読めない値と欠損は欠損)
+    """
+    # 数は 0 より大きいか, 文字は決まった言葉 (読めない文字は欠損)
+    if pd.api.types.is_bool_dtype(column):
+        flags = column.astype("boolean")
+        return flags
+    if pd.api.types.is_numeric_dtype(column):
+        flags = (column > 0).astype("boolean").where(column.notna())
+        return flags
+    text = column.astype(str).str.strip().str.lower()
+    yes = text.isin(["yes", "y", "true", "1", "はい", "済"])
+    no = text.isin(["no", "n", "false", "0", "いいえ", "未"])
+    flags = yes.astype("boolean").where(yes | no)
+
+    return flags
+
+
+def baseline_values(
+    frame: pd.DataFrame, current: dict, target: str, series: list[str],
+    time: str, interval: float
+) -> pd.Series:
+    """
+    今のやり方の決まりから, 行ごとの今のやり方の量を作る関数
+
+    Parameters
+    ----------
+    frame: pd.DataFrame
+        データの表
+    current: dict
+        今のやり方 (lag, mean, column)
+    target: str
+        目的の列
+    series: list[str]
+        系列を分ける列
+    time: str
+        時刻の列
+    interval: float
+        時刻の間隔 (秒. 1 期)
+
+    Returns
+    ----------
+    values: pd.Series
+        今のやり方の量 (前の期の値が無い行は欠損)
+    """
+    # 列はそのまま. k 期前と平均は ML-EDA の時刻でずらす手順と同じ扱い
+    # (休みで日が飛んでも暦の k 期前)
+    if current["type"] == "column":
+        values = pd.to_numeric(frame[current["column"]], errors="coerce")
+        return values
+    eda = import_eda()
+    k = int(current["periods"])
+    params = {"columns": [target], "by": series, "time": time,
+              "freq": f"{int(interval)}s", "match": "exact"}
+    if current["type"] == "lag":
+        params["lags"] = [k]
+        name = f"{target}_lag{k}"
+    else:
+        params.update(lags=[], windows=[k])
+        name = f"{target}_mean{k}"
+    shifted = eda.recipe.apply_lag(frame, params, {})
+    values = pd.to_numeric(shifted[name], errors="coerce")
+
+    return values
+
+
+def baseline_result(problem: dict, data: Any) -> Optional[dict]:
+    """
+    データの上で, 今のやり方の実際の損を問題の設定の損得で求める関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+    data: Any
+        ML-EDA の Data
+
+    Returns
+    ----------
+    result: Optional[dict]
+        total, rows, days, per_30_days, sentence か, 求められない理由
+        (reason だけ). 今のやり方を書いていなければ None
+    """
+    # 目的の列, 行動, 今のやり方が揃うこと
+    current = active_value(problem, "action.current")
+    if not current:
+        return None
+    decision = active_value(problem, "action.decision") or {}
+    target = active_value(problem, "ml.target")
+    frame = data.frame
+    time = active_value(problem, "ml.time_column") or data.roles.get("time")
+    interval = get_value(problem, "data.interval_seconds") or interval_of(
+        data, time
+    )
+    reason = None
+    if not target or target not in frame.columns:
+        reason = "目的の列がデータに無いので, 今のやり方の損は求めません"
+    elif decision.get("type") == "select":
+        reason = ("対象を選ぶ行動は, 行動した行の結果が行動の後の値なので, "
+                  "今のやり方の得は求めません (試して確かめる)")
+    elif current["type"] != "column" and (
+        not time or time not in frame.columns or not interval
+    ):
+        reason = ("k 期前と平均は時刻の列で数えるので, 時刻の列が要ります "
+                  "(無ければ今のやり方の値の列で書く)")
+    elif current["type"] == "column" and current.get("column") not in (
+        frame.columns
+    ):
+        reason = f"今のやり方の列 {current.get('column')} がデータにありません"
+    if reason:
+        return {"reason": reason}
+    try:
+        series = [name for name in active_value(problem, "ml.series_by")
+                  or [] if name in frame.columns]
+        values = rows_result(problem, frame, decision, current, target,
+                             series, time, interval)
+    except (KeyError, ValueError, TypeError) as error:
+        return {"reason": f"今のやり方の損を求められません: {error}"}
+    if values is None or values.empty:
+        return {"reason": "今のやり方の損を求められる行がありません"}
+
+    # 期間 (時刻の列があれば, 間隔 1 つ分を足した日数) と 30 日あたり
+    total = float(values.sum())
+    days = None
+    if time and time in frame.columns:
+        times = pd.to_datetime(frame.loc[values.index, time], errors="coerce")
+        if times.notna().any():
+            span = (times.max() - times.min()).total_seconds() + (
+                interval or 0
+            )
+            days = span / 86400
+    per_30 = total / days * 30 if days is not None and days >= 1 else None
+    period = f"{days:,.0f} 日で" if days is not None else "データの全てで"
+    sentence = (f"今のやり方の損は, {period} {total:,.0f}"
+                + (f" (30 日あたり {per_30:,.0f})" if per_30 is not None
+                   else "")
+                + f". {len(values):,} 行で求めた")
+    result = {"total": total, "rows": int(len(values)), "days": days,
+              "per_30_days": per_30, "sentence": sentence}
+
+    return result
+
+
+def rows_result(
+    problem: dict, frame: pd.DataFrame, decision: dict, current: dict,
+    target: str, series: list[str], time: Optional[str],
+    interval: Optional[float]
+) -> Optional[pd.Series]:
+    """
+    行ごとの今のやり方の損 (量と振り分け) を求める関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+    frame: pd.DataFrame
+        データの表
+    decision: dict
+        意思決定の型と損得
+    current: dict
+        今のやり方
+    target: str
+        目的の列
+    series: list[str]
+        系列を分ける列
+    time: Optional[str]
+        時刻の列
+    interval: Optional[float]
+        時刻の間隔 (秒)
+
+    Returns
+    ----------
+    values: Optional[pd.Series]
+        求められた行の損 (損得の値か今のやり方が欠けた行は除く)
+    """
+    # 量: 足りない損と余る損
+    kind = decision["type"]
+    y = pd.to_numeric(frame[target], errors="coerce")
+    if kind == "quantity":
+        placed = baseline_values(frame, current, target, series,
+                                 str(time), float(interval or 0))
+        under = amount_values(frame, decision["under_cost"])
+        over = amount_values(frame, decision["over_cost"])
+        keep = placed.notna() & y.notna() & under.notna() & over.notna()
+        loss = under * np.maximum(y - placed, 0) + over * np.maximum(
+            placed - y, 0
+        )
+        values = loss[keep]
+        return values
+
+    # 振り分け: 回したかの列と, 当たりか (読めない値は除く)
+    positive = active_value(problem, "ml.positive")
+    if kind != "triage" or positive is None:
+        return None
+    flags = acted(frame[current["column"]])
+    hit = frame[target].map(label_text) == label_text(
+        number_or_text(str(positive))
+    )
+    miss = amount_values(frame, decision["miss_cost"])
+    alarm = amount_values(frame, decision["false_alarm_cost"])
+    keep = (flags.notna() & frame[target].notna() & miss.notna()
+            & alarm.notna()).astype(bool)
+    flagged = flags.fillna(False).astype(bool)
+    loss = miss * (~flagged & hit) + alarm * (flagged & ~hit)
+    values = loss[keep]
+
+    return values
+
+
 def inspect_data(problem: dict) -> Optional[dict]:
     """
     入れたデータを読み直して分析し, 概要, 答えの候補, 確かめを返す関数
@@ -706,10 +1070,30 @@ def inspect_data(problem: dict) -> Optional[dict]:
         "interval_seconds": series.get("interval_seconds"),
     }
     suggestions = suggestions_of(problem, profiled, data)
+    findings = data_findings(problem, profiled, data, note, suggestions)
+
+    # 今のやり方の損 (指標の単位がお金か, まだ書いていなければ, 指標の
+    # 今の値の候補にも)
+    baseline = baseline_result(problem, data)
+    if baseline is not None and "reason" in baseline:
+        findings.append(finding("info", "action.current",
+                                baseline["reason"]))
+    elif baseline is not None:
+        findings.append(finding("info", "action.current",
+                                baseline["sentence"]))
+        unit = str(get_value(problem, "issue.kpi.unit") or "")
+        if not unit or "円" in unit:
+            monthly = baseline["per_30_days"] is not None
+            value = baseline["per_30_days"] if monthly else baseline["total"]
+            suggestions.append(suggestion(
+                "issue.kpi.current", [f"{value:.0f}"],
+                "今のやり方の損をデータで求めた値 ("
+                + ("30 日あたり" if monthly else "データの全て")
+                + ". 指標が同じ定義で, 単位が合う場合に)"
+            ))
     result = {
         "overview": overview, "suggestions": suggestions,
-        "findings": data_findings(problem, profiled, data, note,
-                                  suggestions),
+        "findings": findings, "baseline": baseline,
     }
 
     return result
