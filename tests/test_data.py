@@ -114,6 +114,9 @@ def test_attach_and_inspect(tmp_path: Path) -> None:
     by_id = {f["id"]: f for f in found["findings"]}
     assert "customers" in by_id["information.unknown"]["message"]
     assert "期先までの予測" in by_id["ml.horizon"]["message"]
+    decided = answer(problem, "information.unknown", ["customers"])
+    assert not any(f["id"] == "information.unknown"
+                   for f in inspect_data(decided)["findings"])
     assert found["overview"]["kind"] == "timeseries"
     assert handoff_source(problem) == str(path)
 
@@ -290,9 +293,12 @@ def test_series_by_two_columns(tmp_path: Path) -> None:
     pd.DataFrame(rows, columns=["date", "store", "item", "sales"]).to_csv(
         path, index=False
     )
-    problem = answer(new_problem("総菜"), "ml.use", True)
+    problem = attach_data(answer(new_problem("総菜"), "ml.use", True), path)
+    assert ids_of(inspect_data(problem)["suggestions"])["ml.series_by"] == [
+        "store", "item"
+    ]
     problem = answer(problem, "ml.time_column", "date")
-    problem = attach_data(answer(problem, "ml.task", "forecasting"), path)
+    problem = answer(problem, "ml.task", "forecasting")
     found = inspect_data(problem)
     assert ids_of(found["suggestions"])["ml.series_by"] == ["store", "item"]
     assert not any("間隔が一定ではありません" in f["message"]
