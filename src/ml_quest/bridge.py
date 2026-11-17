@@ -184,8 +184,18 @@ def apply_recipe(problem: dict, recipe: dict) -> dict:
         changes.append(f"目的の列を {target} に書き戻した ({old_target} は"
                        "使ってよいかを決め直してください)")
 
-    # 列の使い方と過去の値と分割の食い違い
+    # 列の使い方と過去の値と分割の食い違い. 前の目的の列をレシピで使うなら,
+    # 予測の時点で分かるかを選ぶ問い (黙って特徴にしない)
     conflicts, choices = recipe_conflicts(updated, recipe)
+    dropped, _ = recipe_columns(recipe)
+    if target and old_target and target != old_target and (
+        old_target not in dropped
+    ):
+        choices.append({
+            "column": old_target, "options": ["known", "drop"],
+            "message": f"{old_target} は前の目的の列で, レシピで使っています. "
+                       "予測の時点で分かる列にしますか, レシピで落としますか",
+        })
     set_value(updated, "data.recipe", copy.deepcopy(recipe))
     result = {"problem": updated, "changes": changes,
               "conflicts": conflicts, "choices": choices}
@@ -209,9 +219,16 @@ def recipe_conflicts(problem: dict, recipe: dict) -> tuple[list, list]:
     result: tuple[list, list]
         食い違い (確かめの形) と, 選ぶ問い (列, 選択肢, 文)
     """
-    # 使ってはいけない列を使う (書き換えずに誤り)
+    # 目的の列を落とす手順と, 使ってはいけない列を使う (書き換えずに誤り)
     dropped, smallest = recipe_columns(recipe)
     conflicts = []
+    target = recipe.get("target")
+    if target and target in dropped:
+        conflicts.append(finding(
+            "error", "ml.target",
+            f"レシピが目的の列 {target} を落としています. 落とす手順から"
+            "外してください"
+        ))
     forbidden = [n for n in active_value(problem, "information.forbidden")
                  or [] if n not in dropped]
     if forbidden:
@@ -271,7 +288,8 @@ def resolve_choice(problem: dict, column: str, option: str) -> dict:
     updated: dict
         答えた後の問題の設定
     """
-    # 分かる列に移すか, 書き戻したレシピの落とす列に足す
+    # 分かる列に移すか, 書き戻したレシピの最後の落とす手順に足す (前の
+    # 手順がその列を使っても失敗しないように, 最後の手順でなければ足す)
     if option not in ("known", "drop"):
         raise ValueError("option は known か drop にしてください")
     updated = copy.deepcopy(problem)
@@ -285,12 +303,13 @@ def resolve_choice(problem: dict, column: str, option: str) -> dict:
         return updated
     recipe = copy.deepcopy(get_value(updated, "data.recipe") or {})
     steps = recipe.setdefault("steps", [])
-    drop = next((s for s in steps if s.get("op") == "drop_columns"), None)
-    if drop is None:
-        drop = {"op": "drop_columns", "columns": []}
-        steps.insert(0, drop)
-    if column not in drop["columns"]:
-        drop["columns"].append(column)
+    dropped, _ = recipe_columns(recipe)
+    if column not in dropped:
+        last = steps[-1] if steps else None
+        if last is None or last.get("op") != "drop_columns":
+            last = {"op": "drop_columns", "columns": []}
+            steps.append(last)
+        last["columns"] = [*(last.get("columns") or []), column]
     set_value(updated, "data.recipe", recipe)
 
     return updated
