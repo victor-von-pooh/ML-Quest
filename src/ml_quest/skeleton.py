@@ -622,11 +622,22 @@ def make_project(
         "train.py": training_script(problem, stages),
     }
 
-    # 既にあるファイルの確かめ (全てを確かめてから書く)
+    # 既にあるファイルと, ディレクトリを作れない場所の確かめ (全てを確かめ
+    # てから書く. 途中で止まって一部だけが残らないように)
     existing = [name for name in files if (path / name).exists()]
     if existing and not overwrite:
         raise ValueError(
             f"{', '.join(existing)} が既にあります (上書きするなら overwrite)"
+        )
+    blocked = sorted({
+        str(parent) for name in [*files, "models/x"]
+        for parent in [path, *(path / name).parents]
+        if parent.exists() and not parent.is_dir()
+    } | {str(path / name) for name in files if (path / name).is_dir()})
+    if blocked:
+        raise ValueError(
+            f"{', '.join(blocked)} がディレクトリかファイルとして邪魔をして"
+            "いるので書き出せません"
         )
     for relative, text in files.items():
         target = path / relative
