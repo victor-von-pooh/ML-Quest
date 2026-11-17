@@ -211,9 +211,9 @@ def test_recipe_round_trip(tmp_path: Path) -> None:
     moved = resolve_choice(result["problem"], "customers", "known")
     assert "customers" in get_value(moved, "information.known")
     dropped = resolve_choice(result["problem"], "customers", "drop")
-    assert recipe_from(dropped)["recipe"]["steps"][0]["columns"] == [
-        "customers"
-    ]
+    assert recipe_from(dropped)["recipe"]["steps"][-1] == {
+        "op": "drop_columns", "columns": ["customers"]
+    }
 
     # 書き戻したレシピは次の雛形になる (往復で同じ)
     assert recipe_from(result["problem"])["recipe"] == changed
@@ -230,6 +230,7 @@ def test_recipe_round_trip(tmp_path: Path) -> None:
         get_value(result["problem"], "information.unknown") or []
     )
     levels = {(f["id"], f["level"]) for f in result["conflicts"]}
+    assert [c["column"] for c in result["choices"]] == ["sales"]
     assert ("information.forbidden", "error") in levels
     assert ("ml.available_lag", "warning") in levels
     assert ("ml.task", "warning") in levels
@@ -446,3 +447,56 @@ def test_prune_keeps_other_files(tmp_path: Path) -> None:
     inside = attach_data(problem, other, copy_to=copies)
     assert get_value(inside, "data.source") == str(other.resolve())
     assert get_value(inside, "data.origin") is None
+
+
+def test_recipe_target_dropped() -> None:
+    """
+    目的の列を落とすレシピを誤りにし, 前の目的の列を落とすと選ぶと最後の
+    手順で落とすことを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 目的の列を客数に変え, 前の目的の列 (売れた数) の過去の値を使う
+    problem = example_problem("総菜の作る量")
+    recipe = {
+        "format_version": 1, "target": "customers", "task": "forecasting",
+        "steps": [
+            {"op": "drop_columns", "columns": ["customers"]},
+            {"op": "lag", "columns": ["sales"], "lags": [2]},
+        ],
+        "split": {"method": "time"},
+    }
+    result = apply_recipe(problem, recipe)
+    assert any(f["id"] == "ml.target" and f["level"] == "error"
+               for f in result["conflicts"])
+
+    # 前の目的の列を落とすと, 過去の値を作った後の最後の手順で落とす
+    recipe["steps"] = recipe["steps"][1:]
+    result = apply_recipe(problem, recipe)
+    assert [c["column"] for c in result["choices"]] == ["sales"]
+    dropped = resolve_choice(result["problem"], "sales", "drop")
+    steps = get_value(dropped, "data.recipe")["steps"]
+    assert steps[-1] == {"op": "drop_columns", "columns": ["sales"]}
+    again = resolve_choice(dropped, "sales", "drop")
+    assert get_value(again, "data.recipe")["steps"] == steps
+
+    # ワンホットなどの対象からは外し, 過去の値は残す
+    recipe["steps"] = [
+        {"op": "lag", "columns": ["sales"], "lags": [2]},
+        {"op": "one_hot", "columns": ["sales", "store"]},
+        {"op": "fill_missing", "column": "sales"},
+    ]
+    result = apply_recipe(problem, recipe)
+    steps = get_value(resolve_choice(result["problem"], "sales", "drop"),
+                      "data.recipe")["steps"]
+    assert steps == [
+        {"op": "lag", "columns": ["sales"], "lags": [2]},
+        {"op": "one_hot", "columns": ["store"]},
+        {"op": "drop_columns", "columns": ["sales"]},
+    ]

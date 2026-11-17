@@ -184,8 +184,20 @@ def apply_recipe(problem: dict, recipe: dict) -> dict:
         changes.append(f"目的の列を {target} に書き戻した ({old_target} は"
                        "使ってよいかを決め直してください)")
 
-    # 列の使い方と過去の値と分割の食い違い
+    # 列の使い方と過去の値と分割の食い違い. 前の目的の列をレシピで使うなら,
+    # 予測の時点で分かるかを選ぶ問い (黙って特徴にしない)
     conflicts, choices = recipe_conflicts(updated, recipe)
+    dropped, _ = recipe_columns(recipe)
+    if target and old_target and target != old_target and (
+        old_target not in dropped
+    ):
+        choices.append({
+            "column": old_target, "options": ["drop", "known"],
+            "message": f"{old_target} は前の目的の列で, レシピで使っています. "
+                       "予測したい値そのものは, ふつう予測の時点では分かり"
+                       "ません (過去の値は過去の値の手順で使えます). レシピ"
+                       "で落としますか, 予測の時点で分かる列にしますか",
+        })
     set_value(updated, "data.recipe", copy.deepcopy(recipe))
     result = {"problem": updated, "changes": changes,
               "conflicts": conflicts, "choices": choices}
@@ -209,9 +221,16 @@ def recipe_conflicts(problem: dict, recipe: dict) -> tuple[list, list]:
     result: tuple[list, list]
         食い違い (確かめの形) と, 選ぶ問い (列, 選択肢, 文)
     """
-    # 使ってはいけない列を使う (書き換えずに誤り)
+    # 目的の列を落とす手順と, 使ってはいけない列を使う (書き換えずに誤り)
     dropped, smallest = recipe_columns(recipe)
     conflicts = []
+    target = recipe.get("target")
+    if target and target in dropped:
+        conflicts.append(finding(
+            "error", "ml.target",
+            f"レシピが目的の列 {target} を落としています. 落とす手順から"
+            "外してください"
+        ))
     forbidden = [n for n in active_value(problem, "information.forbidden")
                  or [] if n not in dropped]
     if forbidden:
@@ -271,7 +290,9 @@ def resolve_choice(problem: dict, column: str, option: str) -> dict:
     updated: dict
         答えた後の問題の設定
     """
-    # 分かる列に移すか, 書き戻したレシピの落とす列に足す
+    # 分かる列に移すか, 書き戻したレシピから外す. 過去の値の手順はそのまま
+    # (過去の値は分かる), 他の手順 (ワンホットなど) の対象から外し, 最後の
+    # 落とす手順で元の列を落とす (前の手順が使っても失敗しないように)
     if option not in ("known", "drop"):
         raise ValueError("option は known か drop にしてください")
     updated = copy.deepcopy(problem)
@@ -284,13 +305,50 @@ def resolve_choice(problem: dict, column: str, option: str) -> dict:
                          known + ([column] if column not in known else []))
         return updated
     recipe = copy.deepcopy(get_value(updated, "data.recipe") or {})
-    steps = recipe.setdefault("steps", [])
-    drop = next((s for s in steps if s.get("op") == "drop_columns"), None)
-    if drop is None:
-        drop = {"op": "drop_columns", "columns": []}
-        steps.insert(0, drop)
-    if column not in drop["columns"]:
-        drop["columns"].append(column)
+    steps = without_column(recipe.setdefault("steps", []), column)
+    recipe["steps"] = steps
+    dropped, _ = recipe_columns(recipe)
+    if column not in dropped:
+        last = steps[-1] if steps else None
+        if last is None or last.get("op") != "drop_columns":
+            last = {"op": "drop_columns", "columns": []}
+            steps.append(last)
+        last["columns"] = [*(last.get("columns") or []), column]
     set_value(updated, "data.recipe", recipe)
 
     return updated
+
+
+def without_column(steps: list, column: str) -> list:
+    """
+    過去の値と落とす手順の他の手順の対象から, 列を外す関数
+
+    Parameters
+    ----------
+    steps: list
+        レシピの手順
+    column: str
+        外す列
+
+    Returns
+    ----------
+    kept: list
+        外した後の手順 (対象が無くなった手順は除く)
+    """
+    # columns を持つ手順は列を外し, 1 つの列 (column) の手順は除く
+    kept = []
+    for step in steps:
+        if step.get("op") in ("lag", "drop_columns"):
+            kept.append(step)
+            continue
+        if step.get("column") == column:
+            continue
+        names = step.get("columns")
+        if isinstance(names, list) and column in names:
+            rest = [name for name in names if name != column]
+            if not rest:
+                continue
+            step = {**step, "columns": rest}
+        kept.append(step)
+
+    return kept
