@@ -531,3 +531,29 @@ def test_scalar_shapes_and_blocked_paths(tmp_path: Path) -> None:
         make_project(example_problem("総菜の作る量"), tmp_path,
                      overwrite=True)
     assert not (tmp_path / "README.md").exists()
+
+
+def test_available_lag() -> None:
+    """
+    決める時点で分かる目的の値の問いが, 時系列の予測だけで要り, 受け渡しの
+    いちばん小さいずらし幅になることを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 見本は前の日の 17 時に決めるので 2
+    problem = example_problem("総菜の作る量")
+    assert handoff(problem)["data"]["min_lag"] == 2
+    missing = answer(problem, "ml.available_lag", None)
+    assert "ml.available_lag" in levels(missing)["error"]
+    zero = answer(problem, "ml.available_lag", 0)
+    assert "ml.available_lag" in levels(zero)["error"]
+
+    # 回帰では問わず, 受け渡しにも出さない
+    regression = answer(problem, "ml.task", "regression")
+    assert handoff(regression)["data"]["min_lag"] is None

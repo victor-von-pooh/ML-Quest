@@ -550,6 +550,13 @@ def project_readme(problem: dict, stages: dict) -> str:
             "指定する. 系列を分ける列が複数あると推定できないため)"
             + (f", 系列を分ける列: {series}" if series else "")
         )
+    if data.get("min_lag"):
+        lines.append(
+            f"    - 過去の値の列は {data['min_lag']} 期前より古い値だけで作る "
+            f"(ずらし幅は {data['min_lag']} 以上. 移動平均も, 決める時点で"
+            "分からない期を含めない). 決める時点で分からない値で学習すると, "
+            "学習のときだけ当たる"
+        )
     if data["known"]:
         lines.append("    - 学習に使ってよい列 (予測の時点で分かる列): "
                      + ", ".join(f"`{name}`" for name in data["known"]))

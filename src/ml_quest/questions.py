@@ -125,6 +125,14 @@ QUESTIONS: list[dict[str, Any]] = [
      "when": [USES_ML, {"id": "ml.task", "equals": "forecasting"}],
      "title": "系列を分ける列は (複数の系列が並ぶ場合)",
      "help": "例: 店, 品. 過去の値は系列ごとにずらす"},
+    {"id": "ml.available_lag", "section": 4, "kind": "number",
+     "required": True,
+     "when": [USES_ML, {"id": "ml.task", "equals": "forecasting"}],
+     "title": "決める時点で, 目的の値は何期前の分まで分かっていますか",
+     "help": "過去の値の列に使ってよい, 最も新しい値. 例: 前の日の 17 時に"
+             "翌日の量を決めるなら, 前の日の売れた数はまだ確定しないので 2 "
+             "(2 日前まで). 前の日が締まってから決めるなら 1. 分からない値を"
+             "学習に使うと, 学習のときだけ当たり, 使うときに外れる"},
     {"id": "ml.horizon", "section": 4, "kind": "number",
      "required": True,
      "when": [USES_ML, {"id": "ml.task", "equals": "forecasting"}],

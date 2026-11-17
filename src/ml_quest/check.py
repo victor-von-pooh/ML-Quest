@@ -265,14 +265,16 @@ def check_task(problem: dict) -> list[dict]:
         found.append(finding("error", "ml.series_by",
                              "系列を分ける列に目的の列が入っています"))
 
-    # 何期先まで (1 以上の整数)
-    horizon = active_value(problem, "ml.horizon")
-    if horizon is not None and not (
-        isinstance(horizon, int) and not isinstance(horizon, bool)
-        and horizon >= 1
-    ):
-        found.append(finding("error", "ml.horizon",
-                             "何期先までは 1 以上の整数にしてください"))
+    # 何期先までと, 何期前まで分かるか (1 以上の整数)
+    for key, name in (("ml.horizon", "何期先まで"),
+                      ("ml.available_lag", "何期前の分まで分かるか")):
+        value = active_value(problem, key)
+        if value is not None and not (
+            isinstance(value, int) and not isinstance(value, bool)
+            and value >= 1
+        ):
+            found.append(finding("error", key,
+                                 f"{name}は 1 以上の整数にしてください"))
 
     return found
 
