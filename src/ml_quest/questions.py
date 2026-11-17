@@ -5,8 +5,8 @@ SECTIONS = {
     1: "課題",
     2: "解けたと言える指標",
     3: "課題の分解",
-    4: "機械学習の受け持ち",
-    5: "予測から行動へ",
+    4: "決めること",
+    5: "機械学習の受け持ち",
     6: "予測の時点で使える情報",
     7: "損得と制約",
     8: "学習で見る指標",
@@ -85,83 +85,87 @@ QUESTIONS: list[dict[str, Any]] = [
              "機械学習で手伝わない手も書く (比べるため). 例: 作る量が勘で"
              "決まる → 作る量を予測から決める (機械学習で手伝う)"},
 
-    # 4. 機械学習の受け持ち
-    {"id": "ml.use", "section": 4, "kind": "boolean", "required": True,
+    # 4. 決めること (機械学習を使うかに関わらず, 課題を解くために決めること)
+    {"id": "action.what", "section": 4, "kind": "text", "required": True,
+     "title": "課題を解くために, 何を決めますか",
+     "help": "行動. 予測は決めるために使うので, 何を予測するかより先に"
+             "決める. 例: 品ごとの作る量, 引き止めの連絡をする人"},
+    {"id": "action.who", "section": 4, "kind": "text", "required": True,
+     "title": "誰が決めますか",
+     "help": "例: 店長"},
+    {"id": "action.when", "section": 4, "kind": "text", "required": True,
+     "title": "いつ決めますか",
+     "help": "決める時点. 機械学習を使うなら予測の時点になり, 6 の節の"
+             "「予測の時点で分かる列」を決める. 例: 前の日の 17 時"},
+
+    # 5. 機械学習の受け持ち
+    {"id": "ml.use", "section": 5, "kind": "boolean", "required": True,
      "title": "機械学習を使いますか",
      "help": "分解した手のうち, 機械学習でしか手伝えないものがあるか. ルール"
              "や集計, 今のやり方の改善で足りるなら, 使わないで終えてよい"},
-    {"id": "ml.reason", "section": 4, "kind": "text", "required": True,
+    {"id": "ml.reason", "section": 5, "kind": "text", "required": True,
      "title": "そう決めた理由は",
      "help": "使う場合は, 今のやり方やルールで足りない理由. 使わない場合は, "
              "代わりに何をするか"},
-    {"id": "ml.predict", "section": 4, "kind": "text", "required": True,
+    {"id": "ml.predict", "section": 5, "kind": "text", "required": True,
      "when": USES_ML, "title": "何を予測しますか",
-     "help": "文で. 例: 翌日の品ごとの売れる数"},
-    {"id": "ml.row", "section": 4, "kind": "text", "required": True,
+     "help": "4 で決めることのために, 何が分かればよいか. 文で. 例: 作る量"
+             "を決めるために, 翌日の品ごとの売れる数"},
+    {"id": "ml.row", "section": 5, "kind": "text", "required": True,
      "when": USES_ML, "title": "1 行 (1 件) は何ですか",
      "help": "予測の単位. 例: 店, 品, 日ごとの 1 行"},
-    {"id": "data.source", "section": 4, "kind": "source",
+    {"id": "data.source", "section": 5, "kind": "source",
      "required": False, "when": USES_ML, "title": "手元のデータは",
      "help": "あれば入れると, 後の問いの答えの候補 (目的の列, 時刻の列, 漏れ"
-             "の疑いのある列など) と確かめが出る. データは写さず, 場所と読み"
-             "方だけを持つ. 課題と指標と分解はデータ無しで答える (データから"
-             "考え始めると, 何が予測できるかが先に立つため)"},
-    {"id": "information.columns", "section": 4, "kind": "list",
+             "の疑いのある列など) と確かめが出る. 画面ではデータを問題の"
+             "設定の置き場に写す (元のファイルは変えない). 課題, 指標, 分解, "
+             "決めることはデータ無しで答える (データから考え始めると, 何が"
+             "予測できるかが先に立つため)"},
+    {"id": "information.columns", "section": 5, "kind": "list",
      "required": True, "when": USES_ML, "title": "使えるデータの列は",
      "help": "データのファイルから読める (画面では「ファイルから読む」). "
              "後の問いで, この中から目的の列と使ってよい列を選ぶ"},
-    {"id": "ml.task", "section": 4, "kind": "choice", "required": True,
+    {"id": "ml.task", "section": 5, "kind": "choice", "required": True,
      "when": USES_ML, "choices": TASKS, "title": "どの種類の問題ですか",
      "help": "目的の値がクラスなら分類, 値なら回帰. 時刻の順に過去から先を"
-             "予測するなら時系列の予測. 量を決める行動なら回帰か時系列の予測, "
-             "対象を選ぶ, 振り分ける行動なら分類"},
-    {"id": "ml.target", "section": 4, "kind": "column", "required": True,
+             "予測するなら時系列の予測. 4 で決めることが量なら回帰か時系列の"
+             "予測, 対象を選ぶか振り分けるなら分類"},
+    {"id": "ml.target", "section": 5, "kind": "column", "required": True,
      "when": USES_ML, "title": "目的の列は",
      "help": "予測する値の列"},
-    {"id": "ml.positive", "section": 4, "kind": "text", "required": False,
+    {"id": "ml.positive", "section": 5, "kind": "text", "required": False,
      "when": [USES_ML, {"id": "ml.task", "equals": "classification"}],
      "title": "当たりのクラスは (2 クラスの分類で行動を決める場合)",
      "help": "行動の対象になるクラス. 例: 解約, 不良"},
-    {"id": "ml.time_column", "section": 4, "kind": "column",
+    {"id": "ml.time_column", "section": 5, "kind": "column",
      "required": True,
      "when": [USES_ML, {"id": "ml.task", "equals": "forecasting"}],
      "title": "時刻の列は", "help": "時刻の順に並べ, 分けるのに使う列"},
-    {"id": "ml.series_by", "section": 4, "kind": "columns",
+    {"id": "ml.series_by", "section": 5, "kind": "columns",
      "required": False,
      "when": [USES_ML, {"id": "ml.task", "equals": "forecasting"}],
      "title": "系列を分ける列は (複数の系列が並ぶ場合)",
      "help": "例: 店, 品. 過去の値は系列ごとにずらす"},
-    {"id": "ml.available_lag", "section": 4, "kind": "number",
+    {"id": "ml.available_lag", "section": 5, "kind": "number",
      "required": True,
      "when": [USES_ML, {"id": "ml.task", "equals": "forecasting"}],
-     "title": "決める時点で, 目的の値は何期前の分まで分かっていますか",
+     "title": "決める時点 (4 の「いつ決めますか」) で, 目的の値は何期前の"
+              "分まで分かっていますか",
      "help": "過去の値の列に使ってよい, 最も新しい値. 例: 前の日の 17 時に"
              "翌日の量を決めるなら, 前の日の売れた数はまだ確定しないので 2 "
              "(2 日前まで). 前の日が締まってから決めるなら 1. 分からない値を"
              "学習に使うと, 学習のときだけ当たり, 使うときに外れる"},
-    {"id": "ml.horizon", "section": 4, "kind": "number",
+    {"id": "ml.horizon", "section": 5, "kind": "number",
      "required": True,
      "when": [USES_ML, {"id": "ml.task", "equals": "forecasting"}],
      "title": "何期先まで予測しますか",
      "help": "時刻の列の 1 つ分を 1 期として. 例: 翌日だけなら 1, 1 週間分を"
              "まとめて決めるなら 7. 先ほど外れやすく, 予測の時点で分かる列も"
              "変わる"},
-    {"id": "ml.baseline", "section": 4, "kind": "text", "required": True,
+    {"id": "ml.baseline", "section": 5, "kind": "text", "required": True,
      "when": USES_ML, "title": "機械学習を使わない比べる相手は",
      "help": "機械学習が要るかは, 素朴なやり方より良いかで決まる. 多くは"
              "1 の「今のやり方」と同じ. 例: 前の週の同じ曜日と同じ数"},
-
-    # 5. 行動
-    {"id": "action.who", "section": 5, "kind": "text", "required": True,
-     "when": USES_ML, "title": "予測を見て, 誰が決めますか",
-     "help": "例: 店長"},
-    {"id": "action.when", "section": 5, "kind": "text", "required": True,
-     "when": USES_ML, "title": "いつ決めますか",
-     "help": "予測の時点. 次の節の「予測の時点で分かる列」を決める. 例: 前の"
-             "日の 17 時"},
-    {"id": "action.what", "section": 5, "kind": "text", "required": True,
-     "when": USES_ML, "title": "何を決めますか",
-     "help": "行動. 例: 品ごとの作る量, 引き止めの連絡をする人"},
 
     # 6. 使える情報
     {"id": "information.known", "section": 6, "kind": "columns",

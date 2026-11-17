@@ -186,19 +186,27 @@ def test_check_finds_inconsistencies() -> None:
     assert "action.basis" in found["warning"]
     assert "verification.method" in found["warning"]
 
-    # 機械学習を使わない出口 (課題と分解と理由だけ)
+    # 機械学習を使わない出口 (課題, 分解, 決めること, 理由だけ)
     exit_only = new_problem("出口")
     for key, value in EXAMPLES[
         "問い合わせの振り分け (機械学習を使わない)"
     ]:
         exit_only = answer(exit_only, key, value)
     assert levels(exit_only)["error"] == []
+    without = answer(exit_only, "action.what", None)
+    assert "action.what" in levels(without)["error"]
     with pytest.raises(ValueError, match="渡すもの"):
         handoff(exit_only)
 
     # 足りない答え
     missing = levels(new_problem("空"))["error"]
     assert "issue.pain" in missing and "ml.use" in missing
+
+    # 何を決めるかは, 機械学習を使うかより先に, 使わない場合も問う
+    order = [question["id"] for question in QUESTIONS]
+    assert order.index("action.what") < order.index("ml.use")
+    assert order.index("action.when") < order.index("ml.predict")
+    assert "action.what" in missing
 
 
 def test_handoff_values() -> None:
