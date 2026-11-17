@@ -12,7 +12,7 @@
 pip install "ml-quest @ git+https://github.com/victor-von-pooh/ML-Quest.git"
 ```
 
-Python 3.10 以上. 依存は PyYAML と pandas だけ.
+Python 3.10 以上. 依存は PyYAML と pandas だけ. 手元のデータから答えの候補を出す (`attach_data`, `inspect_data`) には, ML-EDA を入れる (`pip install "ml-quest[data] @ git+..."`).
 
 ## 使い方
 
@@ -41,6 +41,15 @@ save_problem(problem, "problem.yaml")
 make_project(problem, "my_project")
 ```
 
+手元のデータは, 課題と指標と分解 (1 から 3) に答えた後, 機械学習の受け持ち (4) で入れる. データは写さず, 場所と ML-EDA の読み方だけを持つ.
+
+```python
+from ml_quest import attach_data, inspect_data
+
+problem = attach_data(problem, "/data/sozai.csv")   # 場所, 読み方, 列の名前
+found = inspect_data(problem)    # 概要, 答えの候補 (目的の列, 時刻の列, 漏れの疑いなど), 確かめ
+```
+
 見本の問題の設定 (架空の課題) は `example_problem` で作れる. 量を決める予測 (総菜の作る量), 対象を選ぶ分類 (解約の引き止め), 機械学習を使わない出口 (問い合わせの振り分け) の 3 つ.
 
 ```python
@@ -67,6 +76,7 @@ python -m venv .venv
 | `src/ml_quest/handoff.py` | 受け渡しの値と要約の文 |
 | `src/ml_quest/skeleton.py` | ML-Found のプロジェクトの骨組み |
 | `src/ml_quest/examples.py` | 見本の問題の設定 |
+| `src/ml_quest/data.py` | 手元のデータの読み込みと, 答えの候補と確かめ (ML-EDA) |
 | `docs/DESIGN.md` | 設計の方針と段階 |
 
 ## ライセンス

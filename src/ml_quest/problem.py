@@ -561,6 +561,14 @@ def clean_answer(problem: dict, question: dict, value: Any) -> Any:
     if kind == "decision":
         cleaned = clean_decision(value)
         return cleaned
+    if kind == "source":
+        cleaned = clean_text(value, key)
+        if cleaned is not None:
+            location = Path(cleaned).expanduser()
+            if not location.is_absolute():
+                raise ValueError(f"{key} は絶対パスで答えてください")
+            cleaned = str(location)
+        return cleaned
     if kind == "column":
         cleaned = clean_text(value, key)
         names = [cleaned] if cleaned else []
@@ -606,6 +614,11 @@ def answer(problem: dict, key: str, value: Any) -> dict:
     cleaned = clean_answer(problem, BY_ID[key], value)
     updated = copy.deepcopy(problem)
     set_value(updated, key, cleaned)
+
+    # データの場所を変えたら, 前の読み方は使わない (attach_data で読み直す)
+    if key == "data.source" and get_value(problem, key) != cleaned:
+        for name in ("loader", "options", "size", "modified"):
+            set_value(updated, f"data.{name}", None)
 
     return updated
 
