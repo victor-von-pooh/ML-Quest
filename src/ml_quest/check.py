@@ -91,18 +91,26 @@ def check_shape(problem: dict) -> list[dict]:
         found.append(finding("error", "decomposition",
                              "decomposition は要因と手の辞書の並びにして"
                              "ください"))
+    for key in ("ml.task", "ml.target", "ml.time_column", "ml.positive",
+                "evaluation.metric", "issue.kpi.better"):
+        value = get_value(problem, key)
+        if value is not None and not isinstance(value, str):
+            found.append(finding("error", key,
+                                 f"{key} は文字列にしてください"))
     task = get_value(problem, "ml.task")
-    if task is not None and task not in TASK_NAMES:
+    if isinstance(task, str) and task not in TASK_NAMES:
         found.append(finding("error", "ml.task",
                              f"ml.task の {task} は知らないタスクです"))
     metric = get_value(problem, "evaluation.metric")
-    if metric is not None and metric not in [m["value"] for m in METRICS]:
+    if isinstance(metric, str) and metric not in [m["value"]
+                                                   for m in METRICS]:
         found.append(finding("error", "evaluation.metric",
                              f"evaluation.metric の {metric} は知らない指標"
                              "です"))
     decision = get_value(problem, "action.decision")
     if decision is not None and not (
-        isinstance(decision, dict) and decision.get("type") in DECISION_FIELDS
+        isinstance(decision, dict) and isinstance(decision.get("type"), str)
+        and decision["type"] in DECISION_FIELDS
     ):
         found.append(finding("error", "action.decision",
                              "action.decision の type は "

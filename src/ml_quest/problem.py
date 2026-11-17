@@ -322,9 +322,10 @@ def clean_text(value: Any, key: str) -> Optional[str]:
         return None
     if isinstance(value, bool) or not isinstance(value, (str, int, float)):
         raise ValueError(f"{key} は文で答えてください")
-    text = " ".join(str(value).split()) if isinstance(value, str) else str(
-        value
-    )
+    # 行ごとの前後の空白と, 続く空の行を除く (改行は残す)
+    lines = [" ".join(line.split()) for line in str(value).splitlines()]
+    text = "\n".join(line for index, line in enumerate(lines)
+                     if line or (index and lines[index - 1]))
     cleaned = text.strip() or None
 
     return cleaned

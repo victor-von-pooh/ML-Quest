@@ -497,3 +497,37 @@ def test_read_columns_edges(tmp_path: Path) -> None:
     pytest.importorskip("pyarrow")
     pd.DataFrame({"x": [1], "y": [2]}).to_parquet(tmp_path / "p.parquet")
     assert read_columns(tmp_path / "p.parquet") == ["x", "y"]
+
+
+def test_scalar_shapes_and_blocked_paths(tmp_path: Path) -> None:
+    """
+    文字列であるべき値の崩れと, 書き出し先の邪魔なファイルを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 並びや辞書のタスク, 目的の列, 意思決定の型も例外でなく error
+    for key, value in (("ml", {"use": True, "task": [1]}),
+                       ("ml", {"use": True, "target": {"a": 1}}),
+                       ("action", {"decision": {"type": ["quantity"]}})):
+        broken = example_problem("総菜の作る量")
+        broken[key].update(value)
+        assert levels(broken)["error"], key
+        assert is_ready(broken) is False
+
+    # 文の答えの改行は残す
+    text = answer(new_problem("文"), "issue.pain", " 一行目 \n\n\n 二行目 ")
+    assert get_value(text, "issue.pain") == "一行目\n\n二行目"
+
+    # 書き出し先の configs がファイルなら, 何も書かずに誤り
+    (tmp_path / "configs").write_text("x", encoding="utf-8")
+    with pytest.raises(ValueError, match="邪魔"):
+        make_project(example_problem("総菜の作る量"), tmp_path,
+                     overwrite=True)
+    assert not (tmp_path / "README.md").exists()
