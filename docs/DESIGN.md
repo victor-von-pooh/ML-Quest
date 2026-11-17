@@ -70,6 +70,7 @@ ml:                               # 4. 機械学習の受け持ち
   positive: null                  #    2 クラスの分類で当たりのクラス
   time_column: date               #    時刻の列 (forecasting では必須)
   series_by: [store, item]        #    系列を分ける列
+  available_lag: 2                #    決める時点で目的の値は何期前の分まで分かるか (forecasting で必須)
   horizon: 1                      #    何期先まで予測するか (forecasting で必須)
   baseline: 前の週の同じ曜日と同じ数   #    機械学習を使わない比べる相手
 
@@ -110,6 +111,7 @@ operation:                        # 10. 運用
 - 番号はたたき台の 10 項目の順 (5 の行動と 7 の損得は `action` に一緒に置く. 損得は行動の結果の値なので). ただし使えるデータの列 (`information.columns`) は, 目的の列を選ぶ前に要るので 4 で問う
 - `ml.use` が `false` なら, 1 から 3 と, 使うかとその理由の他は要らない (機械学習を使わない出口. 代わりの手の確かめ方や運用は, このライブラリの対象外)
 - 系列を分ける列と時刻の列も, 予測の時点で分かって学習に使うなら `known` に入れる (店や品のワンホットなど)
+- 決める時点で分かる目的の値 (`available_lag`) は, 予測の時点で使える列と同じく漏れを防ぐための答え. 前の日の 17 時に翌日を決めるなら, 前の日の値はまだ確定しないので 2. 学習に 1 期前の値を使うと, 学習とたどり直しでは当たり, 使うときは外れる (ML_tester の 21 で, 1 期前を使うと今のやり方との差が 41.8 % に, 2 期前からにすると 38.6 % になった)
 - `action.decision` は ML-Inference の意思決定の形 (`type` は `quantity`, `select`, `triage`, `none`) と同じ. `none` は予測を見て人が決める場合 (意思決定の材料を作らない)
 - 知らない項目は残す (読む側は無視する). 版を上げるのは, 項目を消すか, 名前, 意味, 値の型を変える場合
 
@@ -143,7 +145,7 @@ operation:                        # 10. 運用
 - **足りない答え**: 今の答えのもとで要る問いの空 (`error`). 機械学習を使わない場合は, 1 から 3 と, 使うかとその理由だけを要る
 - **筋道**: 機械学習で手伝う手 (`decomposition` の `ml: true`) が無いのに `ml.use` が `true` (`warning`. 何を手伝うのかが分からない). 指標の今の値と目指す値の向きが `better` と逆 (`error`)
 - **タスクと行動**: `quantity` は回帰か予測, `select` と `triage` は分類で `positive` が要る (`error`). 分類で `positive` が無く, 行動が `none` 以外 (`error`)
-- **時刻**: `forecasting` で `time_column` か `horizon` が無い (足りない答え). 時刻の列が目的の列か, 系列を分ける列か, 使わない列に入っている. `horizon` が 1 以上の整数でない (`error`)
+- **時刻**: `forecasting` で `time_column`, `available_lag`, `horizon` が無い (足りない答え). 時刻の列が目的の列か, 系列を分ける列か, 使わない列に入っている. `horizon` と `available_lag` が 1 以上の整数でない (`error`)
 - **列の答え直し**: 目的の列, 時刻の列, 系列を分ける列, 使う列と使わない列が, 使えるデータの列に無い (`error`. 列を答え直した後の古い名前)
 - **使ってよい列**: 目的の列が `known` に入っている (予測の時点で分かるなら予測は要らない. 時系列で過去の値を使う場合は, 過去の値の列は後でデータの分析の段階で作るので, 目的の列そのものは `known` に入れない) (`error`). `known` と `unknown` の重なり (`error`). `columns` にあるのに `known` にも `unknown` にも無い列 (`warning`. 使ってよいか決めていない)
 - **損得**: 損得の値が 0 以下 (今ある量は負. 効果は 0 から 1 の外) (`error`). 列の名前で書いた値が使えるデータの列に無い (`error`. あれば行ごとの値として読む `info`). 根拠 (`basis`) が空 (`warning`. 根拠の無い損得では, 意思決定はもっともらしいだけになる). 対象を選ぶ型の効果は仮定 (`info`)
@@ -157,7 +159,7 @@ operation:                        # 10. 運用
 
 | 段階 | 値 | 使い方 (今は利用者が各段階の画面で選ぶ) |
 | --- | --- | --- |
-| データの分析 (ML-EDA, ML-Fathom) | `target`, `task`, `time_column`, `series_by`, `split` (予測は `time`, 他は `random`), `known` (学習に使ってよい列), `drop` (`unknown` と `forbidden` の列) | 読み込みの日時の列 (`load_data` の `time_column`. 系列を分ける列が複数あると ML-EDA は日時の列を推定できない), レシピの目的の列, タスク, 分割, 除く列 |
+| データの分析 (ML-EDA, ML-Fathom) | `target`, `task`, `time_column`, `series_by`, `split` (予測は `time`, 他は `random`), `min_lag` (過去の値の列に使ってよい最も小さいずらし幅. 予測だけ), `known` (学習に使ってよい列), `drop` (`unknown` と `forbidden` の列) | 読み込みの日時の列 (`load_data` の `time_column`. 系列を分ける列が複数あると ML-EDA は日時の列を推定できない), レシピの目的の列, タスク, 分割, 除く列 |
 | モデルの作成 (ML-ModelControl, ML-CreateArchitecture) | `task`, `outputs` (回帰と予測は 1, 分類はクラスの数. 分からなければ空) | 出力の大きさ |
 | 学習・評価 (ML-Found, ML-Dashboard) | `metric`, `monitor` (`valid/<指標>`. RMSE はバッチの平均で書けないので, 並びの同じ `valid/mse`), `mode` (`min` か `max`) | config の `trainer.monitor` と `trainer.mode` |
 | 推論 (ML-Inference, ML-Provide) | `decision` (損得と制約. 選ぶと振り分けには `ml.positive` を `positive` として足す), `conclusion` (系列を分ける最初の列でまとめる `group_by`. 無ければ空), `horizon` (何期先まで) | 一式の既定値 (`make_bundle` の `decision` と `conclusion`), 何段も先の予測 |

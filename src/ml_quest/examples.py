@@ -32,6 +32,7 @@ EXAMPLES: dict[str, list[tuple[str, Any]]] = {
         ("ml.target", "sales"),
         ("ml.time_column", "date"),
         ("ml.series_by", ["store", "item"]),
+        ("ml.available_lag", 2),
         ("ml.horizon", 1),
         ("ml.baseline", "前の週の同じ曜日と同じ数"),
         ("action.who", "店長"),
