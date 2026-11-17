@@ -408,3 +408,41 @@ def test_copy_again(tmp_path: Path) -> None:
     ]
     prune_copies(copies, None)
     assert handoff(moved)["data"]["source"]["source"] == str(other)
+
+
+def test_prune_keeps_other_files(tmp_path: Path) -> None:
+    """
+    片付けが写しでないファイルを消さず, 写し先の中の別のファイルを入れると
+    前の元の場所を引き継がないことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 写し先に利用者のファイルがある
+    pytest.importorskip("ml_eda")
+    path = daily_csv(tmp_path)
+    copies = tmp_path / "copies"
+    copies.mkdir()
+    (copies / "mine.txt").write_text("keep", encoding="utf-8")
+    (copies / "own").mkdir()
+    problem = attach_data(example_problem("総菜の作る量"), path,
+                          copy_to=copies)
+    prune_copies(copies, None)
+    assert (copies / "mine.txt").is_file() and (copies / "own").is_dir()
+    with pytest.raises(ValueError, match="絶対パス"):
+        prune_copies(copies, "relative.csv")
+    with pytest.raises(ValueError, match="写し先そのもの"):
+        attach_data(problem, copies, copy_to=copies)
+
+    # 写し先の中の別のファイルは元の場所を持たない
+    other = copies / "other.csv"
+    other.write_bytes(path.read_bytes())
+    inside = attach_data(problem, other, copy_to=copies)
+    assert get_value(inside, "data.source") == str(other.resolve())
+    assert get_value(inside, "data.origin") is None

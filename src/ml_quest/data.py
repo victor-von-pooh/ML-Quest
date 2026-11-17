@@ -1,5 +1,6 @@
 import copy
 from pathlib import Path
+import re
 import shutil
 from typing import Any, Optional, Union
 import uuid
@@ -29,6 +30,10 @@ RELEVANT_FINDINGS = {
 
 # 読み方として持たない設定 (時刻の列は答えから毎回付ける)
 VOLATILE_OPTIONS = {"time_column"}
+
+# 写しごとのサブディレクトリの名前 (16 進の桁数. 片付けはこの名前だけ)
+COPY_DIGITS = 12
+COPY_NAME = re.compile(f"[0-9a-f]{{{COPY_DIGITS}}}")
 
 
 def import_eda() -> Any:
@@ -148,7 +153,7 @@ def copy_data(location: Path, copy_to: Path) -> Path:
         写し先が相対パスか, 元のディレクトリの中の場合, 元の場所に名前が
         無い場合, 空きが足りない場合
     """
-    # 写し先の確かめ (相対パス, 元のディレクトリの中, 写し先の外は誤り)
+    # 写し先の確かめ (相対パスと元のディレクトリの中は誤り. .. などは正規化)
     if not copy_to.is_absolute():
         raise ValueError(f"{copy_to} は絶対パスにしてください")
     location = location.resolve()
@@ -158,13 +163,11 @@ def copy_data(location: Path, copy_to: Path) -> Path:
     copied = copy_to / location.name
     if copied == location:
         return copied
-    if copied.parent != copy_to:
-        raise ValueError(f"{location} の写しが写し先の外になります")
     if location.is_dir() and copy_to.is_relative_to(location):
         raise ValueError("写し先が元のディレクトリの中です")
 
     # 空きの確かめ. 他と重ならない一時の名前に写してから置き換え (途中で
-    # 失敗しても前の写しが残る. リンクはリンクのまま)
+    # 失敗しても前の写しが残る. リンクは指す先を写し, 元から独立)
     copy_to.mkdir(parents=True, exist_ok=True)
     needed = size_of(location)
     free = shutil.disk_usage(copy_to).free
@@ -176,11 +179,11 @@ def copy_data(location: Path, copy_to: Path) -> Path:
     temporary = copy_to / f".{location.name}.{uuid.uuid4().hex}.copying"
     try:
         if location.is_dir():
-            shutil.copytree(location, temporary, symlinks=True)
+            shutil.copytree(location, temporary)
+            remove_path(copied)
         else:
             shutil.copy2(location, temporary)
-        remove_path(copied)
-        temporary.rename(copied)
+        temporary.replace(copied)
     finally:
         remove_path(temporary)
 
@@ -194,7 +197,7 @@ def size_of(location: Path) -> int:
     Parameters
     ----------
     location: Path
-        場所 (ディレクトリの中のリンクは数えない)
+        場所 (ディレクトリの中のリンクは指す先の大きさ)
 
     Returns
     ----------
@@ -206,7 +209,7 @@ def size_of(location: Path) -> int:
         size = location.stat().st_size
         return size
     size = sum(item.stat().st_size for item in location.rglob("*")
-               if item.is_file() and not item.is_symlink())
+               if item.is_file())
 
     return size
 
@@ -250,15 +253,26 @@ def prune_copies(copy_to: Union[str, Path], keep: Optional[str]) -> None:
     Returns
     ----------
     None
+
+    Raises
+    ----------
+    ValueError
+        残す場所が相対パスの場合
     """
-    # 写しごとのサブディレクトリのうち, 今の場所を含むもの以外
+    # attach_data が作った写しごとのサブディレクトリ (12 桁の 16 進の名前)
+    # のうち, 今の場所を含むもの以外. 他のファイルは消さない
     root = Path(copy_to).expanduser()
+    if keep and not Path(keep).expanduser().is_absolute():
+        raise ValueError(f"{keep} は絶対パスにしてください")
     if not root.is_dir():
         return
-    kept = Path(keep).resolve() if keep else None
+    kept = Path(keep).expanduser().resolve() if keep else None
     for child in root.iterdir():
-        resolved = child.resolve()
-        if kept is not None and kept.is_relative_to(resolved):
+        if not COPY_NAME.fullmatch(child.name) or child.is_symlink() or (
+            not child.is_dir()
+        ):
+            continue
+        if kept is not None and kept.is_relative_to(child.resolve()):
             continue
         remove_path(child)
 
@@ -364,7 +378,8 @@ def attach_data(
     updated = answer(problem, "data.source", str(copied or location))
     origin = None
     if copied == location:
-        origin = get_value(problem, "data.origin")
+        same = str(location) == get_value(problem, "data.source")
+        origin = get_value(problem, "data.origin") if same else None
     elif copied is not None:
         origin = str(location)
     set_value(updated, "data.origin", origin)
@@ -401,12 +416,19 @@ def copy_place(
     place: tuple[Optional[Path], Optional[Path]]
         使う今の写し (あれば) と, 新しく写すサブディレクトリ (写さないなら
         None)
+
+    Raises
+    ----------
+    ValueError
+        写し先そのものをデータにする場合
     """
     # 写さない, 写し先の中のデータ, 変わっていない同じ元のファイル
     if target is None:
         place: tuple[Optional[Path], Optional[Path]] = (None, None)
         return place
     root = target.resolve()
+    if location == root:
+        raise ValueError("写し先そのものはデータにできません")
     if location.is_relative_to(root):
         place = (location, None)
         return place
@@ -417,7 +439,7 @@ def copy_place(
     ) and current.is_relative_to(root) and same_file(current, location):
         place = (current, None)
         return place
-    place = (None, root / uuid.uuid4().hex[:12])
+    place = (None, root / uuid.uuid4().hex[:COPY_DIGITS])
 
     return place
 
