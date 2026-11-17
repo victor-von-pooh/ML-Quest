@@ -485,3 +485,18 @@ def test_recipe_target_dropped() -> None:
     assert steps[-1] == {"op": "drop_columns", "columns": ["sales"]}
     again = resolve_choice(dropped, "sales", "drop")
     assert get_value(again, "data.recipe")["steps"] == steps
+
+    # ワンホットなどの対象からは外し, 過去の値は残す
+    recipe["steps"] = [
+        {"op": "lag", "columns": ["sales"], "lags": [2]},
+        {"op": "one_hot", "columns": ["sales", "store"]},
+        {"op": "fill_missing", "column": "sales"},
+    ]
+    result = apply_recipe(problem, recipe)
+    steps = get_value(resolve_choice(result["problem"], "sales", "drop"),
+                      "data.recipe")["steps"]
+    assert steps == [
+        {"op": "lag", "columns": ["sales"], "lags": [2]},
+        {"op": "one_hot", "columns": ["store"]},
+        {"op": "drop_columns", "columns": ["sales"]},
+    ]

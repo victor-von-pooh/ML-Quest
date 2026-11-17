@@ -192,9 +192,11 @@ def apply_recipe(problem: dict, recipe: dict) -> dict:
         old_target not in dropped
     ):
         choices.append({
-            "column": old_target, "options": ["known", "drop"],
+            "column": old_target, "options": ["drop", "known"],
             "message": f"{old_target} は前の目的の列で, レシピで使っています. "
-                       "予測の時点で分かる列にしますか, レシピで落としますか",
+                       "予測したい値そのものは, ふつう予測の時点では分かり"
+                       "ません (過去の値は過去の値の手順で使えます). レシピ"
+                       "で落としますか, 予測の時点で分かる列にしますか",
         })
     set_value(updated, "data.recipe", copy.deepcopy(recipe))
     result = {"problem": updated, "changes": changes,
@@ -288,8 +290,9 @@ def resolve_choice(problem: dict, column: str, option: str) -> dict:
     updated: dict
         答えた後の問題の設定
     """
-    # 分かる列に移すか, 書き戻したレシピの最後の落とす手順に足す (前の
-    # 手順がその列を使っても失敗しないように, 最後の手順でなければ足す)
+    # 分かる列に移すか, 書き戻したレシピから外す. 過去の値の手順はそのまま
+    # (過去の値は分かる), 他の手順 (ワンホットなど) の対象から外し, 最後の
+    # 落とす手順で元の列を落とす (前の手順が使っても失敗しないように)
     if option not in ("known", "drop"):
         raise ValueError("option は known か drop にしてください")
     updated = copy.deepcopy(problem)
@@ -302,7 +305,8 @@ def resolve_choice(problem: dict, column: str, option: str) -> dict:
                          known + ([column] if column not in known else []))
         return updated
     recipe = copy.deepcopy(get_value(updated, "data.recipe") or {})
-    steps = recipe.setdefault("steps", [])
+    steps = without_column(recipe.setdefault("steps", []), column)
+    recipe["steps"] = steps
     dropped, _ = recipe_columns(recipe)
     if column not in dropped:
         last = steps[-1] if steps else None
@@ -313,3 +317,38 @@ def resolve_choice(problem: dict, column: str, option: str) -> dict:
     set_value(updated, "data.recipe", recipe)
 
     return updated
+
+
+def without_column(steps: list, column: str) -> list:
+    """
+    過去の値と落とす手順の他の手順の対象から, 列を外す関数
+
+    Parameters
+    ----------
+    steps: list
+        レシピの手順
+    column: str
+        外す列
+
+    Returns
+    ----------
+    kept: list
+        外した後の手順 (対象が無くなった手順は除く)
+    """
+    # columns を持つ手順は列を外し, 1 つの列 (column) の手順は除く
+    kept = []
+    for step in steps:
+        if step.get("op") in ("lag", "drop_columns"):
+            kept.append(step)
+            continue
+        if step.get("column") == column:
+            continue
+        names = step.get("columns")
+        if isinstance(names, list) and column in names:
+            rest = [name for name in names if name != column]
+            if not rest:
+                continue
+            step = {**step, "columns": rest}
+        kept.append(step)
+
+    return kept
