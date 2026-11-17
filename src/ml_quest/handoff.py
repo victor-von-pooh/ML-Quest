@@ -100,6 +100,9 @@ def handoff(problem: dict) -> dict:
         "split": "time" if task == "forecasting" else "random",
         "min_lag": value(problem, "ml.available_lag"),
         "known": value(problem, "information.known") or [],
+        "source": {name: value(problem, f"data.{name}")
+                   for name in ("source", "loader", "options")}
+        if value(problem, "data.source") else None,
         "drop": (value(problem, "information.unknown") or [])
         + (value(problem, "information.forbidden") or []),
     }

@@ -563,9 +563,11 @@ def clean_answer(problem: dict, question: dict, value: Any) -> Any:
         return cleaned
     if kind == "source":
         cleaned = clean_text(value, key)
-        if cleaned is not None and not Path(cleaned).expanduser(
-        ).is_absolute():
-            raise ValueError(f"{key} は絶対パスで答えてください")
+        if cleaned is not None:
+            location = Path(cleaned).expanduser()
+            if not location.is_absolute():
+                raise ValueError(f"{key} は絶対パスで答えてください")
+            cleaned = str(location)
         return cleaned
     if kind == "column":
         cleaned = clean_text(value, key)
@@ -614,9 +616,9 @@ def answer(problem: dict, key: str, value: Any) -> dict:
     set_value(updated, key, cleaned)
 
     # データの場所を変えたら, 前の読み方は使わない (attach_data で読み直す)
-    if key == "data.source":
-        set_value(updated, "data.loader", None)
-        set_value(updated, "data.options", None)
+    if key == "data.source" and get_value(problem, key) != cleaned:
+        for name in ("loader", "options", "size", "modified"):
+            set_value(updated, f"data.{name}", None)
 
     return updated
 
