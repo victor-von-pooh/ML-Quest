@@ -553,9 +553,9 @@ def project_readme(problem: dict, stages: dict) -> str:
     if data.get("min_lag"):
         lines.append(
             f"    - 過去の値の列は {data['min_lag']} 期前より古い値だけで作る "
-            f"(ずらし幅は {data['min_lag']} 以上. 移動平均も, 決める時点で"
-            "分からない期を含めない). 決める時点で分からない値で学習すると, "
-            "学習のときだけ当たる"
+            f"(ML-EDA の過去の値の手順の lags は {data['min_lag']} 以上, "
+            f"移動平均の gap は {data['min_lag']}). 決める時点で分からない値で"
+            "学習すると, 学習のときだけ当たる"
         )
     if data["known"]:
         lines.append("    - 学習に使ってよい列 (予測の時点で分かる列): "
