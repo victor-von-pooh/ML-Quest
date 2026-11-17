@@ -1,0 +1,192 @@
+# 設計
+
+ML-Quest の設計の方針をまとめる.
+
+## 目的
+
+機械学習をもとにした課題解決のために, 問題を設定するライブラリ.
+
+機械学習は課題を解く手段の 1 つにすぎない. 推論や学習がゴールになるのを防ぐため, 課題から始めて, 課題を分解し, どの部分を機械学習に任せると課題の解決につながるかの筋道を, 1 つのファイル (問題の設定) に残す. 後ろの段階 (データの分析, モデルの作成, 学習・評価, 推論) が要る値 (目的の列, タスク, 使ってよい列, 評価の指標, 意思決定の損得と制約) は, 全てこの筋道から出る.
+
+- **問い**: 問題の設定を決まった順の問いで埋める. 問いの並びと中身はこのライブラリが持ち, 画面 (ML-Pathfinder) はそれを順に出すだけ
+- **確かめ**: 答えどうしの食い違い (量を決めるのに分類のタスク, 予測の時点で分からない列を使う, など) と, 足りない答えを一覧にする
+- **受け渡し**: 後ろの段階ごとに, 問題の設定から決まる値をまとめて返す
+- **骨組み**: 問題の設定から, 学習・評価の段階 (ML-Found) のプロジェクトの骨組み (config と学習のスクリプト) を書き出す
+- **機械学習を使わない出口**: 課題の分解の結果, 機械学習が要らない (ルールや集計, 今のやり方の改善で足りる) と分かれば, そこで終えられる. 問題の設定は機械学習の入口ではなく, 機械学習が要るかを決める場所
+
+## 全体の中での役割
+
+「機械学習を全て GUI 上で行う」アプリ (問題の設定, データの分析, モデルの作成・選定, モデルの学習・評価, 推論の段階に分けて作ることを目指している) のうち, 「問題の設定」の段階でライブラリを受け持つ. 画面は ML-Pathfinder.
+
+- **作る約束**: 問題の設定のファイル (`problem.yaml`, `format_version` 付き. 下の「問題の設定の形」). 形はこのライブラリが持つ
+- **書き出すもの**: ML-Found のプロジェクトの形 (ML-Found の `docs/FORMAT.md` の「プロジェクトの形」) の骨組み. 学習のスクリプトは利用者のコードなので, 骨組みは ML-EDA, ML-ModelControl, ML-Found, ML-Inference を使う形で書く (このライブラリ自身はそれらに依存しない)
+- **他の段階との分け方**: 後ろの段階は, 問題の設定のファイルを直接は読まない (今は利用者が受け渡しの値を見て, 各段階の画面で選ぶ. 将来の 1 つのシステムでつなぐ). そのため受け渡しの値は, 各段階の約束と同じ名前と形で返す (意思決定は ML-Inference の `decision` の形そのまま, など)
+- 依存は軽くする (PyYAML と pandas. pandas はデータのファイルから列の名前を読むためだけ). 前処理や学習はしない
+
+## 用語
+
+| 用語 | 意味 |
+| --- | --- |
+| 問題の設定 (problem) | 課題から, 機械学習の受け持ち, 行動, 損得, 確かめ方, 運用までを決めたもの. `problem.yaml` |
+| 問い (question) | 問題の設定の 1 つの項目を埋めるための問い. 識別子は項目の場所 (`issue.pain` など) |
+| 確かめ (finding) | 答えの食い違いや足りなさ. 重さは `error` (後ろの段階に渡せない), `warning` (渡せるが見直したい), `info` (知らせ) |
+| 受け渡し (handoff) | 後ろの段階ごとの, 問題の設定から決まる値 |
+| 骨組み (skeleton) | ML-Found のプロジェクトの形の, config と学習のスクリプトの雛形 |
+
+## 問題の設定の形 (版 1)
+
+```yaml
+format_version: 1
+name: 総菜の作る量                 # 問題の名前
+created_at: "2026-11-17T21:30:00+09:00"
+updated_at: "2026-11-17T21:45:00+09:00"
+
+issue:                            # 1. 課題
+  owner: 店長                     #    誰の課題か
+  pain: 総菜の廃棄が多く, 夕方には品切れも出る
+  current: 前の週の同じ曜日と同じ数を作る   # 今のやり方
+  kpi:                            # 2. 解けたと言える指標
+    name: 廃棄と欠品の損
+    unit: 円 / 月
+    current: 1200000              #    今の値 (分かれば)
+    target: 960000                #    目指す値
+    better: lower                 #    lower (小さいほど良い) か higher
+
+decomposition:                    # 3. 課題の分解 (要因と打てる手)
+  - cause: 作る量が勘で決まる
+    lever: 作る量を売れる数の予測から決める
+    ml: true                      #    機械学習で手伝う手か
+  - cause: 夕方の値引きが遅い
+    lever: 値引きの時刻を決めておく
+    ml: false
+
+ml:                               # 4. 機械学習の受け持ち
+  use: true                       #    false なら機械学習を使わない (reason に理由)
+  reason: 品と日による売れ方の違いが大きく, 今のやり方では追えない
+  predict: 翌日の品ごとの売れる数   #    何を予測するか (文)
+  target: sales                   #    目的の列
+  task: forecasting               #    classification, regression, forecasting
+  row: 店, 品, 日ごとの 1 行       #    1 行が何か
+  positive: null                  #    2 クラスの分類で当たりのクラス
+  time_column: date               #    時刻の列 (forecasting では必須)
+  series_by: [store, item]        #    系列を分ける列
+  baseline: 前の週の同じ曜日と同じ数   #    機械学習を使わない比べる相手
+
+information:                      # 6. 予測の時点で使える情報
+  columns: [date, store, item, sales, temperature_forecast, promo, customers]
+  known: [store, item, temperature_forecast, promo]   # 予測の時点で分かる列
+  unknown: [customers]            #    分からない列 (学習に使わない)
+
+action:                           # 5. 予測から行動へ
+  who: 店長
+  when: 前の日の 17 時
+  what: 品ごとの作る量
+  decision:                       # 7. 損得と制約 (ML-Inference の decision の形)
+    type: quantity
+    under_cost: 200
+    over_cost: 150
+  basis: 欠品は粗利 200 円, 廃棄は原価 150 円   # 損得の値の根拠
+
+evaluation:                       # 8. 学習で見る指標
+  metric: mae
+  link: 誤差が小さいほど作る量の外れが減り, 廃棄と欠品の損が減る
+
+verification:                     # 9. 効果の確かめ方
+  method: both                    #    backtest (過去のデータでたどり直す), trial (実際に試す), both
+  backtest: 過去 3 か月で, 今のやり方と損を比べる
+  trial: 1 店で 4 週間
+  success: 廃棄と欠品の損が今のやり方より 2 割少ない
+
+operation:                        # 10. 運用
+  review: 月に 1 回
+  approver: 本部
+  stop: 損が今のやり方より悪い月が 2 回続いたら止める
+  remeasure: 月に 1 回, 前の月の実績で外れ方を確かめ, 本部が承認したら書き戻す
+```
+
+- 上から順に決める. 各項目は次の項目の根拠になる (課題が無ければ指標は決まらず, 指標が無ければ機械学習の受け持ちの良し悪しは決まらない)
+- 番号はたたき台の 10 項目の順 (5 の行動と 7 の損得は `action` に一緒に置く. 損得は行動の結果の値なので)
+- `ml.use` が `false` なら, `ml` の残りと `information`, `action.decision`, `evaluation` は要らない (機械学習を使わない出口)
+- `action.decision` は ML-Inference の意思決定の形 (`type` は `quantity`, `select`, `triage`, `none`) と同じ. `none` は予測を見て人が決める場合 (意思決定の材料を作らない)
+- 知らない項目は残す (読む側は無視する). 版を上げるのは, 項目を消すか, 名前, 意味, 値の型を変える場合
+
+## 問い
+
+`questions(problem)` は, 問いの並びを, 今の答えと, 答えたか, 今は要らないか (`ml.use` が `false` の場合の `ml.target` など) と一緒に返す. 画面はこれを上から順に出す.
+
+| 問いの種類 (`kind`) | 答えの形 |
+| --- | --- |
+| `text` | 文 |
+| `number` | 数 |
+| `choice` | 決まった選択肢の 1 つ (`choices` に値と説明) |
+| `boolean` | はいかいいえ |
+| `column` | データの列の名前の 1 つ (`information.columns` から) |
+| `columns` | データの列の名前の並び |
+| `list` | 文の並び |
+| `levers` | 要因と打てる手の並び (`decomposition`) |
+| `decision` | 意思決定の型と損得と制約 (ML-Inference の形) |
+
+- 各問いは `id` (項目の場所), `section` (1 から 10), `title` (問い), `help` (なぜ問うか, 例), `required`, `kind` を持つ
+- `answer(problem, id, value)` は, 答えの形を確かめて問題の設定に入れ, 新しい問題の設定を返す (元は変えない). 形の誤りは `ValueError`
+- 列の名前は, 利用者が選んだデータのファイルから `read_columns(path)` で読む (先頭の行だけ. UTF-8 で読めなければ Shift_JIS)
+
+## 確かめ
+
+`check(problem)` は確かめの一覧を返す. 項目の場所と, 重さと, 何をすればよいかの文を持つ.
+
+- **足りない答え**: 要る問いの空 (`error`). 機械学習を使わない場合は, 課題と指標と分解だけを要る
+- **筋道**: 機械学習で手伝う手 (`decomposition` の `ml: true`) が無いのに `ml.use` が `true` (`warning`. 何を手伝うのかが分からない). 指標の今の値と目指す値の向きが `better` と逆 (`error`)
+- **タスクと行動**: `quantity` は回帰か予測, `select` と `triage` は分類で `positive` が要る (`error`). 分類で `positive` が無く, 行動が `none` 以外 (`error`)
+- **時刻**: `forecasting` で `time_column` が無い (`error`)
+- **使ってよい列**: 目的の列が `known` に入っている (予測の時点で分かるなら予測は要らない. 時系列で過去の値を使う場合は, 過去の値の列は後でデータの分析の段階で作るので, 目的の列そのものは `known` に入れない) (`error`). `known` と `unknown` の重なり (`error`). `columns` にあるのに `known` にも `unknown` にも無い列 (`warning`. 使ってよいか決めていない)
+- **損得**: 損得の値が 0 以下 (`error`). 根拠 (`basis`) が空 (`warning`. 根拠の無い損得では, 意思決定はもっともらしいだけになる)
+- **指標**: 学習の指標がタスクに合わない (`error`). 指標と KPI のつながり (`link`) が空 (`warning`)
+- **確かめ方と運用**: 確かめ方が空 (`error`). 止める条件が空 (`warning`)
+
+## 受け渡し
+
+`handoff(problem)` は後ろの段階ごとの値を返す. 確かめに `error` があれば誤り.
+
+| 段階 | 値 | 使い方 (今は利用者が各段階の画面で選ぶ) |
+| --- | --- | --- |
+| データの分析 (ML-EDA, ML-Fathom) | `target`, `task`, `time_column`, `series_by`, `split` (予測は `time`, 他は `random`), `known` (学習に使ってよい列), `drop` (`unknown` の列) | 読み込みの日時の列 (`load_data` の `time_column`), レシピの目的の列, タスク, 分割, 除く列 |
+| モデルの作成 (ML-ModelControl, ML-CreateArchitecture) | `task`, `outputs` (回帰と予測は 1, 分類はクラスの数. 分からなければ空) | 出力の大きさ |
+| 学習・評価 (ML-Found, ML-Dashboard) | `monitor` (`valid/<指標>`), `mode` (`min` か `max`) | config の `trainer.monitor` と `trainer.mode` |
+| 推論 (ML-Inference, ML-Provide) | `decision` (損得と制約), `conclusion` (分類の `positive`) | 一式の既定値 (`make_bundle` の `decision` と `conclusion`) |
+
+学習の指標は, 分類は `accuracy` (大きいほど良い) か `loss` (交差エントロピー), 回帰と予測は `mae` か `rmse`.
+
+## 骨組み
+
+`make_project(problem, path)` は ML-Found のプロジェクトの骨組みを書き出す. 確かめに `error` があれば誤り. 既にあるファイルは上書きしない (`overwrite=True` で上書き).
+
+```
+<プロジェクト>/
+├── problem.yaml                # 問題の設定の写し
+├── README.md                   # 課題の要約と, 次にすること (データの分析, モデルの作成, 学習)
+├── configs/
+│   ├── default/train.yaml      # 指標から monitor と mode. データセットとモデルの定義の場所
+│   └── experiment/train.yaml   # 空の差分
+└── train.py                    # 学習のスクリプト
+```
+
+- 学習のスクリプトは, ML-EDA のデータセット (`outputs/dataset`) を読み, ML-ModelControl の定義 (`models/model.yaml`) からモデルを組み立て, ML-Found で学習し, テスト用の分割で評価し, ML-Inference の推論の一式を実験の中に作る (問題の設定の意思決定と結論を既定値にする)
+- タスクごとの損失と指標: 分類は交差エントロピーと正解率, 回帰と予測は目的の値を学習用の平均と標準偏差で標準化した二乗誤差と元の単位の平均絶対誤差 (か二乗平均平方根誤差)
+- 比べる相手 (`ml.baseline`) はデータによって作り方が違うので, スクリプトでは計算せず, 書き足す場所に印 (`TODO`) を残す
+- 表と時系列 (学習に使う列の表) のデータを前提にする. 画像, 文, 点群は, データの読み方とモデルの入力を書き直す
+- 合成のデータで, 予測 (量を決める) と分類 (対象を選ぶ) の骨組みが, データセットの書き出しとモデルの定義を置けば学習から推論の一式まで通り, 一式の確かめが学習の記録と合うことを確かめた
+- 骨組みは出発点で, 利用者が書き足す. 書き出した後の問題の設定の変更は, 骨組みには自動で反映しない (書き出し直すか手で直す)
+
+## 書き出し
+
+- `save_problem(problem, path)` は `updated_at` を今にして YAML で書く (一時ファイルに書いてから置き換える)
+- `load_problem(path)` は読んで版を確かめる (版の無いファイルは誤り). 知っている版より新しい版は, 読める項目だけを使い, 確かめ (`check`) で知らせる
+
+## 段階
+
+| 段階 | 内容 |
+| --- | --- |
+| 1 | 問題の設定の形, 問い, 確かめ, 受け渡し, 骨組み |
+| 2 | 画面 (ML-Pathfinder) から使う |
+| 3 | 実務に近い例で問いと確かめを見直す. 損得の値の決め方の手伝い (値を変えたら結論がどう変わるか) |
+| 4 | 将来の 1 つのシステムで, 後ろの段階が問題の設定を直接読む |

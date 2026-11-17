@@ -1,0 +1,220 @@
+from typing import Any
+
+# 問題の設定の 10 の節 (上から順に決める. 各節は次の節の根拠)
+SECTIONS = {
+    1: "課題",
+    2: "解けたと言える指標",
+    3: "課題の分解",
+    4: "機械学習の受け持ち",
+    5: "予測から行動へ",
+    6: "予測の時点で使える情報",
+    7: "損得と制約",
+    8: "学習で見る指標",
+    9: "効果の確かめ方",
+    10: "運用",
+}
+
+# 機械学習を使う場合だけの問い (使わない出口では要らない)
+USES_ML = {"id": "ml.use", "equals": True}
+
+# タスクの選択肢
+TASKS = [
+    {"value": "classification",
+     "label": "分類 (どれに当たるか. 解約するか, 不良か)"},
+    {"value": "regression",
+     "label": "回帰 (値. 時刻の順に関係なく, 行ごとの値)"},
+    {"value": "forecasting",
+     "label": "予測 (時系列. 過去の値から先の値)"},
+]
+
+# 学習で見る指標 (タスクごと. better は大きいほど良いか小さいほど良いか)
+METRICS = [
+    {"value": "accuracy", "label": "正解率 (大きいほど良い)",
+     "tasks": ["classification"], "better": "higher"},
+    {"value": "loss", "label": "交差エントロピー (小さいほど良い. 確率の当たり"
+     "具合も見る)", "tasks": ["classification"], "better": "lower"},
+    {"value": "mae", "label": "平均絶対誤差 (小さいほど良い. 外れの大きさの"
+     "平均)", "tasks": ["regression", "forecasting"], "better": "lower"},
+    {"value": "rmse", "label": "二乗平均平方根誤差 (小さいほど良い. 大きな外れ"
+     "を重く見る)", "tasks": ["regression", "forecasting"],
+     "better": "lower"},
+]
+
+# 問いの並び (上から順に出す)
+QUESTIONS: list[dict[str, Any]] = [
+    # 1. 課題
+    {"id": "issue.owner", "section": 1, "kind": "text", "required": True,
+     "title": "誰の課題ですか",
+     "help": "課題を抱えていて, 解けたら嬉しい人や部署. 例: 店長, 本部の"
+             "仕入れの担当"},
+    {"id": "issue.pain", "section": 1, "kind": "text", "required": True,
+     "title": "何に困っていますか",
+     "help": "機械学習の言葉ではなく, 業務の言葉で. 例: 総菜の廃棄が多く, "
+             "夕方には品切れも出る"},
+    {"id": "issue.current", "section": 1, "kind": "text", "required": True,
+     "title": "今はどうしていますか",
+     "help": "今のやり方. 後で比べる相手になる. 例: 前の週の同じ曜日と同じ"
+             "数を作る"},
+
+    # 2. 指標
+    {"id": "issue.kpi.name", "section": 2, "kind": "text",
+     "required": True, "title": "何が変われば解けたと言えますか",
+     "help": "業務の数字. 例: 廃棄と欠品の損, 解約の件数, 確かめの手間"},
+    {"id": "issue.kpi.unit", "section": 2, "kind": "text",
+     "required": False, "title": "その数字の単位は",
+     "help": "例: 円 / 月, 件 / 週, 時間 / 日"},
+    {"id": "issue.kpi.better", "section": 2, "kind": "choice",
+     "required": True, "title": "小さいほど良いですか, 大きいほど良いですか",
+     "choices": [{"value": "lower", "label": "小さいほど良い"},
+                 {"value": "higher", "label": "大きいほど良い"}],
+     "help": "指標の向き"},
+    {"id": "issue.kpi.current", "section": 2, "kind": "number",
+     "required": False, "title": "今の値は (分かれば)",
+     "help": "今の値が分かると, 目指す値と比べて, どれだけ良くなれば価値が"
+             "あるかが決まる"},
+    {"id": "issue.kpi.target", "section": 2, "kind": "number",
+     "required": False, "title": "目指す値は (分かれば)",
+     "help": "例: 今の 2 割減"},
+
+    # 3. 分解
+    {"id": "decomposition", "section": 3, "kind": "levers",
+     "required": True, "title": "課題を生んでいる要因と, 打てる手は",
+     "help": "要因ごとに打てる手を書き, その手を機械学習で手伝えるかを選ぶ. "
+             "機械学習で手伝わない手も書く (比べるため). 例: 作る量が勘で"
+             "決まる → 作る量を予測から決める (機械学習で手伝う)"},
+
+    # 4. 機械学習の受け持ち
+    {"id": "ml.use", "section": 4, "kind": "boolean", "required": True,
+     "title": "機械学習を使いますか",
+     "help": "分解した手のうち, 機械学習でしか手伝えないものがあるか. ルール"
+             "や集計, 今のやり方の改善で足りるなら, 使わないで終えてよい"},
+    {"id": "ml.reason", "section": 4, "kind": "text", "required": True,
+     "title": "そう決めた理由は",
+     "help": "使う場合は, 今のやり方やルールで足りない理由. 使わない場合は, "
+             "代わりに何をするか"},
+    {"id": "ml.predict", "section": 4, "kind": "text", "required": True,
+     "when": USES_ML, "title": "何を予測しますか",
+     "help": "文で. 例: 翌日の品ごとの売れる数"},
+    {"id": "ml.row", "section": 4, "kind": "text", "required": True,
+     "when": USES_ML, "title": "1 行 (1 件) は何ですか",
+     "help": "予測の単位. 例: 店, 品, 日ごとの 1 行"},
+    {"id": "information.columns", "section": 4, "kind": "list",
+     "required": True, "when": USES_ML, "title": "使えるデータの列は",
+     "help": "データのファイルから読める (画面では「ファイルから読む」). "
+             "後の問いで, この中から目的の列と使ってよい列を選ぶ"},
+    {"id": "ml.task", "section": 4, "kind": "choice", "required": True,
+     "when": USES_ML, "choices": TASKS, "title": "どの種類の予測ですか",
+     "help": "目的の値がクラスなら分類, 値なら回帰. 時刻の順に過去から先を"
+             "予測するなら予測 (時系列)"},
+    {"id": "ml.target", "section": 4, "kind": "column", "required": True,
+     "when": USES_ML, "title": "目的の列は",
+     "help": "予測する値の列"},
+    {"id": "ml.positive", "section": 4, "kind": "text", "required": False,
+     "when": {"id": "ml.task", "equals": "classification"},
+     "title": "当たりのクラスは (2 クラスの分類で行動を決める場合)",
+     "help": "行動の対象になるクラス. 例: 解約, 不良"},
+    {"id": "ml.time_column", "section": 4, "kind": "column",
+     "required": True,
+     "when": {"id": "ml.task", "equals": "forecasting"},
+     "title": "時刻の列は", "help": "時刻の順に並べ, 分けるのに使う列"},
+    {"id": "ml.series_by", "section": 4, "kind": "columns",
+     "required": False,
+     "when": {"id": "ml.task", "equals": "forecasting"},
+     "title": "系列を分ける列は (複数の系列が並ぶ場合)",
+     "help": "例: 店, 品. 過去の値は系列ごとにずらす"},
+    {"id": "ml.baseline", "section": 4, "kind": "text", "required": True,
+     "when": USES_ML, "title": "機械学習を使わない比べる相手は",
+     "help": "機械学習が要るかは, 素朴なやり方より良いかで決まる. 多くは今"
+             "のやり方. 例: 前の週の同じ曜日と同じ数"},
+
+    # 5. 行動
+    {"id": "action.who", "section": 5, "kind": "text", "required": True,
+     "when": USES_ML, "title": "予測を見て, 誰が決めますか",
+     "help": "例: 店長"},
+    {"id": "action.when", "section": 5, "kind": "text", "required": True,
+     "when": USES_ML, "title": "いつ決めますか",
+     "help": "予測の時点. 次の節の「予測の時点で分かる列」を決める. 例: 前の"
+             "日の 17 時"},
+    {"id": "action.what", "section": 5, "kind": "text", "required": True,
+     "when": USES_ML, "title": "何を決めますか",
+     "help": "行動. 例: 品ごとの作る量, 引き止めの連絡をする人"},
+
+    # 6. 使える情報
+    {"id": "information.known", "section": 6, "kind": "columns",
+     "required": True, "when": USES_ML,
+     "title": "予測の時点で分かっている列は",
+     "help": "学習に使ってよい列. 予測の時点で分からない列 (当日の客数など)"
+             "で学習すると, 学習のときだけ当たり, 使うときに当たらない. 目的"
+             "の列そのものは入れない (過去の値はデータの分析で作る)"},
+    {"id": "information.unknown", "section": 6, "kind": "columns",
+     "required": False, "when": USES_ML,
+     "title": "予測の時点では分からない列は",
+     "help": "学習に使わない列"},
+
+    # 7. 損得と制約
+    {"id": "action.decision", "section": 7, "kind": "decision",
+     "required": True, "when": USES_ML,
+     "title": "行動の損得と制約は",
+     "help": "量を決める: 1 単位足りないときの損と余ったときの損. 対象を選ぶ: "
+             "当たり 1 件の価値, 行動 1 件の費用, 行動で防げる割合 (仮定), "
+             "件数か費用の上限. 振り分ける: 見逃しの損と空振りの損, 回せる件数"
+             ". 人が予測を見て決めるなら「意思決定しない」"},
+    {"id": "action.basis", "section": 7, "kind": "text", "required": False,
+     "when": USES_ML, "title": "損得の値の根拠は",
+     "help": "例: 欠品は粗利 200 円, 廃棄は原価 150 円. 根拠の無い値では, "
+             "意思決定はもっともらしいだけになる"},
+
+    # 8. 学習の指標
+    {"id": "evaluation.metric", "section": 8, "kind": "choice",
+     "required": True, "when": USES_ML, "choices": METRICS,
+     "title": "学習で何を見ますか",
+     "help": "検証用の分割で見て, 最も良いモデルを選ぶ指標"},
+    {"id": "evaluation.link", "section": 8, "kind": "text",
+     "required": False, "when": USES_ML,
+     "title": "その指標が良くなると, 業務の指標はどう良くなりますか",
+     "help": "例: 誤差が小さいほど作る量の外れが減り, 廃棄と欠品の損が減る"},
+
+    # 9. 確かめ方
+    {"id": "verification.method", "section": 9, "kind": "choice",
+     "required": True, "when": USES_ML,
+     "choices": [
+         {"value": "backtest", "label": "過去のデータでたどり直す"},
+         {"value": "trial", "label": "実際に試す"},
+         {"value": "both", "label": "両方 (たどり直してから試す)"},
+     ],
+     "title": "効果をどう確かめますか",
+     "help": "行動が結果を変える判断 (引き止めなど) は, 過去のデータからは"
+             "効果が分からないので, 試すことが要る"},
+    {"id": "verification.backtest", "section": 9, "kind": "text",
+     "required": True,
+     "when": {"id": "verification.method", "in": ["backtest", "both"]},
+     "title": "どの期間でたどり直しますか", "help": "例: 過去 3 か月"},
+    {"id": "verification.trial", "section": 9, "kind": "text",
+     "required": True,
+     "when": {"id": "verification.method", "in": ["trial", "both"]},
+     "title": "どこで, どれだけの期間試しますか",
+     "help": "例: 1 店で 4 週間"},
+    {"id": "verification.success", "section": 9, "kind": "text",
+     "required": True, "when": USES_ML,
+     "title": "どうなれば成功ですか",
+     "help": "業務の指標で. 例: 廃棄と欠品の損が今のやり方より 2 割少ない"},
+
+    # 10. 運用
+    {"id": "operation.review", "section": 10, "kind": "text",
+     "required": True, "when": USES_ML,
+     "title": "どれくらいの頻度で見直しますか", "help": "例: 月に 1 回"},
+    {"id": "operation.approver", "section": 10, "kind": "text",
+     "required": False, "when": USES_ML,
+     "title": "変更 (外れ方の書き戻しなど) は誰が承認しますか",
+     "help": "例: 本部"},
+    {"id": "operation.stop", "section": 10, "kind": "text",
+     "required": False, "when": USES_ML, "title": "どうなったら止めますか",
+     "help": "例: 損が今のやり方より悪い月が 2 回続いたら"},
+    {"id": "operation.remeasure", "section": 10, "kind": "text",
+     "required": False, "when": USES_ML,
+     "title": "予測の外れ方をいつ確かめ直しますか",
+     "help": "外れ方は時間とともに変わる. 例: 月に 1 回, 前の月の実績で"},
+]
+
+# 問いの識別子から問い
+BY_ID = {question["id"]: question for question in QUESTIONS}

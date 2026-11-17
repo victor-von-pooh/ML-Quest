@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+      # 1 行 79 文字以内 (CODING_STYLE.md. 日本語も 1 文字と数える)
+      - name: 行の長さの確認
+        run: |
+          python - <<'PY'
+          import pathlib
+          import sys
+
+          long = [
+              f"{path}:{number}"
+              for path in sorted(pathlib.Path(".").glob("[st]*/**/*.py"))
+              for number, line in enumerate(
+                  path.read_text(encoding="utf-8").splitlines(), 1
+              )
+              if len(line) > 79
+          ]
+          print("\n".join(long))
+          sys.exit(1 if long else 0)
+          PY
