@@ -1,7 +1,9 @@
 from typing import Any, Optional
 
 from ml_quest.check import check
-from ml_quest.problem import DECISION_NAMES, active_value, get_value
+from ml_quest.problem import (
+    DECISION_NAMES, FIELD_NAMES, active_value, get_value
+)
 from ml_quest.questions import METRICS, TASKS
 
 
@@ -250,9 +252,11 @@ def decision_text(decision: dict) -> str:
     text: str
         型と, 書いた損得と制約
     """
-    # 型の名前と項目
-    items: list[Any] = [f"{key} {value}" for key, value in decision.items()
-                        if key != "type"]
+    # 型の名前と, 項目の名前と値 (数は桁区切り)
+    items: list[Any] = [
+        f"{FIELD_NAMES.get(key, key)} {number_text(value)}"
+        for key, value in decision.items() if key != "type"
+    ]
     text = f"意思決定: {DECISION_NAMES[decision['type']]}" + (
         f" ({', '.join(items)})" if items else ""
     )

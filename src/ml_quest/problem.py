@@ -31,6 +31,16 @@ GROUPED_NUMBER = re.compile(r"^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$")
 # 数として読まない文字 (無限大と非数)
 NOT_NUMBERS = {"nan", "inf", "+inf", "-inf", "infinity", "-infinity"}
 
+# 損得と制約の項目の名前 (要約の文に使う)
+FIELD_NAMES = {
+    "under_cost": "足りないときの損", "over_cost": "余ったときの損",
+    "stock": "今ある量", "step": "量の刻み", "value": "当たりの価値",
+    "cost": "行動の費用", "effect": "防げる割合", "budget": "件数の上限",
+    "budget_cost": "費用の上限", "miss_cost": "見逃しの損",
+    "false_alarm_cost": "空振りの損", "capacity": "回せる件数の上限",
+    "positive": "当たりのクラス",
+}
+
 # 意思決定の型の名前
 DECISION_NAMES = {
     "quantity": "量を決める", "select": "対象を選ぶ",
