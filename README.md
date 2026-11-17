@@ -1,2 +1,74 @@
 # ML-Quest
-機械学習をベースとした課題解決をするための問題設定をする.
+
+機械学習をもとにした課題解決のために, 問題を設定するライブラリ.
+
+機械学習は課題を解く手段の 1 つにすぎない. 課題から始めて, 課題を分解し, どの部分を機械学習に任せると課題の解決につながるかを, 決まった順の問いで埋めて 1 つのファイル (`problem.yaml`) に残す. 答えどうしの食い違いを確かめ, 後ろの段階 (データの分析, モデルの作成, 学習・評価, 推論) が要る値をまとめ, [ML-Found](https://github.com/victor-von-pooh/ML-Found) のプロジェクトの骨組み (config と学習のスクリプト) を書き出す. 機械学習が要らないと分かれば, そこで終える.
+
+画面は [ML-Pathfinder](https://github.com/victor-von-pooh/ML-Pathfinder). 設計の方針は [docs/DESIGN.md](docs/DESIGN.md) を参照.
+
+## 導入
+
+```bash
+pip install "ml-quest @ git+https://github.com/victor-von-pooh/ML-Quest.git"
+```
+
+Python 3.10 以上. 依存は PyYAML と pandas だけ.
+
+## 使い方
+
+```python
+from ml_quest import (
+    answer, check, describe, handoff, make_project, new_problem,
+    questions, save_problem
+)
+
+# 問いの順に答える (questions で問いの並びと, 今要るかが分かる)
+problem = new_problem("総菜の作る量")
+problem = answer(problem, "issue.owner", "店長")
+problem = answer(problem, "issue.pain", "総菜の廃棄が多く, 夕方には品切れも出る")
+# ... (問いの全ては docs/DESIGN.md の「問題の設定の形」)
+
+# 足りない答えと食い違い (error, warning, info)
+for item in check(problem):
+    print(item["level"], item["id"], item["message"])
+
+# 課題から行動までの要約, 後ろの段階ごとの値
+print("\n".join(describe(problem)))
+stages = handoff(problem)   # data, model, training, inference
+
+# 保存と, ML-Found のプロジェクトの骨組みの書き出し
+save_problem(problem, "problem.yaml")
+make_project(problem, "my_project")
+```
+
+見本の問題の設定 (架空の課題) は `example_problem` で作れる. 量を決める予測 (総菜の作る量), 対象を選ぶ分類 (解約の引き止め), 機械学習を使わない出口 (問い合わせの振り分け) の 3 つ.
+
+```python
+from ml_quest import EXAMPLES, example_problem
+
+problem = example_problem("総菜の作る量")
+```
+
+書き出した骨組みの README に, 次にすること (データの分析で選ぶ値, モデルの出力の大きさ, 学習の起動, 推論の一式の登録) が書かれる. 学習のスクリプトは ML-EDA, ML-ModelControl, ML-Found, ML-Inference を使うので, 学習する環境にはそれらを入れる.
+
+## 開発
+
+```bash
+python -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/pytest
+```
+
+| ディレクトリ | 内容 |
+| --- | --- |
+| `src/ml_quest/questions.py` | 問いの並び, タスクと指標の選択肢 |
+| `src/ml_quest/problem.py` | 問題の設定の作成, 答え, 読み書き, 列の名前の読み込み |
+| `src/ml_quest/check.py` | 確かめ |
+| `src/ml_quest/handoff.py` | 受け渡しの値と要約の文 |
+| `src/ml_quest/skeleton.py` | ML-Found のプロジェクトの骨組み |
+| `src/ml_quest/examples.py` | 見本の問題の設定 |
+| `docs/DESIGN.md` | 設計の方針と段階 |
+
+## ライセンス
+
+MIT
