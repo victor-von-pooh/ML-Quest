@@ -240,9 +240,14 @@ def series_columns(
     series: list[str]
         1 つで系列を分ける列か, 組み合わせで分ける列の並び (無ければ空)
     """
-    # 時刻の列が分からなければ候補なし
+    # 時刻の列 (答え, ML-EDA の推定, 日時の列が 1 つならその列). 分から
+    # なければ候補なし
     series: list[str] = []
-    time = active_value(problem, "ml.time_column") or data.roles.get("time")
+    times = [str(n) for n, info in profiled["columns"].items()
+             if info.get("type") == "datetime"]
+    time = active_value(problem, "ml.time_column") or data.roles.get(
+        "time"
+    ) or (times[0] if len(times) == 1 else None)
     target = active_value(problem, "ml.target")
     frame = data.frame
     if not time or time not in frame.columns:
@@ -554,11 +559,17 @@ def data_findings(
                 " (量を決めるなら回帰か時系列の予測のまま)"
             ))
 
-    # 漏れの疑い (値は入れさせず, 確かめてもらう)
+    # 漏れの疑い (値は入れさせず, 確かめてもらう. 既に分からない列か使っ
+    # てはいけない列に入れた列は除く)
+    decided = set(active_value(problem, "information.unknown") or []) | set(
+        active_value(problem, "information.forbidden") or []
+    )
     for item in profiled["findings"]:
         if item["code"] == "target_leak":
             names = [str(n) for n in item.get("columns") or []
-                     if str(n) != target]
+                     if str(n) != target and str(n) not in decided]
+            if not names:
+                continue
             found.append(finding(
                 "warning", "information.unknown",
                 f"{', '.join(names)} は目的の列とほぼ同じ動きです. 予測の"
