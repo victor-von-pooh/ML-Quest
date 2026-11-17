@@ -10,7 +10,9 @@ import yaml
 
 from ml_quest.data import copy_data
 from ml_quest.handoff import describe, handoff
-from ml_quest.problem import active_value, get_value, set_value
+from ml_quest.problem import (
+    active_value, data_location, get_value, set_value
+)
 
 # 学習のスクリプトの頭 (読み込みと, 問題の設定から決まる既定値). 答えの
 # 文字は, コードを壊さないように JSON の文字列か 1 行のコメントで埋め込み
@@ -626,7 +628,7 @@ def make_project(
     # 写した問題の設定はその場所を指す
     stages = handoff(problem)
     path = Path(path)
-    source = get_value(problem, "data.source")
+    source = data_location(problem)
     data_file = (Path("data") / Path(source).name
                  if isinstance(source, str) and Path(source).exists()
                  else None)

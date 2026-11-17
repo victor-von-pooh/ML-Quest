@@ -2,7 +2,7 @@ from typing import Any, Optional
 
 from ml_quest.check import check
 from ml_quest.problem import (
-    DECISION_NAMES, FIELD_NAMES, active_value, get_value
+    DECISION_NAMES, FIELD_NAMES, active_value, data_location, get_value
 )
 from ml_quest.questions import METRICS, TASKS
 
@@ -100,8 +100,9 @@ def handoff(problem: dict) -> dict:
         "split": "time" if task == "forecasting" else "random",
         "min_lag": value(problem, "ml.available_lag"),
         "known": value(problem, "information.known") or [],
-        "source": {name: value(problem, f"data.{name}")
-                   for name in ("source", "loader", "options")}
+        "source": {"source": data_location(problem),
+                   "loader": value(problem, "data.loader"),
+                   "options": value(problem, "data.options")}
         if value(problem, "data.source") else None,
         "drop": (value(problem, "information.unknown") or [])
         + (value(problem, "information.forbidden") or []),
