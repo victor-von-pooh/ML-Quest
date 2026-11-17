@@ -1,3 +1,4 @@
+from ml_quest.bridge import apply_recipe, recipe_from
 from ml_quest.check import check, is_ready
 from ml_quest.data import attach_data, inspect_data
 from ml_quest.examples import EXAMPLES, example_problem
@@ -11,8 +12,9 @@ from ml_quest.skeleton import make_project
 
 __all__ = [
     "EXAMPLES", "FORMAT_VERSION", "METRICS", "QUESTIONS", "SECTIONS",
-    "TASKS", "answer", "attach_data", "check", "describe",
+    "TASKS", "answer", "apply_recipe", "attach_data", "check", "describe",
     "example_problem", "get_value", "handoff", "inspect_data", "is_ready",
     "load_problem", "make_project", "new_problem", "questions",
+    "recipe_from",
     "read_columns", "save_problem",
 ]

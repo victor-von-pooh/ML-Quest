@@ -1,7 +1,9 @@
 import copy
 from pathlib import Path
+import shutil
 from typing import Any, Optional, Union
 
+import numpy as np
 import pandas as pd
 
 from ml_quest.check import finding
@@ -121,11 +123,48 @@ def source_of(data: Any) -> dict:
     return source
 
 
-def attach_data(problem: dict, path: Union[str, Path]) -> dict:
+def copy_data(location: Path, copy_to: Path) -> Path:
+    """
+    データのファイルかディレクトリを, 写し先のディレクトリに写す関数
+
+    Parameters
+    ----------
+    location: Path
+        元の場所
+    copy_to: Path
+        写し先のディレクトリ (無ければ作る. 同じ名前は置き換える)
+
+    Returns
+    ----------
+    copied: Path
+        写した場所
+    """
+    # 前の写しを消してから写す (ファイルの更新の時刻も写す)
+    copy_to.mkdir(parents=True, exist_ok=True)
+    copied = copy_to / location.name
+    if copied.resolve() == location.resolve():
+        return copied
+    if copied.is_dir():
+        shutil.rmtree(copied)
+    elif copied.exists():
+        copied.unlink()
+    if location.is_dir():
+        shutil.copytree(location, copied)
+    else:
+        shutil.copy2(location, copied)
+
+    return copied
+
+
+def attach_data(
+    problem: dict, path: Union[str, Path],
+    copy_to: Optional[Union[str, Path]] = None
+) -> dict:
     """
     手元のデータを読み, 場所と読み方と列の名前を入れる関数
 
-    元の問題の設定は変えない
+    元の問題の設定は変えない. 写し先を渡すとデータを写し, 写した場所を
+    データの場所にする
 
     Parameters
     ----------
@@ -133,11 +172,13 @@ def attach_data(problem: dict, path: Union[str, Path]) -> dict:
         問題の設定
     path: Union[str, Path]
         データの場所 (絶対パス)
+    copy_to: Optional[Union[str, Path]] = None
+        写し先のディレクトリ (None なら写さない)
 
     Returns
     ----------
     updated: dict
-        data (source, loader, options, size, modified) と
+        data (source, origin, loader, options, size, modified) と
         information.columns を入れた問題の設定
 
     Raises
@@ -145,19 +186,25 @@ def attach_data(problem: dict, path: Union[str, Path]) -> dict:
     ValueError
         相対パスの場合, ML-EDA が無い場合, 読めない場合
     """
-    # 絶対パスだけ (読めない誤りは ML-EDA の文のまま)
+    # 絶対パスだけ. 読めるかを確かめてから写す (読めない誤りは ML-EDA の文)
     location = Path(path).expanduser()
     if not location.is_absolute():
         raise ValueError(f"{path} は絶対パスで書いてください")
     try:
         data, _ = read_data(location, None, {}, None)
+        if copy_to is not None:
+            copied = copy_data(location, Path(copy_to).expanduser())
+            data, _ = read_data(copied, None, {}, None)
+            location = copied
     except ValueError:
         raise
     except Exception as error:
         raise ValueError(f"データを読めません: {error}") from error
 
-    # 場所と読み方と列の名前
+    # 場所と読み方と列の名前 (写したなら元の場所も)
     updated = answer(problem, "data.source", str(location))
+    if copy_to is not None:
+        set_value(updated, "data.origin", str(Path(path).expanduser()))
     for key, value in source_of(data).items():
         set_value(updated, f"data.{key}", copy.deepcopy(value))
     columns = [str(name) for name in data.frame.columns]
@@ -658,6 +705,222 @@ def horizon_findings(problem: dict, profiled: dict) -> list[dict]:
     return found
 
 
+def amount_values(frame: pd.DataFrame, value: Any) -> Any:
+    """
+    損得の値を, 数か行ごとの列の値にする関数
+
+    Parameters
+    ----------
+    frame: pd.DataFrame
+        データの表
+    value: Any
+        数か列の名前
+
+    Returns
+    ----------
+    values: Any
+        数か, 列の数の値
+    """
+    # 列の名前なら列の値
+    values = pd.to_numeric(frame[value], errors="coerce") if isinstance(
+        value, str
+    ) else float(value)
+
+    return values
+
+
+def acted(column: pd.Series) -> pd.Series:
+    """
+    行動したかの列を真偽値にする関数
+
+    Parameters
+    ----------
+    column: pd.Series
+        列 (真偽値, 0 と 1, yes や true の文字)
+
+    Returns
+    ----------
+    flags: pd.Series
+        行動したか
+    """
+    # 文字は yes, true, 1, はい を真とする
+    if column.dtype == bool:
+        return column
+    text = column.astype(str).str.strip().str.lower()
+    flags = text.isin(["1", "1.0", "true", "yes", "y", "はい"])
+
+    return flags
+
+
+def baseline_values(
+    frame: pd.DataFrame, current: dict, target: str, series: list[str]
+) -> pd.Series:
+    """
+    今のやり方の決まりから, 行ごとの今のやり方の量を作る関数
+
+    Parameters
+    ----------
+    frame: pd.DataFrame
+        時刻の順に並べた表
+    current: dict
+        今のやり方 (lag, mean, column)
+    target: str
+        目的の列
+    series: list[str]
+        系列を分ける列
+
+    Returns
+    ----------
+    values: pd.Series
+        今のやり方の量 (前の期が足りない行は欠損)
+    """
+    # 系列ごとに, k つ前か直前の k つの平均
+    if current["type"] == "column":
+        values = pd.to_numeric(frame[current["column"]], errors="coerce")
+        return values
+    y = pd.to_numeric(frame[target], errors="coerce")
+    k = int(current["periods"])
+    grouped = y.groupby([frame[name] for name in series]) if series else None
+    if current["type"] == "lag":
+        values = grouped.shift(k) if grouped is not None else y.shift(k)
+    else:
+        shifted = grouped.shift(1) if grouped is not None else y.shift(1)
+        values = (shifted.groupby([frame[name] for name in series])
+                  .rolling(k).mean().reset_index(level=list(
+                      range(len(series))
+                  ), drop=True)
+                  if series else shifted.rolling(k).mean())
+
+    return values
+
+
+def baseline_result(problem: dict, data: Any) -> Optional[dict]:
+    """
+    データの上で, 今のやり方の実際の損 (量と振り分け) か得 (選ぶ) を
+    問題の設定の損得で求める関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+    data: Any
+        ML-EDA の Data
+
+    Returns
+    ----------
+    result: Optional[dict]
+        kind (loss か gain), total, rows, days, per_30_days, sentence
+        (求められなければ None)
+    """
+    # 目的の列, 行動, 今のやり方が揃い, 列がデータにあること
+    current = active_value(problem, "action.current")
+    decision = active_value(problem, "action.decision") or {}
+    target = active_value(problem, "ml.target")
+    frame = data.frame
+    if not current or not target or target not in frame.columns or (
+        current.get("type") == "column"
+        and current.get("column") not in frame.columns
+    ) or decision.get("type") not in ("quantity", "select", "triage"):
+        return None
+    time = active_value(problem, "ml.time_column") or data.roles.get("time")
+    series = [name for name in active_value(problem, "ml.series_by") or []
+              if name in frame.columns]
+    if time and time in frame.columns:
+        frame = frame.sort_values(time, kind="stable")
+    kind = decision["type"]
+    try:
+        values = rows_result(problem, frame, decision, current, target,
+                             series)
+    except (KeyError, ValueError, TypeError):
+        return None
+    if values is None or values.empty:
+        return None
+
+    # 期間 (時刻の列があれば日数) と 30 日あたり
+    total = float(values.sum())
+    days = None
+    if time and time in frame.columns:
+        times = pd.to_datetime(frame.loc[values.index, time], errors="coerce")
+        if times.notna().any():
+            days = int((times.max() - times.min()).days) + 1
+    per_30 = total / days * 30 if days else None
+    name = "得 (効果は仮定)" if kind == "select" else "損"
+    span = f"{days:,} 日で" if days else "データの全てで"
+    sentence = (f"今のやり方の{name}は, {span} {total:,.0f}"
+                + (f" (30 日あたり {per_30:,.0f})" if per_30 else "")
+                + f". {len(values):,} 行で求めた")
+    result = {"kind": "gain" if kind == "select" else "loss",
+              "total": total, "rows": int(len(values)), "days": days,
+              "per_30_days": per_30, "sentence": sentence}
+
+    return result
+
+
+def rows_result(
+    problem: dict, frame: pd.DataFrame, decision: dict, current: dict,
+    target: str, series: list[str]
+) -> Optional[pd.Series]:
+    """
+    行ごとの今のやり方の損か得を求める関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+    frame: pd.DataFrame
+        時刻の順に並べた表
+    decision: dict
+        意思決定の型と損得
+    current: dict
+        今のやり方
+    target: str
+        目的の列
+    series: list[str]
+        系列を分ける列
+
+    Returns
+    ----------
+    values: Optional[pd.Series]
+        求められた行の損か得 (量は足りない分と余る分の損)
+    """
+    # 量: 足りない損と余る損
+    kind = decision["type"]
+    y = pd.to_numeric(frame[target], errors="coerce")
+    if kind == "quantity":
+        placed = baseline_values(frame, current, target, series)
+        keep = placed.notna() & y.notna()
+        under = amount_values(frame, decision["under_cost"])
+        over = amount_values(frame, decision["over_cost"])
+        loss = under * np.maximum(y - placed, 0) + over * np.maximum(
+            placed - y, 0
+        )
+        values = loss[keep]
+        return values
+
+    # 選ぶと振り分け: 行動したかの列と, 当たりか
+    if current["type"] != "column":
+        return None
+    flags = acted(frame[current["column"]])
+    positive = active_value(problem, "ml.positive")
+    if positive is None:
+        return None
+    hit = frame[target].map(label_text) == label_text(
+        number_or_text(str(positive))
+    )
+    keep = frame[target].notna()
+    if kind == "triage":
+        miss = amount_values(frame, decision["miss_cost"])
+        alarm = amount_values(frame, decision["false_alarm_cost"])
+        values = (miss * (~flags & hit) + alarm * (flags & ~hit))[keep]
+        return values
+    gain = amount_values(frame, decision["value"]) * amount_values(
+        frame, decision["effect"]
+    ) * hit - amount_values(frame, decision["cost"])
+    values = gain.where(flags, 0.0)[keep]
+
+    return values
+
+
 def inspect_data(problem: dict) -> Optional[dict]:
     """
     入れたデータを読み直して分析し, 概要, 答えの候補, 確かめを返す関数
@@ -706,10 +969,24 @@ def inspect_data(problem: dict) -> Optional[dict]:
         "interval_seconds": series.get("interval_seconds"),
     }
     suggestions = suggestions_of(problem, profiled, data)
+    findings = data_findings(problem, profiled, data, note, suggestions)
+
+    # 今のやり方の損か得 (量と振り分けの損は指標の今の値の候補にも)
+    baseline = baseline_result(problem, data)
+    if baseline is not None:
+        findings.append(finding("info", "action.current",
+                                baseline["sentence"]))
+        if baseline["kind"] == "loss":
+            value = baseline["per_30_days"] or baseline["total"]
+            suggestions.append(suggestion(
+                "issue.kpi.current", [f"{value:.0f}"],
+                "今のやり方の損をデータで求めた値 ("
+                + ("30 日あたり" if baseline["per_30_days"] else "データの全て")
+                + ". 指標が同じ定義で, 単位が合う場合に)"
+            ))
     result = {
         "overview": overview, "suggestions": suggestions,
-        "findings": data_findings(problem, profiled, data, note,
-                                  suggestions),
+        "findings": findings, "baseline": baseline,
     }
 
     return result

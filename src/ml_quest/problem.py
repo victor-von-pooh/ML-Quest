@@ -515,6 +515,48 @@ def clean_amount(value: Any, key: str) -> Union[int, float, str, None]:
     return amount
 
 
+def clean_baseline(problem: dict, value: Any) -> Optional[dict]:
+    """
+    今のやり方をデータで書いた答えを確かめて返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+    value: Any
+        答え (type と, periods か column を持つ辞書)
+
+    Returns
+    ----------
+    baseline: Optional[dict]
+        今のやり方 (空なら None)
+    """
+    # 種類ごとの項目 (期の数は 1 以上の整数, 列は使えるデータの列から)
+    if value is None:
+        return None
+    if not isinstance(value, dict) or value.get("type") not in (
+        "lag", "mean", "column"
+    ):
+        raise ValueError("action.current の type は lag, mean, column の"
+                         "どれかにしてください")
+    kind = value["type"]
+    if kind == "column":
+        column = clean_text(value.get("column"), "action.current の column")
+        columns = get_value(problem, "information.columns") or []
+        if not column:
+            raise ValueError("今のやり方の列を書いてください")
+        if columns and column not in columns:
+            raise ValueError(f"{column} は使えるデータの列にありません")
+        baseline: dict = {"type": kind, "column": column}
+        return baseline
+    periods = clean_number(value.get("periods"), "action.current の periods")
+    if not isinstance(periods, int) or periods < 1:
+        raise ValueError("期の数は 1 以上の整数にしてください")
+    baseline = {"type": kind, "periods": periods}
+
+    return baseline
+
+
 def clean_answer(problem: dict, question: dict, value: Any) -> Any:
     """
     問いの種類に合わせて答えを確かめ, 入れる形にする関数
@@ -560,6 +602,9 @@ def clean_answer(problem: dict, question: dict, value: Any) -> Any:
         return cleaned
     if kind == "decision":
         cleaned = clean_decision(value)
+        return cleaned
+    if kind == "baseline":
+        cleaned = clean_baseline(problem, value)
         return cleaned
     if kind == "source":
         cleaned = clean_text(value, key)
