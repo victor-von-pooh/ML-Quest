@@ -1,13 +1,17 @@
 import copy
 from pathlib import Path
+import re
 import shutil
 from typing import Any, Optional, Union
+import uuid
 
 import numpy as np
 import pandas as pd
 
 from ml_quest.check import finding
-from ml_quest.problem import active_value, answer, get_value, set_value
+from ml_quest.problem import (
+    active_value, answer, data_location, get_value, set_value
+)
 
 # 行が少ないとみなす行の数
 FEW_ROWS = 100
@@ -26,6 +30,10 @@ RELEVANT_FINDINGS = {
 
 # 読み方として持たない設定 (時刻の列は答えから毎回付ける)
 VOLATILE_OPTIONS = {"time_column"}
+
+# 写しごとのサブディレクトリの名前 (16 進の桁数. 片付けはこの名前だけ)
+COPY_DIGITS = 12
+COPY_NAME = re.compile(f"[0-9a-f]{{{COPY_DIGITS}}}")
 
 
 def import_eda() -> Any:
@@ -142,37 +150,131 @@ def copy_data(location: Path, copy_to: Path) -> Path:
     Raises
     ----------
     ValueError
-        写し先が相対パスか, 元のディレクトリの中の場合
+        写し先が相対パスか, 元のディレクトリの中の場合, 元の場所に名前が
+        無い場合, 空きが足りない場合
     """
-    # 写し先の確かめ (相対パスと, 元のディレクトリの中は誤り)
+    # 写し先の確かめ (相対パスと元のディレクトリの中は誤り. .. などは正規化)
     if not copy_to.is_absolute():
         raise ValueError(f"{copy_to} は絶対パスにしてください")
+    location = location.resolve()
+    copy_to = copy_to.resolve()
+    if not location.name:
+        raise ValueError(f"{location} は写せません")
     copied = copy_to / location.name
-    if copied.resolve() == location.resolve():
+    if copied == location:
         return copied
-    if location.is_dir() and copy_to.resolve().is_relative_to(
-        location.resolve()
-    ):
+    if location.is_dir() and copy_to.is_relative_to(location):
         raise ValueError("写し先が元のディレクトリの中です")
 
-    # 大きさと更新の時刻が同じなら写さない. 一時の名前に写してから置き換え
-    # (途中で失敗しても前の写しが残る)
-    if copied.is_file() and location.is_file():
-        old, new = copied.stat(), location.stat()
-        if (old.st_size, int(old.st_mtime)) == (new.st_size,
-                                                 int(new.st_mtime)):
-            return copied
+    # 空きの確かめ. 他と重ならない一時の名前に写してから置き換え (途中で
+    # 失敗しても前の写しが残る. リンクは指す先を写し, 元から独立)
     copy_to.mkdir(parents=True, exist_ok=True)
-    temporary = copy_to / f".{location.name}.copying"
-    remove_path(temporary)
-    if location.is_dir():
-        shutil.copytree(location, temporary)
-    else:
-        shutil.copy2(location, temporary)
-    remove_path(copied)
-    temporary.rename(copied)
+    needed = size_of(location)
+    free = shutil.disk_usage(copy_to).free
+    if needed > free:
+        raise ValueError(
+            f"写すのに {needed:,} バイト要りますが, 空きは {free:,} バイト"
+            "です"
+        )
+    temporary = copy_to / f".{location.name}.{uuid.uuid4().hex}.copying"
+    try:
+        if location.is_dir():
+            shutil.copytree(location, temporary)
+            remove_path(copied)
+        else:
+            shutil.copy2(location, temporary)
+        temporary.replace(copied)
+    finally:
+        remove_path(temporary)
 
     return copied
+
+
+def size_of(location: Path) -> int:
+    """
+    ファイルかディレクトリの大きさ (バイト) を返す関数
+
+    Parameters
+    ----------
+    location: Path
+        場所 (ディレクトリの中のリンクは指す先の大きさ)
+
+    Returns
+    ----------
+    size: int
+        大きさの合計
+    """
+    # ディレクトリは中のファイルの合計
+    if not location.is_dir():
+        size = location.stat().st_size
+        return size
+    size = sum(item.stat().st_size for item in location.rglob("*")
+               if item.is_file())
+
+    return size
+
+
+def same_file(first: Path, second: Path) -> bool:
+    """
+    2 つのファイルの大きさと更新の時刻 (ナノ秒) が同じかを返す関数
+
+    Parameters
+    ----------
+    first: Path
+        1 つ目
+    second: Path
+        2 つ目
+
+    Returns
+    ----------
+    same: bool
+        どちらもファイルで, 大きさと更新の時刻が同じか
+    """
+    # ディレクトリは中を見ないので同じとしない
+    if not (first.is_file() and second.is_file()):
+        return False
+    old, new = first.stat(), second.stat()
+    same = (old.st_size, old.st_mtime_ns) == (new.st_size, new.st_mtime_ns)
+
+    return same
+
+
+def prune_copies(copy_to: Union[str, Path], keep: Optional[str]) -> None:
+    """
+    写し先のディレクトリから, 今のデータの場所の写し以外を消す関数
+
+    Parameters
+    ----------
+    copy_to: Union[str, Path]
+        attach_data に渡した写し先のディレクトリ
+    keep: Optional[str]
+        残すデータの場所 (写し先の外か None なら全て消す)
+
+    Returns
+    ----------
+    None
+
+    Raises
+    ----------
+    ValueError
+        残す場所が相対パスの場合
+    """
+    # attach_data が作った写しごとのサブディレクトリ (12 桁の 16 進の名前)
+    # のうち, 今の場所を含むもの以外. 他のファイルは消さない
+    root = Path(copy_to).expanduser()
+    if keep and not Path(keep).expanduser().is_absolute():
+        raise ValueError(f"{keep} は絶対パスにしてください")
+    if not root.is_dir():
+        return
+    kept = Path(keep).expanduser().resolve() if keep else None
+    for child in root.iterdir():
+        if not COPY_NAME.fullmatch(child.name) or child.is_symlink() or (
+            not child.is_dir()
+        ):
+            continue
+        if kept is not None and kept.is_relative_to(child.resolve()):
+            continue
+        remove_path(child)
 
 
 def remove_path(path: Path) -> None:
@@ -254,27 +356,33 @@ def attach_data(
     ValueError
         相対パスの場合, ML-EDA が無い場合, 読めない場合
     """
-    # 絶対パスだけ. 写してから 1 回だけ読み, 読めなければ写しを消す
+    # 絶対パスだけ. 写してから 1 回だけ読み, 読めなければ新しい写しを消す
     location = Path(path).expanduser()
     target = Path(copy_to).expanduser() if copy_to is not None else None
     if not location.is_absolute() or (target and not target.is_absolute()):
         raise ValueError(f"{path} と写し先は絶対パスで書いてください")
-    copied = None
+    location = location.resolve()
+    copied, fresh = copy_place(problem, location, target)
     try:
-        if target is not None:
-            copied = copy_data(location, target)
+        if fresh is not None:
+            copied = copy_data(location, fresh)
         data, _ = read_data(copied or location, None, {}, None)
     except Exception as error:
-        if copied is not None and copied != location:
-            remove_path(copied)
+        if fresh is not None:
+            remove_path(fresh)
         if isinstance(error, ValueError):
             raise
         raise ValueError(f"データを読めません: {error}") from error
 
     # 場所と読み方と列の名前 (写したなら元の場所も. 時刻の間隔も)
     updated = answer(problem, "data.source", str(copied or location))
-    set_value(updated, "data.origin",
-              str(location) if copied is not None else None)
+    origin = None
+    if copied == location:
+        same = str(location) == get_value(problem, "data.source")
+        origin = get_value(problem, "data.origin") if same else None
+    elif copied is not None:
+        origin = str(location)
+    set_value(updated, "data.origin", origin)
     for key, value in source_of(data).items():
         set_value(updated, f"data.{key}", copy.deepcopy(value))
     time = active_value(problem, "ml.time_column") or data.roles.get("time")
@@ -283,6 +391,57 @@ def attach_data(
     updated = answer(updated, "information.columns", columns)
 
     return updated
+
+
+def copy_place(
+    problem: dict, location: Path, target: Optional[Path]
+) -> tuple[Optional[Path], Optional[Path]]:
+    """
+    データを写す場所を決める関数
+
+    写しごとに別のサブディレクトリにするので, 入れ直しで読めなくても今の
+    写しは残る. 同じ元のファイルが変わっていなければ今の写しを使う
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+    location: Path
+        元の場所 (resolve 済み)
+    target: Optional[Path]
+        写し先のディレクトリ (None なら写さない)
+
+    Returns
+    ----------
+    place: tuple[Optional[Path], Optional[Path]]
+        使う今の写し (あれば) と, 新しく写すサブディレクトリ (写さないなら
+        None)
+
+    Raises
+    ----------
+    ValueError
+        写し先そのものをデータにする場合
+    """
+    # 写さない, 写し先の中のデータ, 変わっていない同じ元のファイル
+    if target is None:
+        place: tuple[Optional[Path], Optional[Path]] = (None, None)
+        return place
+    root = target.resolve()
+    if location == root:
+        raise ValueError("写し先そのものはデータにできません")
+    if location.is_relative_to(root):
+        place = (location, None)
+        return place
+    source = get_value(problem, "data.source")
+    current = Path(source) if isinstance(source, str) else None
+    if current is not None and get_value(problem, "data.origin") == str(
+        location
+    ) and current.is_relative_to(root) and same_file(current, location):
+        place = (current, None)
+        return place
+    place = (None, root / uuid.uuid4().hex[:COPY_DIGITS])
+
+    return place
 
 
 def is_label(info: dict) -> bool:
@@ -1038,7 +1197,7 @@ def inspect_data(problem: dict) -> Optional[dict]:
         suggestions, findings (データを入れていなければ None)
     """
     # 機械学習を使い, データを入れた場合だけ
-    source = active_value(problem, "data.source")
+    source = data_location(problem)
     if not source:
         return None
     try:

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -5,7 +6,8 @@ import pytest
 
 from ml_quest import (
     answer, apply_recipe, attach_data, check, example_problem, get_value,
-    inspect_data, load_problem, make_project, recipe_from, resolve_choice
+    handoff, inspect_data, load_problem, make_project, prune_copies,
+    recipe_from, resolve_choice
 )
 
 
@@ -61,9 +63,10 @@ def test_copy_and_project(tmp_path: Path) -> None:
     path = daily_csv(tmp_path)
     problem = attach_data(example_problem("総菜の作る量"), path,
                           copy_to=tmp_path / "copy")
-    copied = tmp_path / "copy" / "sozai.csv"
-    assert get_value(problem, "data.source") == str(copied)
-    assert get_value(problem, "data.origin") == str(path)
+    copied = Path(get_value(problem, "data.source"))
+    assert copied.name == "sozai.csv"
+    assert copied.parent.parent == (tmp_path / "copy").resolve()
+    assert get_value(problem, "data.origin") == str(path.resolve())
     assert copied.read_bytes() == path.read_bytes()
 
     # 骨組みのプロジェクトの data にも写す
@@ -296,7 +299,7 @@ def test_copy_rules(tmp_path: Path) -> None:
     broken.write_bytes(b"not a zip")
     with pytest.raises(ValueError):
         attach_data(problem, broken, copy_to=tmp_path / "copies")
-    assert not (tmp_path / "copies" / "broken.xlsx").exists()
+    assert not list((tmp_path / "copies").rglob("broken.xlsx"))
     with pytest.raises(ValueError, match="中"):
         attach_data(problem, path.parent, copy_to=path.parent / "inside")
 
@@ -339,3 +342,107 @@ def test_current_practice_calendar(tmp_path: Path) -> None:
     churn = answer(churn, "action.current", {"type": "column",
                                              "column": "promo"})
     assert "reason" in inspect_data(churn)["baseline"]
+
+
+def test_copy_again(tmp_path: Path) -> None:
+    """
+    入れ直しで, 今の写しを壊さず, 古い写しを片付け, 中身の違う同じ名前の
+    ファイルを写し直すことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # .. で終わる場所は写し先の外に出ない
+    pytest.importorskip("ml_eda")
+    (tmp_path / "src" / "d1").mkdir(parents=True)
+    first = daily_csv(tmp_path / "src" / "d1")
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "problem.yaml").write_text("keep", encoding="utf-8")
+    copies = store / "data"
+    problem = example_problem("総菜の作る量")
+    try:
+        parent = attach_data(problem, tmp_path / "src" / "d1" / "..",
+                             copy_to=copies)
+        assert Path(get_value(parent, "data.source")).is_relative_to(
+            copies.resolve()
+        )
+    except ValueError:
+        pass
+    assert (store / "problem.yaml").read_text("utf-8") == "keep"
+
+    # 同じ名前の読めないファイルを入れ直しても, 今の写しは残る
+    problem = attach_data(problem, first, copy_to=copies)
+    current = Path(get_value(problem, "data.source"))
+    broken = tmp_path / "d3" / "sozai.csv"
+    broken.parent.mkdir()
+    broken.write_bytes(b"\x00\x01\x02")
+    with pytest.raises(ValueError):
+        attach_data(problem, broken, copy_to=copies)
+    assert current.read_bytes() == first.read_bytes()
+
+    # 変わっていない同じファイルは写し直さない. 大きさと時刻が同じでも
+    # 別の場所のファイルは写し直す
+    again = attach_data(problem, first, copy_to=copies)
+    assert get_value(again, "data.source") == str(current)
+    other = tmp_path / "d2" / "sozai.csv"
+    other.parent.mkdir()
+    other.write_bytes(first.read_bytes().replace(b"2025", b"2024", 1))
+    stat = first.stat()
+    os.utime(other, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    moved = attach_data(problem, other, copy_to=copies)
+    assert Path(get_value(moved, "data.source")).read_bytes() == (
+        other.read_bytes()
+    )
+
+    # 古い写しの片付けと, 写しが消えたら元の場所
+    prune_copies(copies, get_value(moved, "data.source"))
+    assert [p.name for p in copies.iterdir()] == [
+        Path(get_value(moved, "data.source")).parent.name
+    ]
+    prune_copies(copies, None)
+    assert handoff(moved)["data"]["source"]["source"] == str(other)
+
+
+def test_prune_keeps_other_files(tmp_path: Path) -> None:
+    """
+    片付けが写しでないファイルを消さず, 写し先の中の別のファイルを入れると
+    前の元の場所を引き継がないことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 写し先に利用者のファイルがある
+    pytest.importorskip("ml_eda")
+    path = daily_csv(tmp_path)
+    copies = tmp_path / "copies"
+    copies.mkdir()
+    (copies / "mine.txt").write_text("keep", encoding="utf-8")
+    (copies / "own").mkdir()
+    problem = attach_data(example_problem("総菜の作る量"), path,
+                          copy_to=copies)
+    prune_copies(copies, None)
+    assert (copies / "mine.txt").is_file() and (copies / "own").is_dir()
+    with pytest.raises(ValueError, match="絶対パス"):
+        prune_copies(copies, "relative.csv")
+    with pytest.raises(ValueError, match="写し先そのもの"):
+        attach_data(problem, copies, copy_to=copies)
+
+    # 写し先の中の別のファイルは元の場所を持たない
+    other = copies / "other.csv"
+    other.write_bytes(path.read_bytes())
+    inside = attach_data(problem, other, copy_to=copies)
+    assert get_value(inside, "data.source") == str(other.resolve())
+    assert get_value(inside, "data.origin") is None

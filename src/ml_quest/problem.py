@@ -259,6 +259,33 @@ def active_value(problem: dict, key: str) -> Any:
     return value
 
 
+def data_location(problem: dict) -> Optional[str]:
+    """
+    読むデータの場所を返す関数
+
+    写しが消えていれば元の場所 (data.origin) を使う
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+
+    Returns
+    ----------
+    location: Optional[str]
+        データの場所 (データを入れていなければ None)
+    """
+    # 写しが在ればそれ, 無ければ在る元の場所
+    location = active_value(problem, "data.source")
+    origin = get_value(problem, "data.origin")
+    if location and origin and not Path(location).exists() and (
+        Path(origin).exists()
+    ):
+        location = origin
+
+    return location
+
+
 def is_answered(value: Any) -> bool:
     """
     答えが空でないかを返す関数
