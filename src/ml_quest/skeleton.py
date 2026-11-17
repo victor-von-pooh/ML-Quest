@@ -1,3 +1,4 @@
+import copy
 import json
 from pathlib import Path
 import re
@@ -7,9 +8,9 @@ from typing import Any, Optional, Union
 
 import yaml
 
-from ml_quest.handoff import describe, handoff
 from ml_quest.data import copy_data
-from ml_quest.problem import active_value, get_value
+from ml_quest.handoff import describe, handoff
+from ml_quest.problem import active_value, get_value, set_value
 
 # 学習のスクリプトの頭 (読み込みと, 問題の設定から決まる既定値). 答えの
 # 文字は, コードを壊さないように JSON の文字列か 1 行のコメントで埋め込み
@@ -543,7 +544,7 @@ def project_readme(problem: dict, stages: dict) -> str:
         "`export_dataset`): データを読み, 次の値でレシピを作り, このディレクトリ"
         "の `outputs/dataset` に書き出す. 検証用の分割は必ず作る"
         + (f". データはこのディレクトリの `data/{Path(source).name}` に写した"
-           if source else ""),
+           if source and Path(source).exists() else ""),
         f"    - 目的の列: `{data['target']}`, タスク: `{data['task']}`, "
         f"分割: {split}",
     ]
@@ -621,9 +622,19 @@ def make_project(
     ValueError
         渡せない問題の設定の場合と, 上書きしない既にあるファイルがある場合
     """
-    # 受け渡しの値 (渡せなければ誤り)
+    # 受け渡しの値 (渡せなければ誤り). データはプロジェクトの data に写し,
+    # 写した問題の設定はその場所を指す
     stages = handoff(problem)
     path = Path(path)
+    source = get_value(problem, "data.source")
+    data_file = (Path("data") / Path(source).name
+                 if isinstance(source, str) and Path(source).exists()
+                 else None)
+    if data_file is not None:
+        problem = copy.deepcopy(problem)
+        set_value(problem, "data.origin",
+                  get_value(problem, "data.origin") or source)
+        set_value(problem, "data.source", str((path / data_file).resolve()))
     files = {
         "problem.yaml": yaml.safe_dump(problem, allow_unicode=True,
                                        sort_keys=False),
@@ -635,13 +646,14 @@ def make_project(
 
     # 既にあるファイルと, ディレクトリを作れない場所の確かめ (全てを確かめ
     # てから書く. 途中で止まって一部だけが残らないように)
-    existing = [name for name in files if (path / name).exists()]
+    names = [*files, *([str(data_file)] if data_file else [])]
+    existing = [name for name in names if (path / name).exists()]
     if existing and not overwrite:
         raise ValueError(
             f"{', '.join(existing)} が既にあります (上書きするなら overwrite)"
         )
     blocked = sorted({
-        str(parent) for name in [*files, "models/x"]
+        str(parent) for name in [*names, "models/x"]
         for parent in [path, *(path / name).parents]
         if parent.exists() and not parent.is_dir()
     } | {str(path / name) for name in files if (path / name).is_dir()})
@@ -657,10 +669,9 @@ def make_project(
     (path / "models").mkdir(exist_ok=True)
     written = list(files)
 
-    # データを入れていれば, プロジェクトの data に写す
-    source = get_value(problem, "data.source")
-    if isinstance(source, str) and Path(source).exists():
-        copied = copy_data(Path(source), path / "data")
-        written.append(f"data/{copied.name}")
+    # データを入れていれば, プロジェクトの data への写し (確かめの後)
+    if data_file is not None and isinstance(source, str):
+        copy_data(Path(source), (path / "data").resolve())
+        written.append(str(data_file))
 
     return written

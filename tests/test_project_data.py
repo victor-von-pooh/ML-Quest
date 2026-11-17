@@ -5,7 +5,7 @@ import pytest
 
 from ml_quest import (
     answer, apply_recipe, attach_data, check, example_problem, get_value,
-    inspect_data, make_project, recipe_from
+    inspect_data, load_problem, make_project, recipe_from, resolve_choice
 )
 
 
@@ -106,8 +106,9 @@ def test_current_practice(tmp_path: Path) -> None:
     assert suggested["issue.kpi.current"] == [
         f"{found['baseline']['per_30_days']:.0f}"
     ]
+    # 平均は ML-EDA と同じく, 窓に値が 1 つでもあれば求める
     mean = answer(problem, "action.current", {"type": "mean", "periods": 7})
-    assert inspect_data(mean)["baseline"]["rows"] == 4 * 33
+    assert inspect_data(mean)["baseline"]["rows"] == 4 * 39
 
     # 答えの形の誤りと, 振り分けに k 期前は使えない
     with pytest.raises(ValueError, match="1 以上"):
@@ -196,11 +197,145 @@ def test_recipe_round_trip(tmp_path: Path) -> None:
     eda.export_dataset(data, recipe, tmp_path / "dataset")
     assert "sales_lag2" in eda.load_dataset(tmp_path / "dataset").features
 
-    # 客数を使うと決め直したレシピを書き戻すと, 分かる列に移る
+    # 客数を使うレシピは, 自動で移さず選ぶ問いにする
     changed = dict(recipe, steps=recipe["steps"][1:])
-    updated, changes = apply_recipe(problem, changed)
-    assert "customers" in get_value(updated, "information.known")
-    assert not get_value(updated, "information.unknown")
-    assert any("customers" in sentence for sentence in changes)
-    same, nothing = apply_recipe(problem, recipe)
-    assert nothing == [] and same == problem
+    result = apply_recipe(problem, changed)
+    assert result["changes"] == [] and result["conflicts"] == []
+    assert [c["column"] for c in result["choices"]] == ["customers"]
+    assert get_value(result["problem"], "information.unknown") == [
+        "customers"
+    ]
+    moved = resolve_choice(result["problem"], "customers", "known")
+    assert "customers" in get_value(moved, "information.known")
+    dropped = resolve_choice(result["problem"], "customers", "drop")
+    assert recipe_from(dropped)["recipe"]["steps"][0]["columns"] == [
+        "customers"
+    ]
+
+    # 書き戻したレシピは次の雛形になる (往復で同じ)
+    assert recipe_from(result["problem"])["recipe"] == changed
+
+    # 目的の列とタスクは書き戻し, 使ってはいけない列と漏れは食い違い
+    other = dict(recipe, target="customers", steps=[
+        {"op": "lag", "columns": ["customers"], "lags": [1],
+         "by": ["store", "item"], "time": "date", "freq": "86400s"},
+    ], split={"method": "random"})
+    forbidden = answer(problem, "information.forbidden", ["promo"])
+    result = apply_recipe(forbidden, other)
+    assert get_value(result["problem"], "ml.target") == "customers"
+    assert "customers" not in (
+        get_value(result["problem"], "information.unknown") or []
+    )
+    levels = {(f["id"], f["level"]) for f in result["conflicts"]}
+    assert ("information.forbidden", "error") in levels
+    assert ("ml.available_lag", "warning") in levels
+    assert ("ml.task", "warning") in levels
+
+
+def test_make_project_data_checks(tmp_path: Path) -> None:
+    """
+    骨組みを書き出すとき, データの写しも上書きの確かめに入り, 写した問題の
+    設定がプロジェクトのデータを指すことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 既にあるデータは上書きしない. data がファイルなら何も書かない
+    pytest.importorskip("ml_eda")
+    problem = attach_data(example_problem("総菜の作る量"),
+                          daily_csv(tmp_path))
+    project = tmp_path / "project"
+    (project / "data").mkdir(parents=True)
+    (project / "data" / "sozai.csv").write_text("mine", encoding="utf-8")
+    with pytest.raises(ValueError, match="既にあります"):
+        make_project(problem, project)
+    assert (project / "data" / "sozai.csv").read_text("utf-8") == "mine"
+    blocked = tmp_path / "blocked"
+    blocked.mkdir()
+    (blocked / "data").write_text("x", encoding="utf-8")
+    with pytest.raises(ValueError, match="邪魔"):
+        make_project(problem, blocked)
+    assert not (blocked / "README.md").exists()
+
+    # 写した問題の設定はプロジェクトのデータを指し, 元の場所を残す
+    make_project(problem, tmp_path / "fresh")
+    copied = load_problem(tmp_path / "fresh")
+    assert copied["data"]["source"] == str(
+        (tmp_path / "fresh" / "data" / "sozai.csv").resolve()
+    )
+    assert copied["data"]["origin"] == get_value(problem, "data.source")
+
+
+def test_copy_rules(tmp_path: Path) -> None:
+    """
+    写し先が相対パスか元のディレクトリの中なら誤りにし, 読めなければ写しを
+    残さないことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 相対パスの写し先と, 読めないファイルの写しの後始末
+    pytest.importorskip("ml_eda")
+    path = daily_csv(tmp_path)
+    problem = example_problem("総菜の作る量")
+    with pytest.raises(ValueError, match="絶対パス"):
+        attach_data(problem, path, copy_to="relative")
+    broken = tmp_path / "broken.xlsx"
+    broken.write_bytes(b"not a zip")
+    with pytest.raises(ValueError):
+        attach_data(problem, broken, copy_to=tmp_path / "copies")
+    assert not (tmp_path / "copies" / "broken.xlsx").exists()
+    with pytest.raises(ValueError, match="中"):
+        attach_data(problem, path.parent, copy_to=path.parent / "inside")
+
+
+def test_current_practice_calendar(tmp_path: Path) -> None:
+    """
+    休みの日で日付が飛んでも 7 期前は暦の 7 日前で数え, 対象を選ぶ行動は
+    得を求めないことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 日曜が休み. 売れた数は曜日で決まるので, 7 日前と同じなら損は 0
+    pytest.importorskip("ml_eda")
+    rows = [
+        {"date": day.strftime("%Y-%m-%d"), "store": "east", "item": "a",
+         "sales": 10 + day.day_of_week, "temperature_forecast": 15.0,
+         "promo": 0, "customers": 0}
+        for day in pd.date_range("2025-01-01", periods=42)
+        if day.day_of_week != 6
+    ]
+    path = tmp_path / "holiday.csv"
+    pd.DataFrame(rows).to_csv(path, index=False)
+    problem = attach_data(example_problem("総菜の作る量"), path)
+    assert get_value(problem, "data.interval_seconds") == 86400
+    weekly = answer(problem, "action.current", {"type": "lag", "periods": 7})
+    found = inspect_data(weekly)["baseline"]
+    assert found["total"] == 0 and found["rows"] > 0
+
+    # 選ぶ行動は, 行動した行の結果が行動の後なので求めない
+    churn = example_problem("解約の引き止め")
+    churn["data"] = problem["data"]
+    churn = answer(churn, "information.columns", list(rows[0]))
+    churn = answer(churn, "action.current", {"type": "column",
+                                             "column": "promo"})
+    assert "reason" in inspect_data(churn)["baseline"]
