@@ -44,9 +44,9 @@ make_project(problem, "my_project")
 手元のデータは, 課題と指標と分解 (1 から 3) に答えた後, 機械学習の受け持ち (4) で入れる. データは写さず, 場所と ML-EDA の読み方だけを持つ.
 
 ```python
-from ml_quest import attach_data, inspect_data
+from ml_quest import answer, attach_data, inspect_data
 
-problem = attach_data(problem, "/data/sozai.csv", copy_to="problem_dir/data")   # 写して, 場所, 読み方, 列の名前
+problem = attach_data(problem, "/data/sozai.csv", copy_to="/work/problem/data")   # 写して (写し先は絶対パス), 場所, 読み方, 列の名前
 problem = answer(problem, "action.current", {"type": "lag", "periods": 7})   # 今のやり方 (前の週の同じ曜日と同じ)
 found = inspect_data(problem)    # 概要, 答えの候補, 確かめ, 今のやり方の損 (指標の今の値の候補)
 ```
@@ -57,7 +57,7 @@ found = inspect_data(problem)    # 概要, 答えの候補, 確かめ, 今のや
 from ml_quest import apply_recipe, recipe_from
 
 start = recipe_from(problem)        # データの読み方と, ML-EDA のレシピの雛形 (目的の列, タスク, 除く列, 過去の値, 分割)
-problem, changes = apply_recipe(problem, recipe)   # データの分析で変えたレシピを問題の設定に書き戻す
+result = apply_recipe(problem, recipe)   # 目的の列とタスクを書き戻し, 列の使い方の食い違いと選ぶ問いを返す
 ```
 
 見本の問題の設定 (架空の課題) は `example_problem` で作れる. 量を決める予測 (総菜の作る量), 対象を選ぶ分類 (解約の引き止め), 機械学習を使わない出口 (問い合わせの振り分け) の 3 つ.
