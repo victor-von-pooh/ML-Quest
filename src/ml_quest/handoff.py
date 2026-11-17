@@ -150,7 +150,13 @@ def describe(problem: dict) -> list[str]:
     if kpi.get("name"):
         sentences.append(kpi_text(kpi))
 
-    # 機械学習の受け持ちと行動
+    # 決めること (予測より先) と機械学習の受け持ち
+    if value(problem, "action.what"):
+        sentences.append(
+            f"{value(problem, 'action.who') or '誰か'}が"
+            f"{value(problem, 'action.when') or 'いつか'}に"
+            f"{value(problem, 'action.what')}を決める"
+        )
     uses = value(problem, "ml.use")
     if uses is False:
         reason = value(problem, "ml.reason")
@@ -167,12 +173,6 @@ def describe(problem: dict) -> list[str]:
         sentences.append(
             f"機械学習で予測すること: {value(problem, 'ml.predict')}"
             + (f" ({'. '.join(details)})" if details else "")
-        )
-    if value(problem, "action.what"):
-        sentences.append(
-            f"{value(problem, 'action.who') or '誰か'}が"
-            f"{value(problem, 'action.when') or 'いつか'}に"
-            f"{value(problem, 'action.what')}を決める"
         )
     decision = value(problem, "action.decision")
     if isinstance(decision, dict) and decision.get("type") in DECISION_NAMES:

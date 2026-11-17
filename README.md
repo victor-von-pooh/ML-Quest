@@ -41,7 +41,7 @@ save_problem(problem, "problem.yaml")
 make_project(problem, "my_project")
 ```
 
-手元のデータは, 課題と指標と分解 (1 から 3) に答えた後, 機械学習の受け持ち (4) で入れる. データは写さず, 場所と ML-EDA の読み方だけを持つ.
+手元のデータは, 課題, 指標, 分解, 決めること (1 から 4) に答えた後, 機械学習の受け持ち (5) で入れる. 写し先を渡すとデータを写し, 写した場所と元の場所と ML-EDA の読み方を持つ.
 
 ```python
 from ml_quest import answer, attach_data, inspect_data
