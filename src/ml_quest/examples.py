@@ -32,11 +32,13 @@ EXAMPLES: dict[str, list[tuple[str, Any]]] = {
         ("ml.target", "sales"),
         ("ml.time_column", "date"),
         ("ml.series_by", ["store", "item"]),
+        ("ml.horizon", 1),
         ("ml.baseline", "前の週の同じ曜日と同じ数"),
         ("action.who", "店長"),
         ("action.when", "前の日の 17 時"),
         ("action.what", "品ごとの作る量"),
-        ("information.known", ["temperature_forecast", "promo"]),
+        ("information.known", ["store", "item", "temperature_forecast",
+                               "promo"]),
         ("information.unknown", ["customers"]),
         ("action.decision", {"type": "quantity", "under_cost": 200,
                              "over_cost": 150}),
@@ -85,7 +87,7 @@ EXAMPLES: dict[str, list[tuple[str, Any]]] = {
         ("action.what", "引き止めの連絡をする会員"),
         ("information.known", ["plan", "months", "inquiries",
                                "monthly_fee"]),
-        ("information.unknown", ["member_id"]),
+        ("information.forbidden", ["member_id"]),
         ("action.decision", {"type": "select", "value": 24000,
                              "cost": 1500, "effect": 0.2, "budget": 300}),
         ("action.basis", "1 人の 1 年分の料金 24,000 円. 連絡 1 件の人件費"
@@ -135,7 +137,7 @@ def example_problem(name: str) -> dict:
     problem: dict
         答えを順に入れた問題の設定
     """
-    # 問いの順に答える
+    # 問いの順の答え
     if name not in EXAMPLES:
         raise ValueError(f"{name} という見本はありません")
     problem = new_problem(name)

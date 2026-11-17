@@ -73,7 +73,7 @@ def test_questions_and_answers() -> None:
     ----------
     None
     """
-    # 空の問題の設定では, 分類だけの問いと予測だけの問いは要らない
+    # 空の問題の設定での, 分類だけの問いと予測だけの問いの不要
     problem = new_problem("試し")
     items = {item["id"]: item for item in questions(problem)}
     assert len(items) == len(QUESTIONS)
@@ -90,7 +90,7 @@ def test_questions_and_answers() -> None:
         "mae", "rmse"
     ]
 
-    # 元の問題の設定は変えない
+    # 元の問題の設定の不変
     assert get_value(new_problem("試し"), "ml.use") is None
     updated = answer(problem, "issue.kpi.current", "1,200,000")
     assert get_value(updated, "issue.kpi.current") == 1200000
@@ -166,7 +166,7 @@ def test_check_finds_inconsistencies() -> None:
     with pytest.raises(ValueError, match="直すところ"):
         handoff(problem)
 
-    # 損得の値の範囲と根拠, 選ぶ型を過去のデータだけで確かめる
+    # 損得の値の範囲と根拠, 選ぶ型の過去のデータだけの確かめ
     churn = example_problem("解約の引き止め")
     churn = answer(churn, "action.decision", {
         "type": "select", "value": 24000, "cost": 1500, "effect": 1.5,
@@ -181,7 +181,7 @@ def test_check_finds_inconsistencies() -> None:
     assert "action.basis" in found["warning"]
     assert "verification.method" in found["warning"]
 
-    # 機械学習を使わない出口は, 課題と分解と理由だけで足りる
+    # 機械学習を使わない出口 (課題と分解と理由だけ)
     exit_only = new_problem("出口")
     for key, value in EXAMPLES[
         "問い合わせの振り分け (機械学習を使わない)"
@@ -247,7 +247,7 @@ def test_save_and_load(tmp_path: Path) -> None:
     ----------
     None
     """
-    # ディレクトリにも書ける. 書き直すと更新の時刻だけが変わる
+    # ディレクトリへの書き込みと, 更新の時刻だけの変化
     problem = example_problem("総菜の作る量")
     saved = save_problem(problem, tmp_path)
     loaded = load_problem(tmp_path)
@@ -344,3 +344,156 @@ def test_make_project(tmp_path: Path) -> None:
         make_project(example_problem(
             "問い合わせの振り分け (機械学習を使わない)"
         ), tmp_path / "x")
+
+
+def test_review_fixes(tmp_path: Path) -> None:
+    """
+    手で崩したファイル, 古い答え, 列の答え直し, 損得の値の読み方, 埋め込む
+    文字の崩れを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 形の崩れは例外でなく error
+    broken = example_problem("総菜の作る量")
+    broken["action"]["decision"] = {"type": "foo"}
+    broken["ml"]["series_by"] = "store"
+    broken["decomposition"] = ["文字"]
+    found = levels(broken)
+    assert {"action.decision", "ml.series_by",
+            "decomposition"} <= set(found["error"])
+    assert is_ready(broken) is False
+
+    # タスクを変えると, 時刻と系列の古い答えは受け渡さない
+    regression = answer(example_problem("総菜の作る量"), "ml.task",
+                        "regression")
+    stages = handoff(regression)
+    assert stages["data"]["time_column"] is None
+    assert stages["data"]["series_by"] == []
+    assert stages["inference"]["conclusion"] == {}
+    off = answer(regression, "ml.use", False)
+    items = {item["id"]: item for item in questions(off)}
+    assert items["ml.time_column"]["applies"] is False
+    assert items["verification.backtest"]["applies"] is False
+
+    # 列を答え直した後に残った古い名前は error
+    narrowed = answer(example_problem("総菜の作る量"),
+                      "information.columns", ["date", "x"])
+    found = levels(narrowed)
+    assert {"ml.target", "information.known",
+            "ml.series_by"} <= set(found["error"])
+
+    # 損得の値: 数の文字列は数, 列の名前は使えるデータの列から
+    problem = example_problem("総菜の作る量")
+    cases = {"1e3": 1000, "+5": 5, " 12 ": 12, "1,200": 1200}
+    for text, number in cases.items():
+        decided = answer(problem, "action.decision", {
+            "type": "quantity", "under_cost": text, "over_cost": 1,
+        })
+        assert get_value(decided, "action.decision.under_cost") == number
+    for text in ("nan", "inf", "1,2,3", "-"):
+        with pytest.raises(ValueError):
+            answer(problem, "action.decision", {
+                "type": "quantity", "under_cost": text, "over_cost": 1,
+            })
+    by_column = answer(problem, "action.decision", {
+        "type": "quantity", "under_cost": "no_such", "over_cost": 1,
+    })
+    assert "action.decision" in levels(by_column)["error"]
+
+    # 改行や三重の引用符を含む答えでも, 学習のスクリプトは壊れない
+    odd = answer(problem, "ml.baseline", "前の週\n(手計算) \"\"\" \\")
+    odd = answer(odd, "ml.predict", "売れる数 \"\"\"")
+    odd["name"] = "名前 \"\"\" " + "長い" * 60
+    make_project(odd, tmp_path / "odd")
+    script = (tmp_path / "odd" / "train.py").read_text(encoding="utf-8")
+    ast.parse(script)
+    assert max(len(line) for line in script.splitlines()) <= 79
+
+    # 文字列の指標の値と, 片方だけの値でも要約は落ちない
+    text = answer(problem, "issue.kpi.target", None)
+    text["issue"]["kpi"]["current"] = "1200"
+    assert "今 1200" in describe(text)[2]
+
+    # 空の答えの消去と, 空になった親の辞書の消去
+    empty = answer(new_problem("空"), "issue.kpi.name", "損")
+    empty = answer(empty, "issue.kpi.name", None)
+    assert "issue" not in empty
+    assert get_value(answer(problem, "ml.use", ""), "ml.use") is None
+
+
+def test_monitor_and_config(tmp_path: Path) -> None:
+    """
+    RMSE は二乗誤差で選び, 正解率は損失で同じ値を比べる config になることを
+    確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # RMSE はバッチの平均で書けないので, 二乗誤差を監視
+    rmse = answer(example_problem("総菜の作る量"), "evaluation.metric",
+                  "rmse")
+    assert handoff(rmse)["training"]["monitor"] == "valid/mse"
+    make_project(rmse, tmp_path / "rmse")
+    script = (tmp_path / "rmse" / "train.py").read_text("utf-8")
+    assert '"mse": error.pow(2).mean()' in script
+    assert "error.pow(2).mean().sqrt()" in script
+
+    # 正解率は同じ値を取りやすい
+    accuracy = answer(example_problem("解約の引き止め"),
+                      "evaluation.metric", "accuracy")
+    make_project(accuracy, tmp_path / "acc")
+    config = yaml.safe_load(
+        (tmp_path / "acc" / "configs/default/train.yaml").read_text("utf-8")
+    )
+    assert config["trainer"]["monitor_tiebreak"] == "valid/loss"
+
+    # 日本語の目的の列は実験の名前に残す
+    japanese = answer(example_problem("総菜の作る量"), "information.columns",
+                      ["date", "store", "item", "売上", "temperature_forecast",
+                       "promo", "customers"])
+    japanese = answer(japanese, "ml.target", "売上")
+    make_project(japanese, tmp_path / "ja")
+    config = yaml.safe_load(
+        (tmp_path / "ja" / "configs/default/train.yaml").read_text("utf-8")
+    )
+    assert config["experiment"]["name"] == "売上_forecasting"
+
+
+def test_read_columns_edges(tmp_path: Path) -> None:
+    """
+    同じ名前の列, 空のファイル, parquet の列の名前を確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 同じ名前の列と空のファイルは誤り
+    (tmp_path / "dup.csv").write_text("a,a,b\n1,2,3\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="同じ名前"):
+        read_columns(tmp_path / "dup.csv")
+    (tmp_path / "empty.csv").write_text("", encoding="utf-8")
+    with pytest.raises(ValueError, match="空"):
+        read_columns(tmp_path / "empty.csv")
+
+    # parquet は形の情報だけ (pyarrow が無ければ飛ばす)
+    pytest.importorskip("pyarrow")
+    pd.DataFrame({"x": [1], "y": [2]}).to_parquet(tmp_path / "p.parquet")
+    assert read_columns(tmp_path / "p.parquet") == ["x", "y"]

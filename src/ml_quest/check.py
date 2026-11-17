@@ -1,13 +1,10 @@
 from typing import Any
 
 from ml_quest.problem import (
-    DECISION_FIELDS, DECISION_NAMES, FORMAT_VERSION, applies, get_value,
-    is_answered
+    DECISION_FIELDS, DECISION_NAMES, FORMAT_VERSION, active_value, applies,
+    get_value, is_answered
 )
-from ml_quest.questions import METRICS, QUESTIONS
-
-# 機械学習を使わない場合にも要る節 (課題, 指標, 分解, 使うかとその理由)
-WITHOUT_ML = {1, 2, 3}
+from ml_quest.questions import METRICS, QUESTIONS, TASKS
 
 # 行動の型ごとに合うタスク
 DECISION_TASKS = {
@@ -15,6 +12,14 @@ DECISION_TASKS = {
     "select": ["classification"],
     "triage": ["classification"],
 }
+
+# タスクの名前
+TASK_NAMES = {"classification": "分類", "regression": "回帰",
+              "forecasting": "時系列の予測"}
+
+# 列の名前の並びの問い
+COLUMN_LISTS = ["information.columns", "ml.series_by", "information.known",
+                "information.unknown", "information.forbidden"]
 
 
 def finding(level: str, key: str, message: str) -> dict:
@@ -35,10 +40,80 @@ def finding(level: str, key: str, message: str) -> dict:
     item: dict
         重さと場所と文
     """
-    # 画面と文書にそのまま出す
+    # 画面と文書にそのままの形
     item = {"level": level, "id": key, "message": message}
 
     return item
+
+
+def is_names(value: Any) -> bool:
+    """
+    文字列の並びかを返す関数
+
+    Parameters
+    ----------
+    value: Any
+        値
+
+    Returns
+    ----------
+    names: bool
+        None か, 文字列だけの並びなら True
+    """
+    # 手で書いた YAML の文字列 1 つなどは誤り
+    names = value is None or (
+        isinstance(value, list) and all(isinstance(v, str) for v in value)
+    )
+
+    return names
+
+
+def check_shape(problem: dict) -> list[dict]:
+    """
+    手で書いたファイルや新しい版の, 値の形の崩れを一覧にする関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (error. 形が崩れていれば他の確かめはしない)
+    """
+    # 分解, タスク, 指標, 意思決定, 列の並び
+    found = []
+    levers = get_value(problem, "decomposition")
+    if levers is not None and not (isinstance(levers, list) and all(
+        isinstance(lever, dict) for lever in levers
+    )):
+        found.append(finding("error", "decomposition",
+                             "decomposition は要因と手の辞書の並びにして"
+                             "ください"))
+    task = get_value(problem, "ml.task")
+    if task is not None and task not in TASK_NAMES:
+        found.append(finding("error", "ml.task",
+                             f"ml.task の {task} は知らないタスクです"))
+    metric = get_value(problem, "evaluation.metric")
+    if metric is not None and metric not in [m["value"] for m in METRICS]:
+        found.append(finding("error", "evaluation.metric",
+                             f"evaluation.metric の {metric} は知らない指標"
+                             "です"))
+    decision = get_value(problem, "action.decision")
+    if decision is not None and not (
+        isinstance(decision, dict) and decision.get("type") in DECISION_FIELDS
+    ):
+        found.append(finding("error", "action.decision",
+                             "action.decision の type は "
+                             f"{', '.join(DECISION_FIELDS)} のどれかにして"
+                             "ください"))
+    for key in COLUMN_LISTS:
+        if not is_names(get_value(problem, key)):
+            found.append(finding("error", key,
+                                 f"{key} は列の名前の並びにしてください"))
+
+    return found
 
 
 def check_missing(problem: dict) -> list[dict]:
@@ -53,17 +128,12 @@ def check_missing(problem: dict) -> list[dict]:
     Returns
     ----------
     found: list[dict]
-        確かめ (error)
+        確かめ (error. 機械学習を使わない出口では, 使うかまでの問いだけ)
     """
-    # 機械学習を使わない出口では, 使うかまでの問いだけ
-    uses = get_value(problem, "ml.use")
+    # 今の答えのもとで要る問いだけ
     found = []
     for question in QUESTIONS:
         if not question["required"] or not applies(problem, question):
-            continue
-        if uses is False and question["section"] not in WITHOUT_ML and (
-            question["id"] not in ("ml.use", "ml.reason")
-        ):
             continue
         if not is_answered(get_value(problem, question["id"])):
             found.append(finding(
@@ -93,9 +163,9 @@ def check_issue(problem: dict) -> list[dict]:
     better = get_value(problem, "issue.kpi.better")
     current = get_value(problem, "issue.kpi.current")
     target = get_value(problem, "issue.kpi.target")
-    if better and isinstance(current, (int, float)) and isinstance(
-        target, (int, float)
-    ):
+    numbers = all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                  for v in (current, target))
+    if better in ("lower", "higher") and numbers:
         wrong = target > current if better == "lower" else target < current
         if wrong:
             found.append(finding(
@@ -152,22 +222,20 @@ def check_task(problem: dict) -> list[dict]:
     """
     # 行動の型に合うタスク
     found = []
-    task = get_value(problem, "ml.task")
-    decision = get_value(problem, "action.decision") or {}
+    task = active_value(problem, "ml.task")
+    decision = active_value(problem, "action.decision") or {}
     kind = decision.get("type")
     if task and kind in DECISION_TASKS and task not in DECISION_TASKS[kind]:
-        names = {"classification": "分類", "regression": "回帰",
-                 "forecasting": "予測 (時系列)"}
-        allowed = "か".join(names[t] for t in DECISION_TASKS[kind])
+        allowed = "か".join(TASK_NAMES[t] for t in DECISION_TASKS[kind])
         found.append(finding(
             "error", "action.decision",
             f"{DECISION_NAMES[kind]}には{allowed}のタスクが要ります "
-            f"(今は{names[task]})"
+            f"(今は{TASK_NAMES[task]})"
         ))
 
     # 分類で行動を決めるなら当たりのクラス
     if task == "classification" and kind in ("select", "triage") and (
-        not get_value(problem, "ml.positive")
+        not active_value(problem, "ml.positive")
     ):
         found.append(finding(
             "error", "ml.positive",
@@ -175,20 +243,64 @@ def check_task(problem: dict) -> list[dict]:
             "ます"
         ))
 
-    # 時刻の列と目的の列
-    target = get_value(problem, "ml.target")
-    time_column = get_value(problem, "ml.time_column")
-    if task == "forecasting" and time_column and time_column == target:
-        found.append(finding(
-            "error", "ml.time_column",
-            "時刻の列が目的の列と同じです"
-        ))
-    series = get_value(problem, "ml.series_by") or []
+    # 時刻の列と, 目的の列と系列の列の重なり
+    target = active_value(problem, "ml.target")
+    time_column = active_value(problem, "ml.time_column")
+    series = active_value(problem, "ml.series_by") or []
+    if time_column and time_column == target:
+        found.append(finding("error", "ml.time_column",
+                             "時刻の列が目的の列と同じです"))
+    if time_column and time_column in series:
+        found.append(finding("error", "ml.series_by",
+                             "系列を分ける列に時刻の列が入っています"))
     if target and target in series:
-        found.append(finding(
-            "error", "ml.series_by",
-            "系列を分ける列に目的の列が入っています"
-        ))
+        found.append(finding("error", "ml.series_by",
+                             "系列を分ける列に目的の列が入っています"))
+
+    # 何期先まで (1 以上の整数)
+    horizon = active_value(problem, "ml.horizon")
+    if horizon is not None and not (
+        isinstance(horizon, int) and not isinstance(horizon, bool)
+        and horizon >= 1
+    ):
+        found.append(finding("error", "ml.horizon",
+                             "何期先までは 1 以上の整数にしてください"))
+
+    return found
+
+
+def check_columns(problem: dict) -> list[dict]:
+    """
+    答えた列の名前が, 使えるデータの列にあるかを確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (列を答え直した後に残った古い名前は error)
+    """
+    # 使えるデータの列が無ければ確かめなし
+    found: list[dict] = []
+    columns = active_value(problem, "information.columns") or []
+    if not columns:
+        return found
+    for key in ("ml.target", "ml.time_column"):
+        name = active_value(problem, key)
+        if name and name not in columns:
+            found.append(finding("error", key,
+                                 f"{name} は使えるデータの列にありません"))
+    for key in COLUMN_LISTS[1:]:
+        missing = [name for name in active_value(problem, key) or []
+                   if name not in columns]
+        if missing:
+            found.append(finding(
+                "error", key,
+                f"{', '.join(missing)} は使えるデータの列にありません"
+            ))
 
     return found
 
@@ -207,12 +319,14 @@ def check_information(problem: dict) -> list[dict]:
     found: list[dict]
         確かめ
     """
-    # 目的の列そのものを使う, 分かる列と分からない列の重なり
+    # 目的の列そのものを使う, 分かる列と使わない列の重なり
     found = []
-    target = get_value(problem, "ml.target")
-    columns = get_value(problem, "information.columns") or []
-    known = get_value(problem, "information.known") or []
-    unknown = get_value(problem, "information.unknown") or []
+    target = active_value(problem, "ml.target")
+    time_column = active_value(problem, "ml.time_column")
+    columns = active_value(problem, "information.columns") or []
+    known = active_value(problem, "information.known") or []
+    unknown = active_value(problem, "information.unknown") or []
+    forbidden = active_value(problem, "information.forbidden") or []
     if target and target in known:
         found.append(finding(
             "error", "information.known",
@@ -220,24 +334,32 @@ def check_information(problem: dict) -> list[dict]:
             "なら予測は要りません (過去の値はデータの分析で作るので, 目的の列"
             "そのものは入れない)"
         ))
-    both = [name for name in known if name in unknown]
-    if both:
+    for key, others in (("information.unknown", unknown),
+                        ("information.forbidden", forbidden)):
+        both = [name for name in known if name in others]
+        if both:
+            found.append(finding(
+                "error", key,
+                f"{', '.join(both)} が分かる列と使わない列の両方にあります"
+            ))
+    if time_column and time_column in unknown + forbidden:
         found.append(finding(
-            "error", "information.unknown",
-            f"{', '.join(both)} が分かる列と分からない列の両方にあります"
+            "error", "ml.time_column",
+            "時刻の列が使わない列に入っています (時刻は予測の時点で分かる)"
         ))
 
     # 決めていない列 (目的, 時刻, 系列の列は除く)
-    roles = {target, get_value(problem, "ml.time_column"),
-             *(get_value(problem, "ml.series_by") or [])}
+    roles = {target, time_column,
+             *(active_value(problem, "ml.series_by") or [])}
     undecided = [name for name in columns
-                 if name not in known and name not in unknown
+                 if name not in known + unknown + forbidden
                  and name not in roles]
     if undecided and known:
         found.append(finding(
             "warning", "information.known",
             f"{', '.join(undecided)} を予測の時点で使ってよいか決めていません"
-            " (分かる列か分からない列に入れてください)"
+            " (分かる列か, 分からない列か, 使ってはいけない列に入れてくださ"
+            "い)"
         ))
 
     return found
@@ -257,12 +379,13 @@ def check_decision(problem: dict) -> list[dict]:
     found: list[dict]
         確かめ
     """
-    # 型ごとの要る項目と, 数の値の範囲
+    # 型ごとの要る項目と, 数の値の範囲と, 列の名前
     found: list[dict] = []
-    decision = get_value(problem, "action.decision")
+    decision = active_value(problem, "action.decision")
     if not decision:
         return found
     kind = decision["type"]
+    columns = active_value(problem, "information.columns") or []
     for field, required in DECISION_FIELDS[kind].items():
         value: Any = decision.get(field)
         if value is None:
@@ -272,24 +395,12 @@ def check_decision(problem: dict) -> list[dict]:
                     f"{DECISION_NAMES[kind]}の {field} を書いてください"
                 ))
             continue
-        if not isinstance(value, (int, float)):
+        if isinstance(value, str):
+            found += column_amount(field, value, columns)
             continue
-        if field == "effect" and not 0 < value <= 1:
-            found.append(finding(
-                "error", "action.decision",
-                "effect (行動で防げる割合) は 0 より大きく 1 以下にしてください"
-            ))
-        elif field in ("stock",) and value < 0:
-            found.append(finding(
-                "error", "action.decision", "stock は 0 以上にしてください"
-            ))
-        elif field not in ("effect", "stock") and value <= 0:
-            found.append(finding(
-                "error", "action.decision",
-                f"{field} は 0 より大きくしてください"
-            ))
+        found += amount_range(field, value)
 
-    # 根拠の無い損得
+    # 根拠の無い損得と, 仮定の効果
     if kind != "none" and not get_value(problem, "action.basis"):
         found.append(finding(
             "warning", "action.basis",
@@ -302,6 +413,72 @@ def check_decision(problem: dict) -> list[dict]:
             "対象を選ぶ行動の効果 (effect) は仮定です. 過去のデータからは"
             "分からないので, 実際に試して確かめてください"
         ))
+
+    return found
+
+
+def column_amount(field: str, value: str, columns: list[str]) -> list[dict]:
+    """
+    列の名前で書いた損得の値を確かめる関数
+
+    Parameters
+    ----------
+    field: str
+        項目
+    value: str
+        列の名前
+    columns: list[str]
+        使えるデータの列
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (列が無ければ error, あれば行ごとの値として読む知らせ)
+    """
+    # 使えるデータの列があれば, その中に
+    if columns and value not in columns:
+        found = [finding("error", "action.decision",
+                         f"{field} の {value} は数でなく, 使えるデータの列"
+                         "にもありません")]
+    else:
+        found = [finding("info", "action.decision",
+                         f"{field} は列 {value} の行ごとの値として読みます")]
+
+    return found
+
+
+def amount_range(field: str, value: Any) -> list[dict]:
+    """
+    数で書いた損得と制約の範囲を確かめる関数
+
+    Parameters
+    ----------
+    field: str
+        項目
+    value: Any
+        値
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (範囲の外は error)
+    """
+    # 効果は 0 から 1, 今ある量は 0 以上, 他は正
+    found = []
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        found.append(finding("error", "action.decision",
+                             f"{field} は数か列の名前にしてください"))
+    elif field == "effect" and not 0 < value <= 1:
+        found.append(finding(
+            "error", "action.decision",
+            "effect (行動で防げる割合) は 0 より大きく 1 以下にしてください"
+        ))
+    elif field == "stock" and value < 0:
+        found.append(finding("error", "action.decision",
+                             "stock は 0 以上にしてください"))
+    elif field not in ("effect", "stock") and value <= 0:
+        found.append(finding("error", "action.decision",
+                             f"{field} は 0 より大きくしてください"))
 
     return found
 
@@ -322,13 +499,13 @@ def check_evaluation(problem: dict) -> list[dict]:
     """
     # 指標がタスクに合うか
     found = []
-    task = get_value(problem, "ml.task")
-    metric = get_value(problem, "evaluation.metric")
+    task = active_value(problem, "ml.task")
+    metric = active_value(problem, "evaluation.metric")
     allowed = {item["value"]: item["tasks"] for item in METRICS}
     if task and metric and task not in allowed.get(metric, []):
         found.append(finding(
             "error", "evaluation.metric",
-            f"指標 {metric} はこのタスクに合いません"
+            f"指標 {metric} は{TASK_NAMES.get(task, task)}に合いません"
         ))
     if metric and not get_value(problem, "evaluation.link"):
         found.append(finding(
@@ -337,9 +514,9 @@ def check_evaluation(problem: dict) -> list[dict]:
             "課題が解けるとは限りません"
         ))
 
-    # 行動が結果を変える判断を, たどり直しだけで確かめる
-    decision = get_value(problem, "action.decision") or {}
-    method = get_value(problem, "verification.method")
+    # 行動が結果を変える判断の, たどり直しだけの確かめ
+    decision = active_value(problem, "action.decision") or {}
+    method = active_value(problem, "verification.method")
     if decision.get("type") == "select" and method == "backtest":
         found.append(finding(
             "warning", "verification.method",
@@ -370,7 +547,7 @@ def check(problem: dict) -> list[dict]:
     found: list[dict]
         確かめ (level, id, message) の並び. error, warning, info の順
     """
-    # 新しい版は読める項目だけを使う
+    # 新しい版の知らせ (読める項目だけを使用)
     found = []
     version = problem.get("format_version")
     if isinstance(version, int) and version > FORMAT_VERSION:
@@ -380,11 +557,17 @@ def check(problem: dict) -> list[dict]:
             "読める項目だけを使います"
         ))
 
-    # 答えの空と筋道 (機械学習を使わない出口では課題と分解まで)
+    # 形の崩れ (あれば他は確かめない), 答えの空, 筋道
+    shape = check_shape(problem)
+    if shape:
+        return found + shape
     found += check_missing(problem)
     found += check_issue(problem)
-    if get_value(problem, "ml.use") is True:
+    if get_value(problem, "ml.use") is True and get_value(
+        problem, "ml.task"
+    ) in (None, *[task["value"] for task in TASKS]):
         found += check_task(problem)
+        found += check_columns(problem)
         found += check_information(problem)
         found += check_decision(problem)
         found += check_evaluation(problem)

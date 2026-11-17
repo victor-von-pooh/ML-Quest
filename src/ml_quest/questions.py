@@ -14,7 +14,8 @@ SECTIONS = {
     10: "運用",
 }
 
-# 機械学習を使う場合だけの問い (使わない出口では要らない)
+# 機械学習を使う場合だけの問い (使わない出口では要らない). when は条件の
+# 並びで, 全てを満たすときに必要
 USES_ML = {"id": "ml.use", "equals": True}
 
 # タスクの選択肢
@@ -24,23 +25,24 @@ TASKS = [
     {"value": "regression",
      "label": "回帰 (値. 時刻の順に関係なく, 行ごとの値)"},
     {"value": "forecasting",
-     "label": "予測 (時系列. 過去の値から先の値)"},
+     "label": "時系列の予測 (時刻の順に, 過去の値から先の値)"},
 ]
 
 # 学習で見る指標 (タスクごと. better は大きいほど良いか小さいほど良いか)
 METRICS = [
-    {"value": "accuracy", "label": "正解率 (大きいほど良い)",
+    {"value": "accuracy", "label": "当たった割合 (正解率. 大きいほど良い)",
      "tasks": ["classification"], "better": "higher"},
-    {"value": "loss", "label": "交差エントロピー (小さいほど良い. 確率の当たり"
-     "具合も見る)", "tasks": ["classification"], "better": "lower"},
-    {"value": "mae", "label": "平均絶対誤差 (小さいほど良い. 外れの大きさの"
-     "平均)", "tasks": ["regression", "forecasting"], "better": "lower"},
-    {"value": "rmse", "label": "二乗平均平方根誤差 (小さいほど良い. 大きな外れ"
-     "を重く見る)", "tasks": ["regression", "forecasting"],
+    {"value": "loss", "label": "確率の当たり具合 (交差エントロピー. 小さい"
+     "ほど良い. 確率で行動を決めるなら)", "tasks": ["classification"],
+     "better": "lower"},
+    {"value": "mae", "label": "外れの大きさの平均 (平均絶対誤差. 小さいほど"
+     "良い)", "tasks": ["regression", "forecasting"], "better": "lower"},
+    {"value": "rmse", "label": "大きな外れを重く見た外れ (二乗平均平方根誤差"
+     ". 小さいほど良い)", "tasks": ["regression", "forecasting"],
      "better": "lower"},
 ]
 
-# 問いの並び (上から順に出す)
+# 問いの並び (上から順)
 QUESTIONS: list[dict[str, Any]] = [
     # 1. 課題
     {"id": "issue.owner", "section": 1, "kind": "text", "required": True,
@@ -103,29 +105,37 @@ QUESTIONS: list[dict[str, Any]] = [
      "help": "データのファイルから読める (画面では「ファイルから読む」). "
              "後の問いで, この中から目的の列と使ってよい列を選ぶ"},
     {"id": "ml.task", "section": 4, "kind": "choice", "required": True,
-     "when": USES_ML, "choices": TASKS, "title": "どの種類の予測ですか",
+     "when": USES_ML, "choices": TASKS, "title": "どの種類の問題ですか",
      "help": "目的の値がクラスなら分類, 値なら回帰. 時刻の順に過去から先を"
-             "予測するなら予測 (時系列)"},
+             "予測するなら時系列の予測. 量を決める行動なら回帰か時系列の予測, "
+             "対象を選ぶ, 振り分ける行動なら分類"},
     {"id": "ml.target", "section": 4, "kind": "column", "required": True,
      "when": USES_ML, "title": "目的の列は",
      "help": "予測する値の列"},
     {"id": "ml.positive", "section": 4, "kind": "text", "required": False,
-     "when": {"id": "ml.task", "equals": "classification"},
+     "when": [USES_ML, {"id": "ml.task", "equals": "classification"}],
      "title": "当たりのクラスは (2 クラスの分類で行動を決める場合)",
      "help": "行動の対象になるクラス. 例: 解約, 不良"},
     {"id": "ml.time_column", "section": 4, "kind": "column",
      "required": True,
-     "when": {"id": "ml.task", "equals": "forecasting"},
+     "when": [USES_ML, {"id": "ml.task", "equals": "forecasting"}],
      "title": "時刻の列は", "help": "時刻の順に並べ, 分けるのに使う列"},
     {"id": "ml.series_by", "section": 4, "kind": "columns",
      "required": False,
-     "when": {"id": "ml.task", "equals": "forecasting"},
+     "when": [USES_ML, {"id": "ml.task", "equals": "forecasting"}],
      "title": "系列を分ける列は (複数の系列が並ぶ場合)",
      "help": "例: 店, 品. 過去の値は系列ごとにずらす"},
+    {"id": "ml.horizon", "section": 4, "kind": "number",
+     "required": True,
+     "when": [USES_ML, {"id": "ml.task", "equals": "forecasting"}],
+     "title": "何期先まで予測しますか",
+     "help": "時刻の列の 1 つ分を 1 期として. 例: 翌日だけなら 1, 1 週間分を"
+             "まとめて決めるなら 7. 先ほど外れやすく, 予測の時点で分かる列も"
+             "変わる"},
     {"id": "ml.baseline", "section": 4, "kind": "text", "required": True,
      "when": USES_ML, "title": "機械学習を使わない比べる相手は",
-     "help": "機械学習が要るかは, 素朴なやり方より良いかで決まる. 多くは今"
-             "のやり方. 例: 前の週の同じ曜日と同じ数"},
+     "help": "機械学習が要るかは, 素朴なやり方より良いかで決まる. 多くは"
+             "1 の「今のやり方」と同じ. 例: 前の週の同じ曜日と同じ数"},
 
     # 5. 行動
     {"id": "action.who", "section": 5, "kind": "text", "required": True,
@@ -149,7 +159,12 @@ QUESTIONS: list[dict[str, Any]] = [
     {"id": "information.unknown", "section": 6, "kind": "columns",
      "required": False, "when": USES_ML,
      "title": "予測の時点では分からない列は",
-     "help": "学習に使わない列"},
+     "help": "学習に使わない列 (当日の客数など. 予測のときに分からない)"},
+    {"id": "information.forbidden", "section": 6, "kind": "columns",
+     "required": False, "when": USES_ML,
+     "title": "分かっていても使ってはいけない列は",
+     "help": "ID, 個人を特定できる情報, 使うと公平でない情報など. 学習に"
+             "使わない"},
 
     # 7. 損得と制約
     {"id": "action.decision", "section": 7, "kind": "decision",
@@ -187,11 +202,13 @@ QUESTIONS: list[dict[str, Any]] = [
              "効果が分からないので, 試すことが要る"},
     {"id": "verification.backtest", "section": 9, "kind": "text",
      "required": True,
-     "when": {"id": "verification.method", "in": ["backtest", "both"]},
+     "when": [USES_ML,
+              {"id": "verification.method", "in": ["backtest", "both"]}],
      "title": "どの期間でたどり直しますか", "help": "例: 過去 3 か月"},
     {"id": "verification.trial", "section": 9, "kind": "text",
      "required": True,
-     "when": {"id": "verification.method", "in": ["trial", "both"]},
+     "when": [USES_ML,
+              {"id": "verification.method", "in": ["trial", "both"]}],
      "title": "どこで, どれだけの期間試しますか",
      "help": "例: 1 店で 4 週間"},
     {"id": "verification.success", "section": 9, "kind": "text",
@@ -205,7 +222,8 @@ QUESTIONS: list[dict[str, Any]] = [
      "title": "どれくらいの頻度で見直しますか", "help": "例: 月に 1 回"},
     {"id": "operation.approver", "section": 10, "kind": "text",
      "required": False, "when": USES_ML,
-     "title": "変更 (外れ方の書き戻しなど) は誰が承認しますか",
+     "title": "変更 (予測の外れ方の見積もりを新しい実績で直すなど) は誰が"
+              "承認しますか",
      "help": "例: 本部"},
     {"id": "operation.stop", "section": 10, "kind": "text",
      "required": False, "when": USES_ML, "title": "どうなったら止めますか",
