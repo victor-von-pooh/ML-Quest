@@ -208,7 +208,7 @@ def applies(problem: dict, question: dict) -> bool:
     needed: bool
         要るか (when の条件が無いか, 満たすか)
     """
-    # 条件の並びの全てで, 項目の値が等しいか並びに入るか
+    # 条件の並びの全てで, 項目の値が等しいか, 並びに入るか, 答えたか
     when = question.get("when") or []
     conditions = when if isinstance(when, list) else [when]
     needed = True
@@ -216,6 +216,8 @@ def applies(problem: dict, question: dict) -> bool:
         value = get_value(problem, condition["id"])
         if "equals" in condition:
             needed = needed and value == condition["equals"]
+        elif "filled" in condition:
+            needed = needed and is_answered(value) == condition["filled"]
         else:
             needed = needed and value in condition["in"]
 

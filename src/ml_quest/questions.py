@@ -18,6 +18,9 @@ SECTIONS = {
 # 並びで, 全てを満たすときに必要
 USES_ML = {"id": "ml.use", "equals": True}
 
+# 守る指標を書いた場合だけの問い
+HAS_GUARD = {"id": "issue.guard.name", "filled": True}
+
 # タスクの選択肢
 TASKS = [
     {"value": "classification",
@@ -77,6 +80,31 @@ QUESTIONS: list[dict[str, Any]] = [
     {"id": "issue.kpi.target", "section": 2, "kind": "number",
      "required": False, "title": "目指す値は (分かれば)",
      "help": "例: 今の 2 割減"},
+    {"id": "issue.guard.name", "section": 2, "kind": "text",
+     "required": False,
+     "title": "引き換えに悪くしてはいけない数字はありますか (守る指標)",
+     "help": "良くしたい数字を追うと悪くなりうる数字. 例: 廃棄を減らすと"
+             "増えうる品切れ, 引き止めの連絡への苦情, 確かめる件数を減らす"
+             "と増えうる見逃し. 時間のかかる今の処理を速くするなら, 今の処理"
+             "と同じ結果になる割合. 無ければ空のまま"},
+    {"id": "issue.guard.unit", "section": 2, "kind": "text",
+     "required": False, "when": HAS_GUARD, "title": "その数字の単位は",
+     "help": "例: %, 件 / 月"},
+    {"id": "issue.guard.better", "section": 2, "kind": "choice",
+     "required": True, "when": HAS_GUARD,
+     "title": "守る指標は, 小さいほど良いですか, 大きいほど良いですか",
+     "choices": [{"value": "lower", "label": "小さいほど良い"},
+                 {"value": "higher", "label": "大きいほど良い"}],
+     "help": "向き. 守る線をどちら側に割ると困るかが決まる"},
+    {"id": "issue.guard.line", "section": 2, "kind": "number",
+     "required": True, "when": HAS_GUARD,
+     "title": "どこまでなら許せますか (守る線)",
+     "help": "これを割ったら, 良くしたい数字が良くなっても失敗とする値. "
+             "例: 品切れは今と同じ 5 % まで"},
+    {"id": "issue.guard.measure", "section": 2, "kind": "text",
+     "required": False, "when": HAS_GUARD, "title": "どう測りますか",
+     "help": "確かめ (9) と運用 (10) で同じ測り方を使う. 例: 閉店の 2 時間"
+             "前に棚が空の品と日を数える"},
 
     # 3. 分解
     {"id": "decomposition", "section": 3, "kind": "levers",

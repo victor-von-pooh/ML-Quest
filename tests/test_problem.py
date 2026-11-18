@@ -671,3 +671,54 @@ def test_uplift_decision() -> None:
                                  "effect_goal": "reduce"}
     assert any("書けません" in item["message"] for item in check(raw)
                if item["id"] == "action.decision")
+
+
+def test_guard_metric() -> None:
+    """
+    守る指標を書くと続きの問いが要るようになり, 要約に出て, 成功の基準と
+    止める条件へのつなぎを確かめることを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 名前を書くまで向きと線は要らない
+    problem = example_problem("総菜の作る量")
+    needed = {item["id"]: item["applies"] for item in questions(problem)}
+    assert needed["issue.guard.name"] and not needed["issue.guard.line"]
+    problem = answer(problem, "issue.guard.name", "品切れした品と日の割合")
+    found = levels(problem)
+    assert {"issue.guard.better", "issue.guard.line"} <= set(found["error"])
+    assert "verification.success" in found["info"]
+
+    # 向きと線を書くと要約に出て, 止める条件に入れると知らせが消える
+    problem = answer(problem, "issue.guard.better", "lower")
+    problem = answer(problem, "issue.guard.line", 5)
+    problem = answer(problem, "issue.guard.unit", "%")
+    assert any(text.startswith("守る指標: 品切れした品と日の割合")
+               and "5 を超えない" in text for text in describe(problem))
+    problem = answer(problem, "operation.stop",
+                     "品切れした品と日の割合が 5 % を超えたら止める")
+    assert "verification.success" not in levels(problem)["info"]
+
+    # 解けたと言える指標と同じ名前は見直し. 名前を消すと続きは要らない
+    same = answer(problem, "issue.guard.name", "廃棄と欠品の損")
+    assert "issue.guard.name" in levels(same)["warning"]
+    cleared = answer(problem, "issue.guard.name", None)
+    assert levels(cleared)["error"] == []
+    assert not any(text.startswith("守る指標") for text in describe(cleared))
+
+    # 見本の解約の引き止めは守る指標を持ち, 止める条件に入っている
+    churn = example_problem("解約の引き止め")
+    assert "verification.success" not in levels(churn)["info"]
+
+    # 手で書いた数でない線と知らない向きは誤り
+    raw = example_problem("解約の引き止め")
+    raw["issue"]["guard"].update(line="abc", better="up")
+    assert {"issue.guard.line", "issue.guard.better"} <= set(
+        levels(raw)["error"]
+    )

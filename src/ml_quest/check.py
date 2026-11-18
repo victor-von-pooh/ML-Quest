@@ -695,6 +695,7 @@ def check(problem: dict) -> list[dict]:
         return found + shape
     found += check_missing(problem)
     found += check_issue(problem)
+    found += check_guard(problem)
     if get_value(problem, "ml.use") is True and get_value(
         problem, "ml.task"
     ) in (None, *[task["value"] for task in TASKS]):
@@ -705,6 +706,57 @@ def check(problem: dict) -> list[dict]:
         found += check_evaluation(problem)
     found = [item for level in ("error", "warning", "info")
              for item in found if item["level"] == level]
+
+    return found
+
+
+def check_guard(problem: dict) -> list[dict]:
+    """
+    守る指標と, 確かめ方と運用へのつなぎを確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ
+    """
+    # 解けたと言える指標と同じ名前と, 成功の基準と止める条件への書き忘れ
+    found: list[dict] = []
+    name = active_value(problem, "issue.guard.name")
+    if not isinstance(name, str) or not name.strip():
+        return found
+    if name.strip() == str(get_value(problem, "issue.kpi.name") or "").strip():
+        found.append(finding(
+            "warning", "issue.guard.name",
+            "守る指標が, 解けたと言える指標と同じです. 良くしたい数字と引き"
+            "換えに悪くなりうる別の数字を書いてください"
+        ))
+    line = active_value(problem, "issue.guard.line")
+    if line is not None and (
+        not isinstance(line, (int, float)) or isinstance(line, bool)
+    ):
+        found.append(finding("error", "issue.guard.line",
+                             "守る線は数にしてください"))
+    if active_value(problem, "issue.guard.better") not in (
+        None, "lower", "higher"
+    ):
+        found.append(finding("error", "issue.guard.better",
+                             "守る指標の向きは lower か higher にしてください"))
+    texts = [str(active_value(problem, key) or "")
+             for key in ("verification.success", "operation.stop")]
+    if get_value(problem, "ml.use") is True and not any(
+        name.strip() in text for text in texts
+    ):
+        found.append(finding(
+            "info", "verification.success",
+            f"守る指標 ({name.strip()}) が, 成功の基準 (9) にも止める条件 "
+            "(10) にもありません. 守る線を割ったら成功と言わない, 止める, "
+            "と書いておくと, 良くしたい数字だけを追わずに済みます"
+        ))
 
     return found
 

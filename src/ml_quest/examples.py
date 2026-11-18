@@ -66,6 +66,11 @@ EXAMPLES: dict[str, list[tuple[str, Any]]] = {
         ("issue.kpi.better", "lower"),
         ("issue.kpi.current", 400),
         ("issue.kpi.target", 340),
+        ("issue.guard.name", "引き止めの連絡への苦情"),
+        ("issue.guard.unit", "件 / 月"),
+        ("issue.guard.better", "lower"),
+        ("issue.guard.line", 5),
+        ("issue.guard.measure", "窓口に届いた, 連絡についての苦情を数える"),
         ("decomposition", [
             {"cause": "解約しそうな会員に気付くのが遅い",
              "lever": "解約しそうな会員を先に見つけて連絡する", "ml": True},
@@ -100,7 +105,8 @@ EXAMPLES: dict[str, list[tuple[str, Any]]] = {
         ("verification.trial", "会員を 2 つに分け, 片方だけに 2 か月連絡する"),
         ("verification.success", "連絡した側の解約が 15 % 少ない"),
         ("operation.review", "月に 1 回"),
-        ("operation.stop", "2 か月続けて差が出なければ止める"),
+        ("operation.stop", "2 か月続けて差が出ないか, 引き止めの連絡への"
+                           "苦情が月 5 件を超えたら止める"),
     ],
     "問い合わせの振り分け (機械学習を使わない)": [
         ("issue.owner", "サポートの窓口"),
