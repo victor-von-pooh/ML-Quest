@@ -243,6 +243,16 @@ QUESTIONS: list[dict[str, Any]] = [
      "required": True,
      "when": [USES_ML, {"id": "ml.task", "equals": "forecasting"}],
      "title": "時刻の列は", "help": "時刻の順に並べ, 分けるのに使う列"},
+    {"id": "ml.split_time_column", "section": 5, "kind": "column",
+     "required": False,
+     "when": [USES_ML,
+              {"id": "ml.task", "in": ["classification", "regression"]}],
+     "title": "時刻の順で分けて確かめるなら, その時刻の列は",
+     "help": "使うときは過去から先を当てるなら (今月の申し込みで来月の解約を"
+             "当てるなど), 先の期間を検証用とテスト用に残すと, 使うときの当たり"
+             "具合に近い確かめになる (無作為に分けると, 先の様子を学習に使って"
+             "甘くなる). 時刻の列を学習に使わない列にしてもよい (分けるのにだけ"
+             "使う). 無ければ空のまま"},
     {"id": "ml.series_by", "section": 5, "kind": "columns",
      "required": False,
      "when": [USES_ML, {"id": "ml.task", "equals": "forecasting"}],
