@@ -704,8 +704,46 @@ def check(problem: dict) -> list[dict]:
         found += check_information(problem)
         found += check_decision(problem)
         found += check_evaluation(problem)
+        found += check_consumer(problem)
     found = [item for level in ("error", "warning", "info")
              for item in found if item["level"] == level]
+
+    return found
+
+
+def check_consumer(problem: dict) -> list[dict]:
+    """
+    予測の使い道と, 意思決定と後段の食い違いを確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ
+    """
+    # 自動で決めるのに意思決定が無い, 後段に渡すのに求めるものが無い
+    found: list[dict] = []
+    consumer = active_value(problem, "ml.consumer")
+    decision = active_value(problem, "action.decision") or {}
+    kind = decision.get("type") if isinstance(decision, dict) else None
+    if consumer == "rule" and kind == "none":
+        found.append(finding(
+            "warning", "action.decision",
+            "予測を決まりで自動に決めるのに, 意思決定が「しない」です. "
+            "量, 選ぶ, 振り分けのどれかと損得を書いてください"
+        ))
+    if consumer in ("system", "model") and not active_value(
+        problem, "ml.downstream"
+    ):
+        found.append(finding(
+            "warning", "ml.downstream",
+            "予測を後段に渡すのに, 後段が求める形と精度がありません. 評価"
+            "は後段の結果で見るので, 先に書いてください"
+        ))
 
     return found
 
