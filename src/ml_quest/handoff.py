@@ -112,7 +112,8 @@ def handoff(problem: dict) -> dict:
         "time_column": value(problem, "ml.time_column"),
         "series_by": value(problem, "ml.series_by") or [],
         "split": "time" if task == "forecasting"
-        else "group" if value(problem, "ml.group_column") else "random",
+        else "group" if value(problem, "ml.group_column")
+        else "stratified" if task == "classification" else "random",
         "group_column": value(problem, "ml.group_column"),
         "min_lag": value(problem, "ml.available_lag"),
         "known": value(problem, "information.known") or [],

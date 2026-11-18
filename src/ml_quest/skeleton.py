@@ -538,7 +538,9 @@ def project_readme(problem: dict, stages: dict) -> str:
     # 次にすること (受け渡しの値を各段階で選ぶ)
     split = {"time": "時刻の順 (先の期間を検証用とテスト用に)",
              "group": f"相手ごと (`{data.get('group_column')}` の同じ値を"
-                      "同じ分割に)"}.get(data["split"], "無作為")
+                      "同じ分割に)",
+             "stratified": "層別 (クラスの割合をそろえて)"}.get(
+                 data["split"], "無作為")
     lines += [
         "", "## 次にすること", "",
         "学習する環境には ML-EDA, ML-ModelControl, ML-Found, ML-Inference "
