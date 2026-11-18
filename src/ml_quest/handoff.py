@@ -193,7 +193,7 @@ def describe(problem: dict) -> list[str]:
         )
     consumer = value(problem, "ml.consumer")
     names = {item["value"]: item["label"] for item in CONSUMERS}
-    if consumer in names:
+    if isinstance(consumer, str) and consumer in names:
         downstream = value(problem, "ml.downstream")
         sentences.append(
             f"予測の使い道: {names[consumer]}"

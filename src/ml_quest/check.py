@@ -4,7 +4,7 @@ from ml_quest.problem import (
     DECISION_FIELDS, DECISION_NAMES, DECISION_OPTIONS, FORMAT_VERSION,
     active_value, applies, get_value, is_answered
 )
-from ml_quest.questions import METRICS, QUESTIONS, TASKS
+from ml_quest.questions import CONSUMERS, METRICS, QUESTIONS, TASKS
 
 # 行動の型ごとに合うタスク
 DECISION_TASKS = {
@@ -92,11 +92,23 @@ def check_shape(problem: dict) -> list[dict]:
                              "decomposition は要因と手の辞書の並びにして"
                              "ください"))
     for key in ("ml.task", "ml.target", "ml.time_column", "ml.positive",
-                "evaluation.metric", "issue.kpi.better"):
+                "evaluation.metric", "issue.kpi.better", "ml.consumer",
+                "ml.downstream", "issue.guard.name"):
         value = get_value(problem, key)
         if value is not None and not isinstance(value, str):
             found.append(finding("error", key,
                                  f"{key} は文字列にしてください"))
+    consumer = get_value(problem, "ml.consumer")
+    if isinstance(consumer, str) and consumer not in [
+        item["value"] for item in CONSUMERS
+    ]:
+        found.append(finding("error", "ml.consumer",
+                             f"ml.consumer の {consumer} は知らない使い道"
+                             "です"))
+    constraints = get_value(problem, "ml.constraints")
+    if constraints is not None and not is_names(constraints):
+        found.append(finding("error", "ml.constraints",
+                             "ml.constraints は文の並びにしてください"))
     task = get_value(problem, "ml.task")
     if isinstance(task, str) and task not in TASK_NAMES:
         found.append(finding("error", "ml.task",
@@ -725,7 +737,7 @@ def check_consumer(problem: dict) -> list[dict]:
     found: list[dict]
         確かめ
     """
-    # 自動で決めるのに意思決定が無い, 後段に渡すのに求めるものが無い
+    # 自動で決めるのに意思決定の無い場合と, 後段に渡すのに求めるものの無い場合
     found: list[dict] = []
     consumer = active_value(problem, "ml.consumer")
     decision = active_value(problem, "action.decision") or {}

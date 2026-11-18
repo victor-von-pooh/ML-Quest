@@ -757,3 +757,11 @@ def test_output_use() -> None:
     assert any(text.startswith("予測の使い道: 決まりで自動に") for text
                in churn)
     assert "守る制約: 会員の情報を社外のサービスに出さない" in churn
+
+    # 手で書いた崩れた値は形の誤りで, 要約は落ちない
+    raw = example_problem("解約の引き止め")
+    raw["ml"].update(consumer=["rule"], constraints="外に出さない")
+    assert {"ml.consumer", "ml.constraints"} <= set(levels(raw)["error"])
+    assert describe(raw)
+    raw["ml"].update(consumer="robot", constraints=["外に出さない"])
+    assert "ml.consumer" in levels(raw)["error"]
