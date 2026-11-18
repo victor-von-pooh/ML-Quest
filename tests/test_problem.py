@@ -234,7 +234,7 @@ def test_handoff_values() -> None:
 
     # 分類: 選ぶ型に当たりのクラスを足す. 交差エントロピーは小さいほど良い
     stages = handoff(example_problem("解約の引き止め"))
-    assert stages["data"]["split"] == "random"
+    assert stages["data"]["split"] == "stratified"
     assert stages["model"]["outputs"] is None
     assert stages["training"]["mode"] == "min"
     assert stages["inference"]["decision"]["positive"] == "yes"

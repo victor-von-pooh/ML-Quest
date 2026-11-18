@@ -217,7 +217,7 @@ operation:                        # 10. 運用
 
 | 段階 | 値 | 使い方 (今は利用者が各段階の画面で選ぶ) |
 | --- | --- | --- |
-| データの分析 (ML-EDA, ML-Fathom) | `target`, `task`, `time_column`, `series_by`, `split` (予測は `time`, 相手をまとめる列があれば `group`, 他は `random`), `group_column` (相手をまとめる列. 時刻の順でも渡し, ML-EDA が分割をまたぐ重なりを知らせる), `min_lag` (過去の値の列に使ってよい最も小さいずらし幅. 予測だけ), `known` (学習に使ってよい列), `drop` (`unknown` と `forbidden` の列) | 読み込みの日時の列 (`load_data` の `time_column`. 系列を分ける列が複数あると ML-EDA は日時の列を推定できない), レシピの目的の列, タスク, 分割, 除く列 |
+| データの分析 (ML-EDA, ML-Fathom) | `target`, `task`, `time_column`, `series_by`, `split` (予測は `time`, 相手をまとめる列があれば `group`, 分類は `stratified`, 他は `random`. レシピの下書きの分割と同じ), `group_column` (相手をまとめる列. 時刻の順でも渡し, ML-EDA が分割をまたぐ重なりを知らせる), `min_lag` (過去の値の列に使ってよい最も小さいずらし幅. 予測だけ), `known` (学習に使ってよい列), `drop` (`unknown` と `forbidden` の列) | 読み込みの日時の列 (`load_data` の `time_column`. 系列を分ける列が複数あると ML-EDA は日時の列を推定できない), レシピの目的の列, タスク, 分割, 除く列 |
 | モデルの作成 (ML-ModelControl, ML-CreateArchitecture) | `task`, `outputs` (回帰と予測は 1, 分類はクラスの数. 分からなければ空) | 出力の大きさ |
 | 学習・評価 (ML-Found, ML-Dashboard) | `metric`, `monitor` (`valid/<指標>`. RMSE はバッチの平均で書けないので, 並びの同じ `valid/mse`), `mode` (`min` か `max`) | config の `trainer.monitor` と `trainer.mode` |
 | 推論 (ML-Inference, ML-Provide) | `decision` (損得と制約. 選ぶと振り分けには `ml.positive` を `positive` として足す. 今のやり方 (`action.current`) が列なら, たどり直しで比べる `current` として足す. ただし量の型は今ある量 (`stock`) が無いか 0 の場合だけ (ML-Inference の量の `current` は今ある量に足した量, 問題の設定の列は置いた量なので, 今ある量があると意味が違う). k 期前と平均は ML-Inference に同じものが無いので渡さない), `conclusion` (系列を分ける最初の列でまとめる `group_by`. 無ければ空), `horizon` (何期先まで) | 一式の既定値 (`make_bundle` の `decision` と `conclusion`), 何段も先の予測. ML-Provide は一式につないだ問題の設定から推論の既定値を読む |
