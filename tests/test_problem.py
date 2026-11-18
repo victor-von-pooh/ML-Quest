@@ -844,3 +844,47 @@ def test_group_column() -> None:
     assert any("member_id" in note for note in recipe_from(later)["notes"])
     result = apply_recipe(later, recipe_from(later)["recipe"])
     assert [c["id"] for c in result["conflicts"]] == ["ml.group_column"]
+
+
+def test_split_time_column() -> None:
+    """
+    分類でも時刻の順で分けて確かめる列を書くと, 時刻の順の分割と時刻の列を
+    渡すことを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 申し込みの日で分ける (学習に使わない列にしても誤りにしない)
+    problem = example_problem("解約の引き止め")
+    columns = get_value(problem, "information.columns") + ["applied_at"]
+    problem = answer(problem, "information.columns", columns)
+    forbidden = get_value(problem, "information.forbidden") or []
+    problem = answer(problem, "information.forbidden",
+                     forbidden + ["applied_at"])
+    problem = answer(problem, "ml.split_time_column", "applied_at")
+    assert levels(problem)["error"] == []
+    data = handoff(problem)["data"]
+    assert (data["split"], data["time_column"]) == ("time", "applied_at")
+    start = recipe_from(problem)
+    assert start["recipe"]["split"]["method"] == "time"
+
+    # 書き戻したレシピが時刻の順でなければ知らせる
+    other = dict(start["recipe"], split={"method": "stratified"})
+    result = apply_recipe(problem, other)
+    assert "ml.split_time_column" in [c["id"] for c in result["conflicts"]]
+
+    # 目的の列は誤り
+    wrong = answer(problem, "ml.split_time_column", "churned")
+    assert "ml.split_time_column" in levels(wrong)["error"]
+    same = answer(problem, "ml.group_column", "applied_at")
+    assert "ml.group_column" in levels(same)["error"]
+
+    # 分けるのにだけ使う時刻の列は, 決めていない列の知らせに出さない
+    loose = answer(problem, "information.forbidden", forbidden or None)
+    assert not any("applied_at" in item["message"]
+                   for item in check(loose) if item["level"] == "warning")

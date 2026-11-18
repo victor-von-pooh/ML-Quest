@@ -273,6 +273,13 @@ def recipe_conflicts(problem: dict, recipe: dict) -> tuple[list, list]:
             f"相手をまとめる列が, 問題の設定では {group or 'なし'}, レシピの"
             f"分割では {written or 'なし'} です (どちらかに合わせてください)"
         ))
+    if active_value(problem, "ml.split_time_column") and method and (
+        method != "time"
+    ):
+        conflicts.append(finding(
+            "warning", "ml.split_time_column",
+            f"時刻の順で分けて確かめると決めたのに, 分割が {method} です"
+        ))
     if active_value(problem, "ml.task") == "forecasting" and method and (
         method != "time"
     ):
