@@ -2,9 +2,15 @@ from typing import Any, Optional
 
 from ml_quest.check import check
 from ml_quest.problem import (
-    DECISION_NAMES, FIELD_NAMES, active_value, data_location, get_value
+    DECISION_NAMES, DECISION_OPTIONS, FIELD_NAMES, OPTION_NAMES,
+    active_value, data_location, get_value
 )
 from ml_quest.questions import METRICS, TASKS
+
+# 選んで書く意思決定の項目 (値を名前にして文にする)
+OPTION_FIELDS = {
+    field for options in DECISION_OPTIONS.values() for field in options
+}
 
 
 def decision_of(problem: dict) -> Optional[dict]:
@@ -264,9 +270,16 @@ def decision_text(decision: dict) -> str:
     text: str
         型と, 書いた損得と制約
     """
-    # 型の名前と, 項目の名前と値 (数は桁区切り)
+    # 型の名前と, 項目の名前と値 (数は桁区切り. 選んだ値は名前. 確率の差
+    # で書いた効果は防げる割合と呼ばない)
+    names = dict(FIELD_NAMES)
+    if decision.get("effect_kind") == "uplift":
+        names["effect"] = "確率の差"
     items: list[Any] = [
-        f"{FIELD_NAMES.get(key, key)} {number_text(value)}"
+        f"{names.get(key, key)} " + number_text(
+            OPTION_NAMES.get(value, value)
+            if key in OPTION_FIELDS and isinstance(value, str) else value
+        )
         for key, value in decision.items() if key != "type"
     ]
     text = f"意思決定: {DECISION_NAMES[decision['type']]}" + (
