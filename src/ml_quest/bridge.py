@@ -96,15 +96,21 @@ def skeleton_recipe(problem: dict, data: dict, notes: list) -> dict:
                          "ます (データを入れると時刻でずらせます)")
         steps.append(lag)
 
-    # 分割 (時系列は時刻の順, 分類は層別, 他は無作為)
+    # 分割 (時系列は時刻の順, 相手をまとめる列があれば相手ごと, 分類は
+    # 層別, 他は無作為. 時刻の順でも相手の列を書くと, 重なりを知らせる)
     method = {"forecasting": "time", "classification": "stratified"}.get(
         data["task"], "random"
     )
+    group = data.get("group_column")
+    if group and method != "time":
+        method = "group"
+    split: dict[str, Any] = {"method": method, "valid": VALID_RATIO,
+                             "test": TEST_RATIO, "seed": 0}
+    if group:
+        split["column"] = group
     recipe = {
         "format_version": 1, "target": data["target"], "task": data["task"],
-        "steps": steps,
-        "split": {"method": method, "valid": VALID_RATIO,
-                  "test": TEST_RATIO, "seed": 0},
+        "steps": steps, "split": split,
     }
 
     return recipe

@@ -228,6 +228,13 @@ QUESTIONS: list[dict[str, Any]] = [
     {"id": "ml.target", "section": 5, "kind": "column", "required": True,
      "when": USES_ML, "title": "目的の列は",
      "help": "予測する値の列"},
+    {"id": "ml.group_column", "section": 5, "kind": "column",
+     "required": False, "when": USES_ML,
+     "title": "同じ相手の行をまとめる列は (分割をまたがせない)",
+     "help": "1 人の会員, 1 台の機械に行が何行もあるとき, 学習と確かめに同じ"
+             "相手が入ると, 確かめが甘くなる (覚えた相手を当てるだけになる)."
+             " 書くと, データの分析の段階で相手ごとに分ける. 例: member_id. "
+             "無ければ空のまま"},
     {"id": "ml.positive", "section": 5, "kind": "text", "required": False,
      "when": [USES_ML, {"id": "ml.task", "equals": "classification"}],
      "title": "当たりのクラスは (2 クラスの分類で行動を決める場合)",
