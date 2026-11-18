@@ -25,6 +25,20 @@ DECISION_FIELDS = {
     "none": {},
 }
 
+# 意思決定の型ごとの, 選んで書く項目と選択肢 (ML-Inference の形). 対象を
+# 選ぶ型の効果の渡し方 (share は防げる割合, uplift は 行動したとき − しない
+# ときの当たりの確率) と, uplift の向き (当たりを減らしたいか増やしたいか)
+DECISION_OPTIONS = {
+    "select": {"effect_kind": ("share", "uplift"),
+               "effect_goal": ("reduce", "raise")},
+}
+
+# 選んで書く項目の値の名前 (要約の文に使う)
+OPTION_NAMES = {
+    "share": "防げる割合", "uplift": "確率の差",
+    "reduce": "当たりを減らす", "raise": "当たりを増やす",
+}
+
 # 桁区切りのカンマ付きの数 (1,200,000 など)
 GROUPED_NUMBER = re.compile(r"^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$")
 
@@ -38,7 +52,8 @@ FIELD_NAMES = {
     "cost": "行動の費用", "effect": "防げる割合", "budget": "件数の上限",
     "budget_cost": "費用の上限", "miss_cost": "見逃しの損",
     "false_alarm_cost": "空振りの損", "capacity": "回せる件数の上限",
-    "positive": "当たりのクラス",
+    "positive": "当たりのクラス", "effect_kind": "効果の渡し方",
+    "effect_goal": "向き",
 }
 
 # 意思決定の型の名前
@@ -497,7 +512,10 @@ def clean_decision(value: Any) -> Optional[dict]:
             "action.decision の type は "
             f"{', '.join(DECISION_FIELDS)} のどれかにしてください"
         )
-    unknown = sorted(set(value) - {"type"} - set(DECISION_FIELDS[kind]))
+    options = DECISION_OPTIONS.get(kind, {})
+    unknown = sorted(
+        set(value) - {"type"} - set(DECISION_FIELDS[kind]) - set(options)
+    )
     if unknown:
         raise ValueError(
             f"{DECISION_NAMES[kind]} には {', '.join(unknown)} を書けません"
@@ -508,6 +526,16 @@ def clean_decision(value: Any) -> Optional[dict]:
         decision_value = clean_amount(item, f"action.decision の {field}")
         if decision_value is not None:
             decision[field] = decision_value
+    for field, choices in options.items():
+        item = value.get(field)
+        if item is None or item == "":
+            continue
+        if item not in choices:
+            raise ValueError(
+                f"action.decision の {field} は {', '.join(choices)} の"
+                "どれかにしてください"
+            )
+        decision[field] = item
 
     return decision
 

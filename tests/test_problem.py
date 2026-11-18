@@ -614,3 +614,45 @@ def test_available_lag() -> None:
     # 回帰では問わず, 受け渡しにも出さない
     regression = answer(problem, "ml.task", "regression")
     assert handoff(regression)["data"]["min_lag"] is None
+
+
+def test_uplift_decision() -> None:
+    """
+    対象を選ぶ型の効果を確率の差 (uplift) で書けて, 向きと範囲を確かめ,
+    推論へそのまま渡すことを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 確率の差は負も書け, 向きと一緒に推論へ渡す
+    problem = example_problem("解約の引き止め")
+    decision = dict(get_value(problem, "action.decision"), effect=-0.1,
+                    effect_kind="uplift", effect_goal="reduce")
+    problem = answer(problem, "action.decision", decision)
+    assert "action.decision" not in levels(problem)["error"]
+    assert handoff(problem)["inference"]["decision"]["effect_goal"] == (
+        "reduce"
+    )
+    assert any("確率の差" in text and "当たりを減らす" in text
+               for text in describe(problem))
+    assert any("無作為" in item["message"] for item in check(problem))
+
+    # 向きの書き忘れ, 範囲の外, 防げる割合で向き, 知らない値は誤り
+    goalless = {key: value for key, value in decision.items()
+                if key != "effect_goal"}
+    for wrong in (goalless, dict(decision, effect=1.5),
+                  dict(decision, effect_kind="share", effect=0.2)):
+        assert "action.decision" in levels(
+            answer(problem, "action.decision", wrong)
+        )["error"]
+    with pytest.raises(ValueError, match="effect_kind"):
+        answer(problem, "action.decision", dict(decision, effect_kind="x"))
+    with pytest.raises(ValueError, match="書けません"):
+        answer(problem, "action.decision",
+               {"type": "triage", "miss_cost": 9, "false_alarm_cost": 1,
+                "effect_kind": "uplift"})

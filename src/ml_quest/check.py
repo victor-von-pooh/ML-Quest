@@ -1,8 +1,8 @@
 from typing import Any
 
 from ml_quest.problem import (
-    DECISION_FIELDS, DECISION_NAMES, FORMAT_VERSION, active_value, applies,
-    get_value, is_answered
+    DECISION_FIELDS, DECISION_NAMES, DECISION_OPTIONS, FORMAT_VERSION,
+    active_value, applies, get_value, is_answered
 )
 from ml_quest.questions import METRICS, QUESTIONS, TASKS
 
@@ -396,6 +396,7 @@ def check_decision(problem: dict) -> list[dict]:
         return found
     kind = decision["type"]
     columns = active_value(problem, "information.columns") or []
+    uplift = kind == "select" and decision.get("effect_kind") == "uplift"
     for field, required in DECISION_FIELDS[kind].items():
         value: Any = decision.get(field)
         if value is None:
@@ -408,7 +409,11 @@ def check_decision(problem: dict) -> list[dict]:
         if isinstance(value, str):
             found += column_amount(field, value, columns)
             continue
+        if field == "effect" and uplift:
+            found += uplift_range(value)
+            continue
         found += amount_range(field, value)
+    found += option_findings(decision)
 
     # 今のやり方の書き方と行動の型 (k 期前と平均は量だけ)
     current = active_value(problem, "action.current") or {}
@@ -443,7 +448,14 @@ def check_decision(problem: dict) -> list[dict]:
             "損得の値の根拠が空です. 根拠の無い値では, 意思決定はもっともら"
             "しいだけになります"
         ))
-    if kind == "select":
+    if uplift:
+        found.append(finding(
+            "info", "verification.method",
+            "対象を選ぶ行動の効果 (effect) は効果のモデルの見積もりです. "
+            "行動を無作為に割り当てて試して確かめてください (行動した人を"
+            "選んだ記録だけでは偏ります)"
+        ))
+    elif kind == "select":
         found.append(finding(
             "info", "verification.method",
             "対象を選ぶ行動の効果 (effect) は仮定です. 過去のデータからは"
@@ -479,6 +491,78 @@ def column_amount(field: str, value: str, columns: list[str]) -> list[dict]:
     else:
         found = [finding("info", "action.decision",
                          f"{field} は列 {value} の行ごとの値として読みます")]
+
+    return found
+
+
+def uplift_range(value: Any) -> list[dict]:
+    """
+    確率の差で書いた効果の範囲を確かめる関数
+
+    Parameters
+    ----------
+    value: Any
+        値
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (数でないか -1 から 1 の外は error)
+    """
+    # 行動したとき − しないときの当たりの確率なので -1 から 1
+    found = []
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        found.append(finding("error", "action.decision",
+                             "effect は数か列の名前にしてください"))
+    elif not -1 <= value <= 1:
+        found.append(finding(
+            "error", "action.decision",
+            "effect (行動したとき − しないときの当たりの確率) は -1 から 1 "
+            "にしてください"
+        ))
+
+    return found
+
+
+def option_findings(decision: dict) -> list[dict]:
+    """
+    選んで書く項目 (効果の渡し方と向き) を確かめる関数
+
+    Parameters
+    ----------
+    decision: dict
+        意思決定
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (知らない値, 確率の差で向きが無い, 防げる割合で向きがある)
+    """
+    # 手で書いたファイルの知らない値と, 向きの有無
+    found = []
+    options = DECISION_OPTIONS.get(decision["type"], {})
+    for field, choices in options.items():
+        value = decision.get(field)
+        if value is not None and value not in choices:
+            found.append(finding(
+                "error", "action.decision",
+                f"{field} は {', '.join(choices)} のどれかにしてください"
+            ))
+    if not options:
+        return found
+    uplift = decision.get("effect_kind") == "uplift"
+    if uplift and decision.get("effect_goal") is None:
+        found.append(finding(
+            "error", "action.decision",
+            "効果を確率の差で書いたので, 向き (effect_goal. 当たりを減らし"
+            "たいなら reduce, 増やしたいなら raise) を書いてください"
+        ))
+    elif not uplift and decision.get("effect_goal") is not None:
+        found.append(finding(
+            "error", "action.decision",
+            "向き (effect_goal) は, 効果を確率の差 (effect_kind: uplift) で"
+            "書いたときだけ書いてください"
+        ))
 
     return found
 
