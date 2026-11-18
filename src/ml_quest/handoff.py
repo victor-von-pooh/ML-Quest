@@ -229,7 +229,7 @@ def guard_text(guard: dict) -> str:
         parts.append(f"守る線 {number_text(line)}")
     if guard.get("measure"):
         parts.append(f"測り方: {guard['measure']}")
-    text = f"守る指標: {guard['name']}" + (
+    text = f"守る指標: {str(guard['name']).strip()}" + (
         f" ({'. '.join(parts)})" if parts else ""
     )
 

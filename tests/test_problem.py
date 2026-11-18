@@ -715,3 +715,10 @@ def test_guard_metric() -> None:
     # 見本の解約の引き止めは守る指標を持ち, 止める条件に入っている
     churn = example_problem("解約の引き止め")
     assert "verification.success" not in levels(churn)["info"]
+
+    # 手で書いた数でない線と知らない向きは誤り
+    raw = example_problem("解約の引き止め")
+    raw["issue"]["guard"].update(line="abc", better="up")
+    assert {"issue.guard.line", "issue.guard.better"} <= set(
+        levels(raw)["error"]
+    )

@@ -735,6 +735,17 @@ def check_guard(problem: dict) -> list[dict]:
             "守る指標が, 解けたと言える指標と同じです. 良くしたい数字と引き"
             "換えに悪くなりうる別の数字を書いてください"
         ))
+    line = active_value(problem, "issue.guard.line")
+    if line is not None and (
+        not isinstance(line, (int, float)) or isinstance(line, bool)
+    ):
+        found.append(finding("error", "issue.guard.line",
+                             "守る線は数にしてください"))
+    if active_value(problem, "issue.guard.better") not in (
+        None, "lower", "higher"
+    ):
+        found.append(finding("error", "issue.guard.better",
+                             "守る指標の向きは lower か higher にしてください"))
     texts = [str(active_value(problem, key) or "")
              for key in ("verification.success", "operation.stop")]
     if get_value(problem, "ml.use") is True and not any(
