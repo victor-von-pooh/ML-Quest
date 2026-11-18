@@ -5,7 +5,7 @@ from ml_quest.problem import (
     DECISION_NAMES, DECISION_OPTIONS, FIELD_NAMES, OPTION_NAMES,
     active_value, data_location, get_value
 )
-from ml_quest.questions import METRICS, TASKS
+from ml_quest.questions import CONSUMERS, METRICS, TASKS
 
 # 選んで書く意思決定の項目 (値を名前にして文にする)
 OPTION_FIELDS = {
@@ -191,9 +191,20 @@ def describe(problem: dict) -> list[str]:
             f"機械学習で予測すること: {value(problem, 'ml.predict')}"
             + (f" ({'. '.join(details)})" if details else "")
         )
+    consumer = value(problem, "ml.consumer")
+    names = {item["value"]: item["label"] for item in CONSUMERS}
+    if isinstance(consumer, str) and consumer in names:
+        downstream = value(problem, "ml.downstream")
+        sentences.append(
+            f"予測の使い道: {names[consumer]}"
+            + (f". 後段が求めるもの: {downstream}" if downstream else "")
+        )
     decision = value(problem, "action.decision")
     if isinstance(decision, dict) and decision.get("type") in DECISION_NAMES:
         sentences.append(decision_text(decision))
+    constraints = value(problem, "ml.constraints")
+    if isinstance(constraints, list) and constraints:
+        sentences.append("守る制約: " + ", ".join(map(str, constraints)))
     if value(problem, "verification.success"):
         sentences.append(
             f"成功の基準: {value(problem, 'verification.success')}"

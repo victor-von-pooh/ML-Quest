@@ -21,6 +21,19 @@ USES_ML = {"id": "ml.use", "equals": True}
 # 守る指標を書いた場合だけの問い
 HAS_GUARD = {"id": "issue.guard.name", "filled": True}
 
+# 予測の使い道の選択肢 (後段の仕組みと後段の機械学習は, 求める形を問う)
+CONSUMERS = [
+    {"value": "human", "label": "人が見て決める (判断の材料)"},
+    {"value": "rule", "label": "決まりで自動に決める (量, 選ぶ, 振り分け)"},
+    {"value": "system", "label": "後段の仕組みに渡す (機械学習でない計算や"
+     "検査)"},
+    {"value": "model", "label": "後段の機械学習に渡す (表現, 候補など)"},
+    {"value": "deliver", "label": "そのまま届ける (作った中身)"},
+]
+
+# 後段のある使い道
+DOWNSTREAM = {"id": "ml.consumer", "in": ["system", "model"]}
+
 # タスクの選択肢
 TASKS = [
     {"value": "classification",
@@ -194,6 +207,17 @@ QUESTIONS: list[dict[str, Any]] = [
      "when": USES_ML, "title": "機械学習を使わない比べる相手は",
      "help": "機械学習が要るかは, 素朴なやり方より良いかで決まる. 多くは"
              "1 の「今のやり方」と同じ. 例: 前の週の同じ曜日と同じ数"},
+    {"id": "ml.consumer", "section": 5, "kind": "choice",
+     "required": False, "when": USES_ML, "choices": CONSUMERS,
+     "title": "予測を誰が (何が) 使いますか",
+     "help": "使い道で, 確かめ方と要る精度が変わる. 人が見るなら説明, 自動"
+             "で決めるなら損得 (7 の節), 後段に渡すなら後段が求める形と精度"},
+    {"id": "ml.downstream", "section": 5, "kind": "text",
+     "required": False, "when": [USES_ML, DOWNSTREAM],
+     "title": "後段は何で, 予測に何を求めますか",
+     "help": "形, 単位, 要る精度. 評価は後段の結果で見る (予測の誤差が小さく"
+             "ても後段の判定が変わることがある). 例: 点群から寸法を測る決"
+             "まり. 1 mm の差が分かる精度が要る"},
 
     # 6. 使える情報
     {"id": "information.known", "section": 6, "kind": "columns",
@@ -238,6 +262,12 @@ QUESTIONS: list[dict[str, Any]] = [
      "when": USES_ML, "title": "損得の値の根拠は",
      "help": "例: 欠品は粗利 200 円, 廃棄は原価 150 円. 根拠の無い値では, "
              "意思決定はもっともらしいだけになる"},
+    {"id": "ml.constraints", "section": 7, "kind": "list",
+     "required": False, "when": USES_ML,
+     "title": "機械学習の仕組みが守る制約は",
+     "help": "1 行に 1 つ. 作り方 (既製のモデル, 外のサービス) を選ぶ前に"
+             "決める. 例: データを社外に出せない, 商用で使えるライセンス"
+             "だけ, 1 件 1 秒以内に返す, 手元の計算機で動く"},
 
     # 8. 学習の指標
     {"id": "evaluation.metric", "section": 8, "kind": "choice",

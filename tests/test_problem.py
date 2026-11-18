@@ -722,3 +722,46 @@ def test_guard_metric() -> None:
     assert {"issue.guard.line", "issue.guard.better"} <= set(
         levels(raw)["error"]
     )
+
+
+def test_output_use() -> None:
+    """
+    予測の使い道と後段と制約を書けて, 意思決定と後段の食い違いを確かめ,
+    要約に出ることを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 後段に渡すときだけ後段の問いが要り, 書かなければ見直し
+    problem = example_problem("総菜の作る量")
+    needed = {item["id"]: item["applies"] for item in questions(problem)}
+    assert needed["ml.consumer"] and not needed["ml.downstream"]
+    downstream = answer(problem, "ml.consumer", "system")
+    assert "ml.downstream" in levels(downstream)["warning"]
+    downstream = answer(downstream, "ml.downstream", "発注の仕組み. 個数")
+    assert "ml.downstream" not in levels(downstream)["warning"]
+    assert any("後段が求めるもの: 発注の仕組み" in text
+               for text in describe(downstream))
+
+    # 自動で決めるのに意思決定しないは見直し
+    none = answer(problem, "action.decision", {"type": "none"})
+    assert "action.decision" in levels(none)["warning"]
+
+    # 見本の解約の引き止めは制約が要約に出る
+    churn = describe(example_problem("解約の引き止め"))
+    assert any(text.startswith("予測の使い道: 決まりで自動に") for text
+               in churn)
+    assert "守る制約: 会員の情報を社外のサービスに出さない" in churn
+
+    # 手で書いた崩れた値は形の誤りで, 要約は落ちない
+    raw = example_problem("解約の引き止め")
+    raw["ml"].update(consumer=["rule"], constraints="外に出さない")
+    assert {"ml.consumer", "ml.constraints"} <= set(levels(raw)["error"])
+    assert describe(raw)
+    raw["ml"].update(consumer="robot", constraints=["外に出さない"])
+    assert "ml.consumer" in levels(raw)["error"]
