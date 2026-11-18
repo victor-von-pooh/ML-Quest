@@ -30,8 +30,8 @@ def decision_of(problem: dict) -> Optional[dict]:
     if decision["type"] in ("select", "triage"):
         decision["positive"] = active_value(problem, "ml.positive")
 
-    # 今のやり方の列 (量は置いた量なので, 今ある量に足す ML-Inference の
-    # 形と同じになる今ある量の無い場合だけ)
+    # 今のやり方の列 (量は今ある量の無い場合だけ. 問題の設定の列は置いた
+    # 量, ML-Inference は今ある量に足した量)
     current = active_value(problem, "action.current") or {}
     if current.get("type") == "column" and (
         decision["type"] != "quantity" or not decision.get("stock")

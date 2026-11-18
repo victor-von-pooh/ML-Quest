@@ -418,6 +418,23 @@ def check_decision(problem: dict) -> list[dict]:
             f"{DECISION_NAMES[kind]}の今のやり方は, 行動したかの列で書いて"
             "ください (k 期前と平均は量を決める行動だけ)"
         ))
+    if current.get("type") == "column":
+        if current.get("column") in (
+            active_value(problem, "information.known") or []
+        ):
+            found.append(finding(
+                "warning", "action.current",
+                f"今のやり方の列 {current['column']} を学習に使ってよい列に"
+                "しています. 今のやり方の結果は予測の後に決まるので, ふつう"
+                "予測の時点で分かりません (今のやり方をまねるだけになります)"
+            ))
+        if kind == "quantity" and decision.get("stock"):
+            found.append(finding(
+                "info", "action.current",
+                "今ある量があるので, 今のやり方の列 (置いた量) は推論の"
+                "たどり直しには渡しません (推論の段階の今のやり方は, 今ある"
+                "量に足した量のため)"
+            ))
 
     # 根拠の無い損得と, 仮定の効果
     if kind != "none" and not get_value(problem, "action.basis"):

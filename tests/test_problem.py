@@ -280,6 +280,14 @@ def test_handoff_current() -> None:
     decision = dict(get_value(placed, "action.decision"), stock=5)
     stocked = answer(placed, "action.decision", decision)
     assert "current" not in handoff(stocked)["inference"]["decision"]
+    assert any(item["id"] == "action.current" and item["level"] == "info"
+               for item in check(stocked))
+
+    # 今のやり方の列を学習に使うと注意
+    leaky = answer(column, "information.known",
+                   get_value(column, "information.known") + ["contacted"])
+    assert any(item["id"] == "action.current"
+               and item["level"] == "warning" for item in check(leaky))
 
 
 def test_save_and_load(tmp_path: Path) -> None:
