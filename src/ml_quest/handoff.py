@@ -270,11 +270,15 @@ def decision_text(decision: dict) -> str:
     text: str
         型と, 書いた損得と制約
     """
-    # 型の名前と, 項目の名前と値 (数は桁区切り. 選んだ値は名前)
+    # 型の名前と, 項目の名前と値 (数は桁区切り. 選んだ値は名前. 確率の差
+    # で書いた効果は防げる割合と呼ばない)
+    names = dict(FIELD_NAMES)
+    if decision.get("effect_kind") == "uplift":
+        names["effect"] = "確率の差"
     items: list[Any] = [
-        f"{FIELD_NAMES.get(key, key)} " + number_text(
-            OPTION_NAMES.get(value, value) if key in OPTION_FIELDS
-            else value
+        f"{names.get(key, key)} " + number_text(
+            OPTION_NAMES.get(value, value)
+            if key in OPTION_FIELDS and isinstance(value, str) else value
         )
         for key, value in decision.items() if key != "type"
     ]

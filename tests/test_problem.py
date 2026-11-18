@@ -638,8 +638,8 @@ def test_uplift_decision() -> None:
     assert handoff(problem)["inference"]["decision"]["effect_goal"] == (
         "reduce"
     )
-    assert any("確率の差" in text and "当たりを減らす" in text
-               for text in describe(problem))
+    assert any("確率の差 -0.1" in text and "当たりを減らす" in text
+               and "防げる割合" not in text for text in describe(problem))
     assert any("無作為" in item["message"] for item in check(problem))
 
     # 向きの書き忘れ, 範囲の外, 防げる割合で向き, 知らない値は誤り
@@ -656,3 +656,18 @@ def test_uplift_decision() -> None:
         answer(problem, "action.decision",
                {"type": "triage", "miss_cost": 9, "false_alarm_cost": 1,
                 "effect_kind": "uplift"})
+
+    # 手で書いたファイル: 空の渡し方は既定, 並びの値と他の型の項目は誤り
+    raw = example_problem("解約の引き止め")
+    raw["action"]["decision"] = dict(
+        raw["action"]["decision"], effect_kind=""
+    )
+    assert "action.decision" not in levels(raw)["error"]
+    raw["action"]["decision"]["effect_kind"] = ["uplift"]
+    assert "action.decision" in levels(raw)["error"]
+    assert describe(raw)
+    raw["action"]["decision"] = {"type": "triage", "miss_cost": 9,
+                                 "false_alarm_cost": 1,
+                                 "effect_goal": "reduce"}
+    assert any("書けません" in item["message"] for item in check(raw)
+               if item["id"] == "action.decision")

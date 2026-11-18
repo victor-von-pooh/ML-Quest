@@ -536,14 +536,26 @@ def option_findings(decision: dict) -> list[dict]:
     Returns
     ----------
     found: list[dict]
-        確かめ (知らない値, 確率の差で向きが無い, 防げる割合で向きがある)
+        確かめ (知らない項目と値, 確率の差で向きが無い, 防げる割合で向きが
+        ある)
     """
-    # 手で書いたファイルの知らない値と, 向きの有無
+    # 手で書いたファイルの知らない項目と値 (空は既定) と, 向きの有無
     found = []
     options = DECISION_OPTIONS.get(decision["type"], {})
+    unknown = sorted(
+        str(key) for key in decision
+        if key != "type" and key not in DECISION_FIELDS[decision["type"]]
+        and key not in options
+    )
+    if unknown:
+        found.append(finding(
+            "error", "action.decision",
+            f"{DECISION_NAMES[decision['type']]}には {', '.join(unknown)} "
+            "を書けません"
+        ))
     for field, choices in options.items():
         value = decision.get(field)
-        if value is not None and value not in choices:
+        if value not in (None, "") and value not in choices:
             found.append(finding(
                 "error", "action.decision",
                 f"{field} は {', '.join(choices)} のどれかにしてください"
@@ -551,13 +563,13 @@ def option_findings(decision: dict) -> list[dict]:
     if not options:
         return found
     uplift = decision.get("effect_kind") == "uplift"
-    if uplift and decision.get("effect_goal") is None:
+    if uplift and decision.get("effect_goal") in (None, ""):
         found.append(finding(
             "error", "action.decision",
             "効果を確率の差で書いたので, 向き (effect_goal. 当たりを減らし"
             "たいなら reduce, 増やしたいなら raise) を書いてください"
         ))
-    elif not uplift and decision.get("effect_goal") is not None:
+    elif not uplift and decision.get("effect_goal") not in (None, ""):
         found.append(finding(
             "error", "action.decision",
             "向き (effect_goal) は, 効果を確率の差 (effect_kind: uplift) で"
