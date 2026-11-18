@@ -42,6 +42,9 @@ def recipe_from(problem: dict) -> dict:
     saved = get_value(problem, "data.recipe")
     if isinstance(saved, dict):
         recipe = copy.deepcopy(saved)
+        notes += [item["message"] for item in recipe_conflicts(
+            problem, recipe
+        )[0] if item["id"] == "ml.group_column"]
     else:
         recipe = skeleton_recipe(problem, data, notes)
 
@@ -96,15 +99,21 @@ def skeleton_recipe(problem: dict, data: dict, notes: list) -> dict:
                          "ます (データを入れると時刻でずらせます)")
         steps.append(lag)
 
-    # 分割 (時系列は時刻の順, 分類は層別, 他は無作為)
+    # 分割 (時系列は時刻の順, 相手をまとめる列があれば相手ごと, 分類は
+    # 層別, 他は無作為. 時刻の順でも相手の列を書くと, 重なりを知らせる)
     method = {"forecasting": "time", "classification": "stratified"}.get(
         data["task"], "random"
     )
+    group = data.get("group_column")
+    if group and method != "time":
+        method = "group"
+    split: dict[str, Any] = {"method": method, "valid": VALID_RATIO,
+                             "test": TEST_RATIO, "seed": 0}
+    if group:
+        split["column"] = group
     recipe = {
         "format_version": 1, "target": data["target"], "task": data["task"],
-        "steps": steps,
-        "split": {"method": method, "valid": VALID_RATIO,
-                  "test": TEST_RATIO, "seed": 0},
+        "steps": steps, "split": split,
     }
 
     return recipe
@@ -259,6 +268,14 @@ def recipe_conflicts(problem: dict, recipe: dict) -> tuple[list, list]:
             f"時点で分かるのは {min_lag} 期前からです (漏れになります)"
         ))
     method = (recipe.get("split") or {}).get("method")
+    group = active_value(problem, "ml.group_column")
+    written = (recipe.get("split") or {}).get("column") or None
+    if group != written:
+        conflicts.append(finding(
+            "warning", "ml.group_column",
+            f"相手をまとめる列が, 問題の設定では {group or 'なし'}, レシピの"
+            f"分割では {written or 'なし'} です (どちらかに合わせてください)"
+        ))
     if active_value(problem, "ml.task") == "forecasting" and method and (
         method != "time"
     ):

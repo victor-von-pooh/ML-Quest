@@ -93,6 +93,7 @@ def check_shape(problem: dict) -> list[dict]:
                              "ください"))
     for key in ("ml.task", "ml.target", "ml.time_column", "ml.positive",
                 "evaluation.metric", "issue.kpi.better", "ml.consumer",
+                "ml.group_column",
                 "ml.downstream", "issue.guard.name"):
         value = get_value(problem, key)
         if value is not None and not isinstance(value, str):
@@ -276,6 +277,10 @@ def check_task(problem: dict) -> list[dict]:
     if target and target in series:
         found.append(finding("error", "ml.series_by",
                              "系列を分ける列に目的の列が入っています"))
+    group = active_value(problem, "ml.group_column")
+    if group and group in (target, time_column):
+        found.append(finding("error", "ml.group_column",
+                             "相手をまとめる列が目的の列か時刻の列です"))
 
     # 何期先までと, 何期前まで分かるか (1 以上の整数)
     for key, name in (("ml.horizon", "何期先まで"),
@@ -310,7 +315,7 @@ def check_columns(problem: dict) -> list[dict]:
     columns = active_value(problem, "information.columns") or []
     if not columns:
         return found
-    for key in ("ml.target", "ml.time_column"):
+    for key in ("ml.target", "ml.time_column", "ml.group_column"):
         name = active_value(problem, key)
         if name and name not in columns:
             found.append(finding("error", key,

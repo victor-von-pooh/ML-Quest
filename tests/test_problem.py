@@ -6,9 +6,9 @@ import pytest
 import yaml
 
 from ml_quest import (
-    EXAMPLES, QUESTIONS, answer, check, describe, example_problem,
+    EXAMPLES, apply_recipe, QUESTIONS, answer, check, describe, example_problem,
     get_value, handoff, is_ready, load_problem, make_project, new_problem,
-    questions, read_columns, save_problem
+    questions, read_columns, recipe_from, save_problem
 )
 from ml_quest.problem import DECISION_FIELDS, DECISION_OPTIONS
 
@@ -799,3 +799,47 @@ def test_decision_choices() -> None:
     goal = next(field for field in kinds["select"]["fields"]
                 if field["key"] == "effect_goal")
     assert goal["when"] == {"key": "effect_kind", "equals": "uplift"}
+
+
+def test_group_column() -> None:
+    """
+    同じ相手の行をまとめる列を書くと, 分割を相手ごとにして渡し, 時系列
+    では時刻の順のまま列だけを渡すことを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 分類は相手ごとの分割に (レシピの下書きも)
+    problem = answer(example_problem("解約の引き止め"), "ml.group_column",
+                     "member_id")
+    assert levels(problem)["error"] == []
+    data = handoff(problem)["data"]
+    assert (data["split"], data["group_column"]) == ("group", "member_id")
+    split = recipe_from(problem)["recipe"]["split"]
+    assert (split["method"], split["column"]) == ("group", "member_id")
+
+    # 時系列は時刻の順のまま, 列は渡す (重なりを知らせるため)
+    sozai = answer(example_problem("総菜の作る量"), "ml.group_column",
+                   "store")
+    split = recipe_from(sozai)["recipe"]["split"]
+    assert (split["method"], split["column"]) == ("time", "store")
+
+    # 目的の列は誤り, 無い列は答えられない
+    wrong = answer(problem, "ml.group_column", "churned")
+    assert "ml.group_column" in levels(wrong)["error"]
+    with pytest.raises(ValueError, match="no_such"):
+        answer(problem, "ml.group_column", "no_such")
+
+    # 書き戻したレシピと相手の列が食い違えば知らせる
+    saved = apply_recipe(example_problem("解約の引き止め"),
+                         recipe_from(example_problem("解約の引き止め"))[
+                             "recipe"])["problem"]
+    later = answer(saved, "ml.group_column", "member_id")
+    assert any("member_id" in note for note in recipe_from(later)["notes"])
+    result = apply_recipe(later, recipe_from(later)["recipe"])
+    assert [c["id"] for c in result["conflicts"]] == ["ml.group_column"]
