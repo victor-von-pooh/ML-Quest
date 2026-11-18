@@ -376,7 +376,7 @@ def check_information(problem: dict) -> list[dict]:
         ))
 
     # 決めていない列 (目的, 時刻, 系列の列は除く)
-    roles = {target, time_column, active_value(problem, "ml.group_column"),
+    roles = {target, time_column,
              *(active_value(problem, "ml.series_by") or [])}
     undecided = [name for name in columns
                  if name not in known + unknown + forbidden

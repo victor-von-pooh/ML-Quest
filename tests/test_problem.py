@@ -6,7 +6,7 @@ import pytest
 import yaml
 
 from ml_quest import (
-    EXAMPLES, QUESTIONS, answer, check, describe, example_problem,
+    EXAMPLES, apply_recipe, QUESTIONS, answer, check, describe, example_problem,
     get_value, handoff, is_ready, load_problem, make_project, new_problem,
     questions, read_columns, recipe_from, save_problem
 )
@@ -834,3 +834,12 @@ def test_group_column() -> None:
     assert "ml.group_column" in levels(wrong)["error"]
     with pytest.raises(ValueError, match="no_such"):
         answer(problem, "ml.group_column", "no_such")
+
+    # 書き戻したレシピと相手の列が食い違えば知らせる
+    saved = apply_recipe(example_problem("解約の引き止め"),
+                         recipe_from(example_problem("解約の引き止め"))[
+                             "recipe"])["problem"]
+    later = answer(saved, "ml.group_column", "member_id")
+    assert any("member_id" in note for note in recipe_from(later)["notes"])
+    result = apply_recipe(later, recipe_from(later)["recipe"])
+    assert [c["id"] for c in result["conflicts"]] == ["ml.group_column"]
