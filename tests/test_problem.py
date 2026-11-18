@@ -246,6 +246,42 @@ def test_handoff_values() -> None:
     assert stages["inference"]["decision"] is None
 
 
+def test_handoff_current() -> None:
+    """
+    今のやり方の列を, たどり直しで比べる列として渡すことを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 選ぶ型の行動したかの列は渡す. k 期前は ML-Inference に無いので渡さない
+    churn = example_problem("解約の引き止め")
+    churn = answer(churn, "information.columns",
+                   get_value(churn, "information.columns") + ["contacted"])
+    column = answer(churn, "action.current",
+                    {"type": "column", "column": "contacted"})
+    assert handoff(column)["inference"]["decision"]["current"] == (
+        "contacted"
+    )
+    sozai = example_problem("総菜の作る量")
+    weekly = answer(sozai, "action.current", {"type": "lag", "periods": 7})
+    assert "current" not in handoff(weekly)["inference"]["decision"]
+
+    # 量の型は, 今ある量が無いときだけ (置いた量と足した量の違い)
+    sozai = answer(sozai, "information.columns",
+                   get_value(sozai, "information.columns") + ["made"])
+    placed = answer(sozai, "action.current",
+                    {"type": "column", "column": "made"})
+    assert handoff(placed)["inference"]["decision"]["current"] == "made"
+    decision = dict(get_value(placed, "action.decision"), stock=5)
+    stocked = answer(placed, "action.decision", decision)
+    assert "current" not in handoff(stocked)["inference"]["decision"]
+
+
 def test_save_and_load(tmp_path: Path) -> None:
     """
     問題の設定を書いて読み直せることと, 新しい版を確かめで知らせることを
