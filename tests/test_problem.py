@@ -6,9 +6,10 @@ import pytest
 import yaml
 
 from ml_quest import (
-    EXAMPLES, apply_recipe, QUESTIONS, answer, check, describe, example_problem,
-    get_value, handoff, is_ready, load_problem, make_project, new_problem,
-    questions, read_columns, recipe_from, save_problem
+    EXAMPLES, QUESTIONS, answer, apply_recipe, check, describe,
+    example_problem, get_value, handoff, is_ready, load_problem,
+    make_project, new_problem, questions, read_columns, recipe_from,
+    save_problem
 )
 from ml_quest.problem import DECISION_FIELDS, DECISION_OPTIONS
 
