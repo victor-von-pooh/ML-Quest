@@ -163,6 +163,9 @@ def describe(problem: dict) -> list[str]:
     kpi = value(problem, "issue.kpi") or {}
     if kpi.get("name"):
         sentences.append(kpi_text(kpi))
+    guard = value(problem, "issue.guard") or {}
+    if isinstance(guard, dict) and guard.get("name"):
+        sentences.append(guard_text(guard))
 
     # 決めること (予測より先) と機械学習の受け持ち
     if value(problem, "action.what"):
@@ -197,6 +200,40 @@ def describe(problem: dict) -> list[str]:
         )
 
     return sentences
+
+
+def guard_text(guard: dict) -> str:
+    """
+    守る指標を文にする関数
+
+    Parameters
+    ----------
+    guard: dict
+        守る指標 (name, unit, better, line, measure)
+
+    Returns
+    ----------
+    text: str
+        「守る指標: 名前 (単位. x を超えない. 測り方)」の形
+    """
+    # 分かる値だけの並び (線の向きは指標の向きから)
+    parts = []
+    if guard.get("unit"):
+        parts.append(str(guard["unit"]))
+    line = guard.get("line")
+    if line is not None and guard.get("better") in ("lower", "higher"):
+        parts.append(f"{number_text(line)} を"
+                     + ("超えない" if guard["better"] == "lower"
+                        else "下回らない"))
+    elif line is not None:
+        parts.append(f"守る線 {number_text(line)}")
+    if guard.get("measure"):
+        parts.append(f"測り方: {guard['measure']}")
+    text = f"守る指標: {guard['name']}" + (
+        f" ({'. '.join(parts)})" if parts else ""
+    )
+
+    return text
 
 
 def kpi_text(kpi: dict) -> str:
