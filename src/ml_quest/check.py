@@ -282,7 +282,7 @@ def check_task(problem: dict) -> list[dict]:
         found.append(finding("error", "ml.split_time_column",
                              "時刻の順で分ける列が目的の列です"))
     group = active_value(problem, "ml.group_column")
-    if group and group in (target, time_column):
+    if group and group in (target, time_column, split_time):
         found.append(finding("error", "ml.group_column",
                              "相手をまとめる列が目的の列か時刻の列です"))
 
@@ -382,6 +382,7 @@ def check_information(problem: dict) -> list[dict]:
 
     # 決めていない列 (目的, 時刻, 系列の列は除く)
     roles = {target, time_column,
+             active_value(problem, "ml.split_time_column"),
              *(active_value(problem, "ml.series_by") or [])}
     undecided = [name for name in columns
                  if name not in known + unknown + forbidden

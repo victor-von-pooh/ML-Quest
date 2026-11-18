@@ -881,3 +881,10 @@ def test_split_time_column() -> None:
     # 目的の列は誤り
     wrong = answer(problem, "ml.split_time_column", "churned")
     assert "ml.split_time_column" in levels(wrong)["error"]
+    same = answer(problem, "ml.group_column", "applied_at")
+    assert "ml.group_column" in levels(same)["error"]
+
+    # 分けるのにだけ使う時刻の列は, 決めていない列の知らせに出さない
+    loose = answer(problem, "information.forbidden", forbidden or None)
+    assert not any("applied_at" in item["message"]
+                   for item in check(loose) if item["level"] == "warning")
