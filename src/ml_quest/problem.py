@@ -240,10 +240,12 @@ def choices_of(problem: dict, question: dict) -> list[dict]:
     choices: list[dict]
         値と説明の並び (学習の指標はタスクに合うものだけ)
     """
-    # タスクを持つ選択肢は, 今のタスクに合うものだけ
+    # タスクを持つ選択肢は, 今のタスクに合うものだけ. 意思決定の型は欄も
     task = get_value(problem, "ml.task")
     choices = [
         {"value": choice["value"], "label": choice["label"]}
+        | ({"fields": copy.deepcopy(choice["fields"])}
+           if "fields" in choice else {})
         for choice in question.get("choices", [])
         if "tasks" not in choice or task is None or task in choice["tasks"]
     ]

@@ -145,7 +145,7 @@ operation:                        # 10. 運用
 | `columns` | データの列の名前の並び |
 | `list` | 文の並び |
 | `levers` | 要因と打てる手の並び (`decomposition`) |
-| `decision` | 意思決定の型と損得と制約 (ML-Inference の形) |
+| `decision` | 意思決定の型と損得と制約 (ML-Inference の形). `choices` は型ごとに名前と欄 (`fields`: `key`, `label`, `required`, 選んで書く欄は `choices` と選ばないときの意味 `unset`, 他の欄の値で要るかが決まる欄は `when`) を持ち, 画面はこれだけで描く |
 | `baseline` | 今のやり方をデータで書いたもの (`type` と `periods` か `column`. 上の「今のやり方をデータで書く」) |
 | `source` | データの場所 (絶対パス. `~` は展開する). 画面はファイルを選ばせて `attach_data` で入れる (`answer` で場所だけを答えると, 読み方と列の名前は入らない) |
 
