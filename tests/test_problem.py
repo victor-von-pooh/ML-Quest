@@ -10,6 +10,7 @@ from ml_quest import (
     get_value, handoff, is_ready, load_problem, make_project, new_problem,
     questions, read_columns, save_problem
 )
+from ml_quest.problem import DECISION_FIELDS, DECISION_OPTIONS
 
 
 def levels(problem: dict) -> dict[str, list[str]]:
@@ -765,3 +766,36 @@ def test_output_use() -> None:
     assert describe(raw)
     raw["ml"].update(consumer="robot", constraints=["外に出さない"])
     assert "ml.consumer" in levels(raw)["error"]
+
+
+def test_decision_choices() -> None:
+    """
+    意思決定の問いが, 型と型ごとの欄を選択肢で返し, 欄が確かめの項目と
+    合うことを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 欄は型ごとの損得の項目と選んで書く項目のちょうど全て
+    problem = example_problem("解約の引き止め")
+    item = next(q for q in questions(problem) if q["id"] == "action.decision")
+    kinds = {choice["value"]: choice for choice in item["choices"]}
+    assert set(kinds) == set(DECISION_FIELDS)
+    for kind, required in DECISION_FIELDS.items():
+        fields = {field["key"]: field for field in kinds[kind]["fields"]}
+        options = DECISION_OPTIONS.get(kind, {})
+        assert set(fields) == set(required) | set(options)
+        for key, needed in required.items():
+            assert fields[key]["required"] is needed
+        for key, values in options.items():
+            assert [c["value"] for c in fields[key]["choices"]] == list(
+                values
+            )
+    goal = next(field for field in kinds["select"]["fields"]
+                if field["key"] == "effect_goal")
+    assert goal["when"] == {"key": "effect_kind", "equals": "uplift"}

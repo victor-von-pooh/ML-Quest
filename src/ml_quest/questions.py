@@ -34,6 +34,60 @@ CONSUMERS = [
 # 後段のある使い道
 DOWNSTREAM = {"id": "ml.consumer", "in": ["system", "model"]}
 
+# 意思決定の型と, 型ごとの欄 (画面はこれだけで描く. 項目は ML-Inference の
+# 形. required は要る欄, choices は選んで書く欄, unset は選ばないときの意味,
+# when は他の欄の値で要るかが決まる欄)
+DECISION_TYPES = [
+    {"value": "quantity", "label": "量を決める (仕入れ, 補充, 人員)",
+     "fields": [
+         {"key": "under_cost", "required": True,
+          "label": "1 単位足りないときの損 (欠品の粗利など)"},
+         {"key": "over_cost", "required": True,
+          "label": "1 単位余ったときの損 (捨てるなら原価など)"},
+         {"key": "stock", "required": False,
+          "label": "今ある量 (任意. 行ごとに違えば列の名前)"},
+         {"key": "step", "required": False, "label": "量の刻み (任意)"},
+     ]},
+    {"value": "select", "label": "対象を選ぶ (引き止め, 営業先)",
+     "fields": [
+         {"key": "value", "required": True,
+          "label": "当たり 1 件の価値 (行ごとに違えば列の名前)"},
+         {"key": "cost", "required": True, "label": "行動 1 件の費用"},
+         {"key": "effect_kind", "required": False,
+          "label": "効果の渡し方 (防げる割合か, 行動したとき − しないとき"
+                   "の当たりの確率)",
+          "choices": [
+              {"value": "share", "label": "防げる割合 (仮定)"},
+              {"value": "uplift", "label": "確率の差 (効果のモデル)"},
+          ],
+          "unset": "既定 (防げる割合 (仮定))"},
+         {"key": "effect", "required": True,
+          "label": "効果 (割合は 0 から 1, 確率の差は -1 から 1)"},
+         {"key": "effect_goal", "required": True,
+          "label": "当たりをどうしたいか (減らすなら差が負, 増やすなら正が"
+                   "得)",
+          "choices": [
+              {"value": "reduce", "label": "減らしたい (解約など)"},
+              {"value": "raise", "label": "増やしたい (成約など)"},
+          ],
+          "unset": "選ぶ",
+          "when": {"key": "effect_kind", "equals": "uplift"}},
+         {"key": "budget", "required": False, "label": "件数の上限 (任意)"},
+         {"key": "budget_cost", "required": False,
+          "label": "費用の上限 (任意)"},
+     ]},
+    {"value": "triage", "label": "振り分ける (人が確かめる, 再検査)",
+     "fields": [
+         {"key": "miss_cost", "required": True, "label": "当たりを見逃す損"},
+         {"key": "false_alarm_cost", "required": True,
+          "label": "外れを回す損 (空振り)"},
+         {"key": "capacity", "required": False,
+          "label": "回せる件数の上限 (任意)"},
+     ]},
+    {"value": "none", "label": "意思決定しない (人が予測を見て決める)",
+     "fields": []},
+]
+
 # タスクの選択肢
 TASKS = [
     {"value": "classification",
@@ -243,7 +297,7 @@ QUESTIONS: list[dict[str, Any]] = [
 
     # 7. 損得と制約
     {"id": "action.decision", "section": 7, "kind": "decision",
-     "required": True, "when": USES_ML,
+     "required": True, "when": USES_ML, "choices": DECISION_TYPES,
      "title": "行動の損得と制約は",
      "help": "量を決める: 1 単位足りないときの損と余ったときの損. 対象を選ぶ: "
              "当たり 1 件の価値, 行動 1 件の費用, 行動で防げる割合 (仮定), "
