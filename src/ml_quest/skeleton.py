@@ -601,6 +601,40 @@ def project_readme(problem: dict, stages: dict) -> str:
     return text
 
 
+def project_error(problem: dict) -> Optional[str]:
+    """
+    骨組みを書き出せない理由を, make_project が出す誤りの文で返す関数
+
+    受け渡し, 列の予測か, 指標がその他でないか, の順に確かめる
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 1 も)
+
+    Returns
+    ----------
+    message: Optional[str]
+        誤りの文 (書き出せるなら None. 書き出し先のファイルは見ない)
+    """
+    # 受け渡しと列の予測 (渡せない理由は ValueError の文のまま)
+    message: Optional[str] = None
+    try:
+        upgraded = upgrade_problem(problem)
+        handoff(upgraded)
+        require_column_part(upgraded, "骨組みの書き出し")
+    except ValueError as error:
+        message = str(error)
+        return message
+
+    # 骨組みが記録できる指標だけ
+    if active_value(upgraded, f"{PART}.evaluation.metric") == "other":
+        message = ("最良を選ぶ指標がその他の場合は, 骨組みを書き出せません "
+                   "(学習のスクリプトがその指標を記録できないため)")
+
+    return message
+
+
 def make_project(
     problem: dict, path: Union[str, Path], name: Optional[str] = None,
     overwrite: bool = False
@@ -630,17 +664,14 @@ def make_project(
         渡せない問題の設定の場合, 列の予測でないか指標がその他の場合と,
         上書きしない既にあるファイルがある場合
     """
-    # 受け渡しの値 (渡せなければ誤り. 版 1 は先に版 2 へ移行). 列の予測で, 骨組み
-    # が記録できる指標だけ. データはプロジェクトの data に写し, 写した問題
-    # の設定はその場所を指す
+    # 書き出せるか (project_error と同じ決まり). 受け渡しの値 (版 1 は先に
+    # 版 2 へ移行). データはプロジェクトの data に写し, 写した問題の設定は
+    # その場所を指す
+    error = project_error(problem)
+    if error is not None:
+        raise ValueError(error)
     problem = upgrade_problem(problem)
     stages = handoff(problem)
-    require_column_part(problem, "骨組みの書き出し")
-    if active_value(problem, f"{PART}.evaluation.metric") == "other":
-        raise ValueError(
-            "最良を選ぶ指標がその他の場合は, 骨組みを書き出せません (学習の"
-            "スクリプトがその指標を記録できないため)"
-        )
     path = Path(path)
     source = data_location(problem)
     data_file = (Path("data") / Path(source).name
