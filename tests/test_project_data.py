@@ -150,8 +150,8 @@ def test_triage_current_column(tmp_path: Path) -> None:
     problem = example_problem("解約の引き止め")
     problem = answer(problem, "information.columns",
                      ["text_length", "label", "checked"])
-    problem = answer(problem, "ml.target", "label")
-    problem = answer(problem, "ml.positive", "悪い")
+    problem = answer(problem, "ml.parts.0.target.column", "label")
+    problem = answer(problem, "ml.parts.0.positive", "悪い")
     problem = answer(problem, "information.known", ["text_length"])
     problem = answer(problem, "information.forbidden", None)
     problem = answer(problem, "action.decision", {
@@ -225,15 +225,17 @@ def test_recipe_round_trip(tmp_path: Path) -> None:
     ], split={"method": "random"})
     forbidden = answer(problem, "information.forbidden", ["promo"])
     result = apply_recipe(forbidden, other)
-    assert get_value(result["problem"], "ml.target") == "customers"
+    assert get_value(
+        result["problem"], "ml.parts.0.target.column"
+    ) == "customers"
     assert "customers" not in (
         get_value(result["problem"], "information.unknown") or []
     )
     levels = {(f["id"], f["level"]) for f in result["conflicts"]}
     assert [c["column"] for c in result["choices"]] == ["sales"]
     assert ("information.forbidden", "error") in levels
-    assert ("ml.available_lag", "warning") in levels
-    assert ("ml.task", "warning") in levels
+    assert ("ml.parts.0.available_lag", "warning") in levels
+    assert ("ml.parts.0.task", "warning") in levels
 
 
 def test_make_project_data_checks(tmp_path: Path) -> None:
@@ -473,7 +475,7 @@ def test_recipe_target_dropped() -> None:
         "split": {"method": "time"},
     }
     result = apply_recipe(problem, recipe)
-    assert any(f["id"] == "ml.target" and f["level"] == "error"
+    assert any(f["id"] == "ml.parts.0.target.column" and f["level"] == "error"
                for f in result["conflicts"])
 
     # 前の目的の列を落とすと, 過去の値を作った後の最後の手順で落とす

@@ -9,10 +9,27 @@ import uuid
 import pandas as pd
 import yaml
 
-from ml_quest.questions import BY_ID, QUESTIONS
+from ml_quest.questions import BY_ID, PART, QUESTIONS, V1_METRICS
 
 # 問題の設定の形の版
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
+
+# 版 1 の場所と, 版 2 で移した先 (版 1 の名前でも読み書きできるように)
+LEGACY_KEYS = {
+    "ml.predict": f"{PART}.what", "ml.row": f"{PART}.item",
+    "ml.task": f"{PART}.task", "ml.target": f"{PART}.target.column",
+    "ml.positive": f"{PART}.positive",
+    "ml.group_column": f"{PART}.group_column",
+    "ml.split_time_column": f"{PART}.split_time_column",
+    "ml.time_column": f"{PART}.time_column",
+    "ml.series_by": f"{PART}.series_by",
+    "ml.available_lag": f"{PART}.available_lag",
+    "ml.horizon": f"{PART}.horizon", "ml.baseline": f"{PART}.baseline",
+    "ml.consumer": f"{PART}.consumer",
+    "ml.downstream": f"{PART}.downstream",
+    "evaluation.metric": f"{PART}.evaluation.metric",
+    "evaluation.link": f"{PART}.evaluation.link",
+}
 
 # 意思決定の型ごとの損得と制約の項目 (True は要る項目. ML-Inference の形)
 DECISION_FIELDS = {
@@ -122,14 +139,47 @@ def get_value(problem: dict, key: str) -> Any:
     value: Any
         値 (無ければ None)
     """
-    # 辞書の順のたどり
+    # 辞書の順のたどり (並びは番号で). 版 2 では版 1 の名前は移した先
+    key = current_key(problem, key)
     value: Any = problem
     for part in key.split("."):
+        if isinstance(value, list) and part.isdigit():
+            if int(part) >= len(value):
+                return None
+            value = value[int(part)]
+            continue
         if not isinstance(value, dict) or part not in value:
             return None
         value = value[part]
 
     return value
+
+
+def current_key(problem: Any, key: str) -> str:
+    """
+    版 1 の項目の場所を, 版 2 の問題の設定での場所にする関数
+
+    Parameters
+    ----------
+    problem: Any
+        問題の設定
+    key: str
+        項目の場所
+
+    Returns
+    ----------
+    resolved: str
+        版 2 の問題の設定で版 1 の名前なら移した先, 他はそのまま
+    """
+    # 版 1 の問題の設定は版 1 の場所のまま
+    version = problem.get("format_version") if isinstance(
+        problem, dict
+    ) else None
+    resolved = key
+    if key in LEGACY_KEYS and version != 1:
+        resolved = LEGACY_KEYS[key]
+
+    return resolved
 
 
 def set_value(problem: dict, key: str, value: Any) -> None:
@@ -151,27 +201,77 @@ def set_value(problem: dict, key: str, value: Any) -> None:
     ----------
     None
     """
-    # 消す場合は, 空になった親の辞書も消去
-    parts = key.split(".")
+    # 消す場合は, 空になった親の辞書も消去. 次が番号なら並び (受け持ち).
+    # 版 2 では版 1 の名前は移した先
+    parts = current_key(problem, key).split(".")
     if value is None:
         remove_value(problem, parts)
         return
-    node = problem
-    for part in parts[:-1]:
-        if not isinstance(node.get(part), dict):
-            node[part] = {}
-        node = node[part]
-    node[parts[-1]] = value
+    node: Any = problem
+    for part, following in zip(parts[:-1], parts[1:]):
+        empty: Any = [] if following.isdigit() else {}
+        node = child_of(node, part, empty)
+    if isinstance(node, list):
+        child_of(node, parts[-1], None)
+        node[int(parts[-1])] = value
+    else:
+        node[parts[-1]] = value
 
 
-def remove_value(node: dict, parts: list[str]) -> bool:
+def child_of(node: Any, part: str, empty: Any) -> Any:
+    """
+    辞書か並びの子を, 無ければ空のものを入れて返す関数
+
+    Parameters
+    ----------
+    node: Any
+        辞書か並び (書き換える)
+    part: str
+        項目の名前か並びの番号
+    empty: Any
+        無いときに入れる空の辞書か並び
+
+    Returns
+    ----------
+    child: Any
+        子
+
+    Raises
+    ----------
+    ValueError
+        並びの中で, 番号でない名前か, 辞書でない要素の場合
+    """
+    # 並びは番号まで空の辞書で伸長. 番号でない名前と, 手で書いた辞書で
+    # ない要素は誤り (黙って置き換えないため)
+    if isinstance(node, list):
+        if not part.isdigit():
+            raise ValueError(f"並びの中の {part} は番号ではありません")
+        index = int(part)
+        while len(node) <= index:
+            node.append({})
+        if empty is not None and not isinstance(node[index], type(empty)):
+            raise ValueError(
+                f"並びの {index} 番目が辞書でないので, 答えを入れられません"
+            )
+        child = node[index]
+        return child
+    if isinstance(node.get(part), list) and isinstance(empty, dict):
+        raise ValueError(f"{part} は並びなので, 次は番号で書いてください")
+    if not isinstance(node.get(part), type(empty)):
+        node[part] = empty
+    child = node[part]
+
+    return child
+
+
+def remove_value(node: Any, parts: list[str]) -> bool:
     """
     点でつないだ場所の項目を消し, 空になった辞書かを返す関数
 
     Parameters
     ----------
-    node: dict
-        たどる辞書 (書き換える)
+    node: Any
+        たどる辞書か並び (書き換える)
     parts: list[str]
         項目の場所を点で分けた並び
 
@@ -180,12 +280,28 @@ def remove_value(node: dict, parts: list[str]) -> bool:
     empty: bool
         消した後に node が空か
     """
-    # 末端の消去と, 空になった途中の辞書の消去
+    # 末端の消去と, 空になった途中の辞書と並びの消去 (並びは最後の空の
+    # 要素だけを除く. 他の要素の番号を変えないため)
     head = parts[0]
+    if isinstance(node, list):
+        index = int(head) if head.isdigit() else len(node)
+        last = index == len(node) - 1
+        if last and (len(parts) == 1 or (
+            isinstance(node[index], dict)
+            and remove_value(node[index], parts[1:])
+        )):
+            node.pop()
+        elif index < len(node) - 1 and len(parts) > 1 and isinstance(
+            node[index], dict
+        ):
+            remove_value(node[index], parts[1:])
+        empty = not node
+        return empty
     if len(parts) == 1:
         node.pop(head, None)
-    elif isinstance(node.get(head), dict) and remove_value(node[head],
-                                                           parts[1:]):
+    elif isinstance(node.get(head), (dict, list)) and remove_value(
+        node[head], parts[1:]
+    ):
         node.pop(head)
     empty = not node
 
@@ -238,19 +354,57 @@ def choices_of(problem: dict, question: dict) -> list[dict]:
     Returns
     ----------
     choices: list[dict]
-        値と説明の並び (学習の指標はタスクに合うものだけ)
+        値と説明の並び (出力の形と指標は受け持ち, 正解の種類, タスクに合う
+        ものだけ. 同じ値は最初のもの)
     """
-    # タスクを持つ選択肢は, 今のタスクに合うものだけ. 意思決定の型は欄も
-    task = get_value(problem, "ml.task")
-    choices = [
-        {"value": choice["value"], "label": choice["label"]}
-        | ({"fields": copy.deepcopy(choice["fields"])}
-           if "fields" in choice else {})
-        for choice in question.get("choices", [])
-        if "tasks" not in choice or task is None or task in choice["tasks"]
-    ]
+    # 今の答えに合う選択肢. 意思決定の型は欄も
+    choices: list[dict] = []
+    for choice in question.get("choices", []):
+        if not choice_fits(problem, choice) or choice["value"] in [
+            item["value"] for item in choices
+        ]:
+            continue
+        choices.append(
+            {"value": choice["value"], "label": choice["label"]}
+            | ({"fields": copy.deepcopy(choice["fields"])}
+               if "fields" in choice else {})
+        )
 
     return choices
+
+
+def choice_fits(problem: dict, choice: dict) -> bool:
+    """
+    選択肢が今の答え (受け持ち, 正解の種類, タスク) に合うかを返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+    choice: dict
+        選択肢 (roles か fits を持てば絞る)
+
+    Returns
+    ----------
+    fits: bool
+        合うか (答えていない項目では絞らない)
+    """
+    # 答えた項目だけでの比較
+    answers = {"role": get_value(problem, f"{PART}.role"),
+               "kinds": get_value(problem, f"{PART}.target.kind"),
+               "tasks": get_value(problem, f"{PART}.task")}
+    if "roles" in choice:
+        fits = answers["role"] is None or answers["role"] in choice["roles"]
+        return fits
+    fits = "fits" not in choice or any(
+        (answers["role"] is None or item.get("role") in (None,
+                                                         answers["role"]))
+        and all(answers[name] is None or name not in item
+                or answers[name] in item[name] for name in ("kinds", "tasks"))
+        for item in choice["fits"]
+    )
+
+    return fits
 
 
 def active_value(problem: dict, key: str) -> Any:
@@ -269,7 +423,10 @@ def active_value(problem: dict, key: str) -> Any:
     value: Any
         答え (要らない問いの古い答えは None)
     """
-    # タスクを変えた後の時刻の列などの除外
+    # タスクを変えた後の時刻の列などの除外 (版 1 は先に版 2 へ移行)
+    if isinstance(problem, dict) and problem.get("format_version") == 1:
+        problem = upgrade_problem(problem)
+    key = current_key(problem, key)
     question = BY_ID.get(key)
     value = get_value(problem, key)
     if question is not None and not applies(problem, question):
@@ -342,7 +499,8 @@ def questions(problem: dict) -> list[dict]:
         問い (id, section, kind, title, help, required, choices) に,
         value, answered, applies を足したものの並び
     """
-    # 画面に出す順
+    # 画面に出す順 (版 1 は先に版 2 へ移行)
+    problem = upgrade_problem(problem)
     items = []
     for question in QUESTIONS:
         value = get_value(problem, question["id"])
@@ -703,21 +861,30 @@ def answer(problem: dict, key: str, value: Any) -> dict:
     problem: dict
         問題の設定
     key: str
-        問いの識別子 (項目の場所)
+        問いの識別子 (項目の場所. 版 1 の名前も使える)
     value: Any
         答え (None か空で答えを消す)
 
     Returns
     ----------
     updated: dict
-        答えを入れた問題の設定
+        答えを入れた問題の設定 (版 2)
     """
-    # 知らない問いは誤り
+    # 版 1 は先に版 2 へ移行 (版 1 の名前の問いは移した先). 知らない問いは誤り
+    problem = upgrade_problem(problem)
+    key = current_key(problem, key)
     if key not in BY_ID:
         raise ValueError(f"{key} という問いはありません")
     cleaned = clean_answer(problem, BY_ID[key], value)
     updated = copy.deepcopy(problem)
     set_value(updated, key, cleaned)
+
+    # 最良を選ぶ指標に答えたら, 版 1 の場所に残した知らない指標は削除
+    stale = updated.get("evaluation")
+    if key == f"{PART}.evaluation.metric" and isinstance(stale, dict):
+        stale.pop("metric", None)
+        if not stale:
+            updated.pop("evaluation")
 
     # データの場所を変えたら, 前の読み方は使わない (attach_data で読み直す)
     if key == "data.source" and get_value(problem, key) != cleaned:
@@ -739,7 +906,12 @@ def load_problem(path: Union[str, Path]) -> dict:
     Returns
     ----------
     problem: dict
-        問題の設定 (新しい版でも読める項目はそのまま. 確かめで知らせる)
+        問題の設定 (版 1 は版 2 に移す. ファイルは変えない)
+
+    Raises
+    ----------
+    ValueError
+        問題の設定のファイルでない場合と, 知っている版より新しい場合
     """
     # ディレクトリなら中の problem.yaml
     path = Path(path)
@@ -757,8 +929,149 @@ def load_problem(path: Union[str, Path]) -> dict:
             f"{path.name} は問題の設定のファイルではありません "
             "(format_version がありません)"
         )
+    problem = upgrade_problem(problem, str(path.name))
 
     return problem
+
+
+def upgrade_problem(problem: dict, name: str = "問題の設定") -> dict:
+    """
+    版 1 の問題の設定を版 2 に移す関数
+
+    版 1 の値は全て移す. 版 1 が前提にしていた答え (列の予測, 1 件は行,
+    正解はデータの列, 一から学習) は埋める. 元は変えない
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+    name: str = "問題の設定"
+        誤りの文に使う名前
+
+    Returns
+    ----------
+    upgraded: dict
+        版 2 の問題の設定 (版 2 なら受け取ったもの)
+
+    Raises
+    ----------
+    ValueError
+        版が 1 以上の整数でない場合と, 知っている版より新しい場合
+    """
+    # 版 2 はそのまま, 版でない値と新しい版は読み込み無し (黙って読み違え
+    # ないように)
+    message = version_message(problem, name)
+    if message:
+        raise ValueError(message)
+    if problem["format_version"] != 1:
+        return problem
+    upgraded = copy.deepcopy(problem)
+    upgraded["format_version"] = FORMAT_VERSION
+
+    # 受け持ちの項目の取り出し (空の項目も元の場所から削除. 知らない項目は
+    # ml に残す). 版 1 の 4 つの他の指標は移さず, 版 1 の場所に残して確かめ
+    # で知らない指標に
+    moved: dict = {}
+    for old, new in LEGACY_KEYS.items():
+        value = get_value(problem, old)
+        if old == "evaluation.metric" and isinstance(value, str) and (
+            value not in V1_METRICS
+        ):
+            continue
+        if value is not None:
+            moved[new] = value
+        remove_value(upgraded, old.split("."))
+    ml = upgraded.get("ml")
+    if not moved and not (isinstance(ml, dict) and ml.get("use") is True):
+        return upgraded
+
+    # 版 1 に手で書いた受け持ちの並びが崩れていれば, 移さずに元のまま
+    # (確かめで形の誤り)
+    parts = ml.get("parts") if isinstance(ml, dict) else None
+    if parts not in (None, []) and not (
+        isinstance(parts, list) and isinstance(parts[0], dict)
+    ):
+        upgraded = copy.deepcopy(problem)
+        upgraded["format_version"] = FORMAT_VERSION
+        return upgraded
+
+    # 版 1 が前提にしていた答えと, 移した値
+    task = moved.get(f"{PART}.task")
+    defaults = {
+        f"{PART}.role": "predict", f"{PART}.unit": "row",
+        f"{PART}.output": "class" if task == "classification"
+        else "value" if task in ("regression", "forecasting") else None,
+        f"{PART}.target.source": "column", f"{PART}.target.kind": "column",
+        f"{PART}.method": "scratch",
+    }
+    if not isinstance(upgraded.get("ml"), dict):
+        upgraded["ml"] = {}
+    if not upgraded["ml"].get("parts"):
+        upgraded["ml"]["parts"] = [{}]
+    for key, value in {**defaults, **moved}.items():
+        if get_value(upgraded, key) is None:
+            set_value(upgraded, key, value)
+
+    return upgraded
+
+
+def version_message(problem: Any, name: str) -> Optional[str]:
+    """
+    問題の設定の版が読めないときの誤りの文を作る関数
+
+    Parameters
+    ----------
+    problem: Any
+        問題の設定
+    name: str
+        誤りの文に使う名前
+
+    Returns
+    ----------
+    message: Optional[str]
+        版が 1 以上の整数でないか, 知っている版より新しい場合の文 (読める
+        なら None)
+    """
+    # 真偽値と小数と文字列は版ではない
+    version = problem.get("format_version") if isinstance(
+        problem, dict
+    ) else None
+    message: Optional[str] = None
+    if not isinstance(version, int) or isinstance(version, bool) or (
+        version < 1
+    ):
+        message = (f"問題の設定ではありません ({name}. format_version が"
+                   " 1 以上の整数でありません)")
+    elif version > FORMAT_VERSION:
+        message = newer_message(version, name)
+
+    return message
+
+
+def newer_message(version: int, name: str) -> str:
+    """
+    知っている版より新しい問題の設定の誤りの文を作る関数
+
+    Parameters
+    ----------
+    version: int
+        ファイルの版
+    name: str
+        ファイルの名前
+
+    Returns
+    ----------
+    message: str
+        何をすればよいかの文
+    """
+    # 読める版と, 直し方
+    message = (
+        f"新しい版 (format_version: {version}) の問題の設定です ({name}). "
+        f"この ML-Quest が読めるのは版 {FORMAT_VERSION} までです. ML-Quest "
+        "を新しくしてください"
+    )
+
+    return message
 
 
 def save_problem(problem: dict, path: Union[str, Path]) -> dict:

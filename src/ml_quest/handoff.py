@@ -1,11 +1,11 @@
 from typing import Any, Optional
 
-from ml_quest.check import check
+from ml_quest.check import check, is_column_part
 from ml_quest.problem import (
     DECISION_NAMES, DECISION_OPTIONS, FIELD_NAMES, OPTION_NAMES,
-    active_value, data_location, get_value
+    active_value, data_location, get_value, upgrade_problem
 )
-from ml_quest.questions import CONSUMERS, METRICS, TASKS
+from ml_quest.questions import CONSUMERS, METRICS, PART, ROLES, TASKS
 
 # 選んで書く意思決定の項目 (値を名前にして文にする)
 OPTION_FIELDS = {
@@ -34,7 +34,7 @@ def decision_of(problem: dict) -> Optional[dict]:
         return None
     decision = dict(raw)
     if decision["type"] in ("select", "triage"):
-        decision["positive"] = active_value(problem, "ml.positive")
+        decision["positive"] = active_value(problem, f"{PART}.positive")
 
     # 今のやり方の列 (量は今ある量の無い場合だけ. 問題の設定の列は置いた
     # 量, ML-Inference は今ある量に足した量)
@@ -62,7 +62,7 @@ def conclusion_of(problem: dict) -> dict:
         結論の決め方 (系列を分ける列があれば, 最初の列でまとめる)
     """
     # 系列ごとのまとめ (最初の列. 店と品なら店ごと)
-    series = active_value(problem, "ml.series_by") or []
+    series = active_value(problem, f"{PART}.series_by") or []
     conclusion = {"group_by": series[0]} if series else {}
 
     return conclusion
@@ -88,7 +88,8 @@ def handoff(problem: dict) -> dict:
     ValueError
         機械学習を使わない場合と, 確かめに error がある場合
     """
-    # 渡せる問題の設定か
+    # 渡せる問題の設定か (版 1 は先に版 2 へ移行)
+    problem = upgrade_problem(problem)
     if get_value(problem, "ml.use") is not True:
         raise ValueError("機械学習を使わない問題の設定は, 後ろの段階に渡す"
                          "ものがありません")
@@ -99,25 +100,136 @@ def handoff(problem: dict) -> dict:
             + " / ".join(item["message"] for item in errors[:3])
         )
 
-    # データの分析: 目的の列, タスク, 分割, 使う列と除く列 (要らなくなった
-    # 問いの古い答えは除外)
+    # 受け持ちの答えと, 最良を選ぶ指標 (その他は名前と向き)
     value = active_value
-    task = value(problem, "ml.task")
-    metric = value(problem, "evaluation.metric")
+    part = part_of(problem)
+    training = training_of(problem)
+    training.update(role=part["role"], target_kind=part["target_kind"])
+    if not is_column_part(problem):
+        stages = {
+            "part": part, "data": column_data(problem, None),
+            "model": {"task": None, "outputs": None, "role": part["role"],
+                      "target_kind": part["target_kind"]},
+            "training": training,
+            "inference": {"decision": None, "conclusion": {},
+                          "horizon": None},
+        }
+        return stages
+
+    # 列の予測: 版 1 と同じ値に, 受け持ちと正解の種類を足す
+    task = value(problem, f"{PART}.task")
+    stages = {
+        "part": part,
+        "data": column_data(problem, task),
+        "model": {"task": task,
+                  "outputs": None if task == "classification" else 1,
+                  "role": part["role"], "target_kind": part["target_kind"]},
+        "training": training,
+        "inference": {"decision": decision_of(problem),
+                      "conclusion": conclusion_of(problem),
+                      "horizon": value(problem, f"{PART}.horizon")},
+    }
+
+    return stages
+
+
+def part_of(problem: dict) -> dict:
+    """
+    受け持ちの型に依らない答えをまとめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    part: dict
+        role, unit, output, target_kind, target_source, target_process
+        (今の処理の名前と設定. 出どころが今の処理でなければ None), method
+    """
+    # 要らなくなった問いの古い答えは除外
+    value = active_value
+    name = value(problem, f"{PART}.target.process.name")
+    part = {
+        "role": value(problem, f"{PART}.role"),
+        "unit": value(problem, f"{PART}.unit"),
+        "output": value(problem, f"{PART}.output"),
+        "target_kind": value(problem, f"{PART}.target.kind"),
+        "target_source": value(problem, f"{PART}.target.source"),
+        "target_process": {
+            "name": name,
+            "settings": value(problem, f"{PART}.target.process.settings"),
+        } if name else None,
+        "method": value(problem, f"{PART}.method"),
+    }
+
+    return part
+
+
+def training_of(problem: dict) -> dict:
+    """
+    学習・評価の段階に渡す, 最良を選ぶ指標と監視する指標を作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    training: dict
+        metric (その他は書いた名前), monitor (valid/<指標>), mode (min か
+        max)
+    """
+    # 学習の監視は, バッチの平均で書ける指標 (RMSE は二乗誤差で選ぶ).
+    # その他は書いた名前と向き
+    metric = active_value(problem, f"{PART}.evaluation.metric")
     better = next((item["better"] for item in METRICS
                    if item["value"] == metric), "lower")
+    monitor = "valid/mse" if metric == "rmse" else f"valid/{metric}"
+    if metric == "other":
+        metric = active_value(problem, f"{PART}.evaluation.name")
+        better = active_value(problem, f"{PART}.evaluation.better")
+        monitor = f"valid/{metric}"
+    training = {"metric": metric, "monitor": monitor,
+                "mode": "max" if better == "higher" else "min"}
+
+    return training
+
+
+def column_data(problem: dict, task: Optional[str]) -> dict:
+    """
+    データの分析の段階に渡す値を作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+    task: Optional[str]
+        列の予測のタスク (列の予測でなければ None)
+
+    Returns
+    ----------
+    data: dict
+        目的の列, タスク, 分割, 使う列と除く列 (列の予測でなければ同じ
+        名前の空の値) と, データの場所と読み方
+    """
+    # 要らなくなった問いの古い答えは除外
+    value = active_value
     data = {
-        "target": value(problem, "ml.target"),
+        "target": value(problem, f"{PART}.target.column"),
         "task": task,
-        "time_column": value(problem, "ml.time_column")
-        or value(problem, "ml.split_time_column"),
-        "series_by": value(problem, "ml.series_by") or [],
-        "split": "time" if task == "forecasting"
-        or value(problem, "ml.split_time_column")
-        else "group" if value(problem, "ml.group_column")
+        "time_column": value(problem, f"{PART}.time_column")
+        or value(problem, f"{PART}.split_time_column"),
+        "series_by": value(problem, f"{PART}.series_by") or [],
+        "split": None if task is None
+        else "time" if task == "forecasting"
+        or value(problem, f"{PART}.split_time_column")
+        else "group" if value(problem, f"{PART}.group_column")
         else "stratified" if task == "classification" else "random",
-        "group_column": value(problem, "ml.group_column"),
-        "min_lag": value(problem, "ml.available_lag"),
+        "group_column": value(problem, f"{PART}.group_column"),
+        "min_lag": value(problem, f"{PART}.available_lag"),
         "known": value(problem, "information.known") or [],
         "source": {"source": data_location(problem),
                    "loader": value(problem, "data.loader"),
@@ -127,20 +239,7 @@ def handoff(problem: dict) -> dict:
         + (value(problem, "information.forbidden") or []),
     }
 
-    # 学習の監視は, バッチの平均で書ける指標 (RMSE は二乗誤差で選ぶ)
-    monitor = "valid/mse" if metric == "rmse" else f"valid/{metric}"
-    stages = {
-        "data": data,
-        "model": {"task": task,
-                  "outputs": None if task == "classification" else 1},
-        "training": {"metric": metric, "monitor": monitor,
-                     "mode": "max" if better == "higher" else "min"},
-        "inference": {"decision": decision_of(problem),
-                      "conclusion": conclusion_of(problem),
-                      "horizon": value(problem, "ml.horizon")},
-    }
-
-    return stages
+    return data
 
 
 def describe(problem: dict) -> list[str]:
@@ -157,7 +256,8 @@ def describe(problem: dict) -> list[str]:
     sentences: list[str]
         要約の文 (答えた項目だけ)
     """
-    # 課題と指標 (要らなくなった問いの古い答えは使わない)
+    # 課題と指標 (要らなくなった問いの古い答えは使わない. 版 1 は先に版 2 へ移行)
+    problem = upgrade_problem(problem)
     value = active_value
     sentences = []
     if value(problem, "issue.pain"):
@@ -185,23 +285,30 @@ def describe(problem: dict) -> list[str]:
         sentences.append("機械学習は使わない" + (f": {reason}" if reason
                                                  else ""))
         return sentences
-    if value(problem, "ml.predict"):
+    what = value(problem, f"{PART}.what")
+    predicts = value(problem, f"{PART}.role") in (None, "predict")
+    if what:
+        roles = {item["value"]: item["label"].split(" ")[0] for item in ROLES}
         tasks = {item["value"]: item["label"].split(" ")[0] for item in TASKS}
-        task = tasks.get(str(value(problem, "ml.task")), "")
-        target = value(problem, "ml.target")
+        role = roles.get(str(value(problem, f"{PART}.role")), "")
+        task = tasks.get(str(value(problem, f"{PART}.task")), "")
+        target = value(problem, f"{PART}.target.column")
         details = [part for part in (
             task, f"目的の列 {target}" if target else ""
         ) if part]
+        head = ("機械学習で予測すること" if predicts
+                else f"機械学習の受け持ち ({role})" if role
+                else "機械学習の受け持ち")
         sentences.append(
-            f"機械学習で予測すること: {value(problem, 'ml.predict')}"
+            f"{head}: {what}"
             + (f" ({'. '.join(details)})" if details else "")
         )
-    consumer = value(problem, "ml.consumer")
+    consumer = value(problem, f"{PART}.consumer")
     names = {item["value"]: item["label"] for item in CONSUMERS}
     if isinstance(consumer, str) and consumer in names:
-        downstream = value(problem, "ml.downstream")
+        downstream = value(problem, f"{PART}.downstream")
         sentences.append(
-            f"予測の使い道: {names[consumer]}"
+            f"{'予測' if predicts else '出力'}の使い道: {names[consumer]}"
             + (f". 後段が求めるもの: {downstream}" if downstream else "")
         )
     decision = value(problem, "action.decision")

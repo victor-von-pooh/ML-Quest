@@ -8,11 +8,13 @@ from typing import Any, Optional, Union
 
 import yaml
 
+from ml_quest.bridge import require_column_part
 from ml_quest.data import copy_data
 from ml_quest.handoff import describe, handoff
 from ml_quest.problem import (
-    active_value, data_location, get_value, set_value
+    active_value, data_location, get_value, set_value, upgrade_problem
 )
+from ml_quest.questions import PART
 
 # 学習のスクリプトの頭 (読み込みと, 問題の設定から決まる既定値). 答えの
 # 文字は, コードを壊さないように JSON の文字列か 1 行のコメントで埋め込み
@@ -411,13 +413,13 @@ def training_script(problem: dict, stages: dict) -> str:
     inference = stages["inference"]
     head = Template(HEAD).substitute(
         name=literal(str(problem.get("name", ""))),
-        predict=literal(str(active_value(problem, "ml.predict") or "")),
+        predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         decision=literal(inference["decision"]),
         conclusion=literal(inference["conclusion"]),
     )
     baseline = comment_lines(
         "TODO: 比べる相手 ("
-        f"{active_value(problem, 'ml.baseline')}) の値も記録する"
+        f"{active_value(problem, f'{PART}.baseline')}) の値も記録する"
     )
     if task == "classification":
         body = Template(CLASSIFICATION_STEP).substitute(
@@ -468,8 +470,8 @@ def experiment_name(problem: dict, name: Optional[str]) -> str:
         日本語の列の名前も残す)
     """
     # 区切りや空白などのディレクトリに使いにくい文字を _ に
-    target = active_value(problem, "ml.target")
-    task = active_value(problem, "ml.task")
+    target = active_value(problem, f"{PART}.target.column")
+    task = active_value(problem, f"{PART}.task")
     raw = name or f"{target}_{task}"
     text = re.sub(r"[^\w-]+", "_", raw).strip("_") or "problem"
 
@@ -625,11 +627,20 @@ def make_project(
     Raises
     ----------
     ValueError
-        渡せない問題の設定の場合と, 上書きしない既にあるファイルがある場合
+        渡せない問題の設定の場合, 列の予測でないか指標がその他の場合と,
+        上書きしない既にあるファイルがある場合
     """
-    # 受け渡しの値 (渡せなければ誤り). データはプロジェクトの data に写し,
-    # 写した問題の設定はその場所を指す
+    # 受け渡しの値 (渡せなければ誤り. 版 1 は先に版 2 へ移行). 列の予測で, 骨組み
+    # が記録できる指標だけ. データはプロジェクトの data に写し, 写した問題
+    # の設定はその場所を指す
+    problem = upgrade_problem(problem)
     stages = handoff(problem)
+    require_column_part(problem, "骨組みの書き出し")
+    if active_value(problem, f"{PART}.evaluation.metric") == "other":
+        raise ValueError(
+            "最良を選ぶ指標がその他の場合は, 骨組みを書き出せません (学習の"
+            "スクリプトがその指標を記録できないため)"
+        )
     path = Path(path)
     source = data_location(problem)
     data_file = (Path("data") / Path(source).name

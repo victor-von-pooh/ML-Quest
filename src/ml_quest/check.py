@@ -1,10 +1,32 @@
+import re
 from typing import Any
 
 from ml_quest.problem import (
-    DECISION_FIELDS, DECISION_NAMES, DECISION_OPTIONS, FORMAT_VERSION,
-    active_value, applies, get_value, is_answered
+    DECISION_FIELDS, DECISION_NAMES, DECISION_OPTIONS,
+    active_value, applies, choice_fits, get_value, is_answered,
+    upgrade_problem, version_message
 )
-from ml_quest.questions import CONSUMERS, METRICS, QUESTIONS, TASKS
+from ml_quest.questions import (
+    CONSUMERS, METHODS, METRICS, OUTPUTS, PART, QUESTIONS, ROLES,
+    TARGET_KINDS, TARGET_SOURCES, UNITS, V1_METRICS
+)
+
+# その他の指標の名前 (学習の記録の名前と曲線のファイルの名前)
+METRIC_NAME = re.compile(r"[A-Za-z0-9_.@-]+")
+
+# 列の予測の出力の形
+COLUMN_OUTPUTS = ["class", "value", "distribution"]
+
+# 受け持ちの中の, 辞書で書く項目
+PART_DICTS = [f"{PART}.target", f"{PART}.target.process",
+              f"{PART}.evaluation"]
+
+# 受け持ちの, 選んで書く項目と選択肢 (手で書いたファイルの確かめ)
+PART_CHOICES = {
+    f"{PART}.role": ROLES, f"{PART}.unit": UNITS,
+    f"{PART}.output": OUTPUTS, f"{PART}.target.source": TARGET_SOURCES,
+    f"{PART}.target.kind": TARGET_KINDS, f"{PART}.method": METHODS,
+}
 
 # 行動の型ごとに合うタスク
 DECISION_TASKS = {
@@ -18,8 +40,9 @@ TASK_NAMES = {"classification": "分類", "regression": "回帰",
               "forecasting": "時系列の予測"}
 
 # 列の名前の並びの問い
-COLUMN_LISTS = ["information.columns", "ml.series_by", "information.known",
-                "information.unknown", "information.forbidden"]
+COLUMN_LISTS = ["information.columns", f"{PART}.series_by",
+                "information.known", "information.unknown",
+                "information.forbidden"]
 
 
 def finding(level: str, key: str, message: str) -> dict:
@@ -70,7 +93,7 @@ def is_names(value: Any) -> bool:
 
 def check_shape(problem: dict) -> list[dict]:
     """
-    手で書いたファイルや新しい版の, 値の形の崩れを一覧にする関数
+    手で書いたファイルの, 値の形の崩れを一覧にする関数
 
     Parameters
     ----------
@@ -91,35 +114,49 @@ def check_shape(problem: dict) -> list[dict]:
         found.append(finding("error", "decomposition",
                              "decomposition は要因と手の辞書の並びにして"
                              "ください"))
-    for key in ("ml.task", "ml.target", "ml.time_column", "ml.positive",
-                "evaluation.metric", "issue.kpi.better", "ml.consumer",
-                "ml.group_column", "ml.split_time_column",
-                "ml.downstream", "issue.guard.name"):
+    for key in (f"{PART}.task", f"{PART}.target.column",
+                f"{PART}.time_column", f"{PART}.positive",
+                f"{PART}.evaluation.metric", "issue.kpi.better",
+                f"{PART}.consumer", f"{PART}.group_column",
+                f"{PART}.split_time_column", f"{PART}.downstream",
+                "issue.guard.name", f"{PART}.evaluation.name",
+                f"{PART}.target.process.name", *PART_CHOICES):
         value = get_value(problem, key)
         if value is not None and not isinstance(value, str):
             found.append(finding("error", key,
                                  f"{key} は文字列にしてください"))
-    consumer = get_value(problem, "ml.consumer")
+    consumer = get_value(problem, f"{PART}.consumer")
     if isinstance(consumer, str) and consumer not in [
         item["value"] for item in CONSUMERS
     ]:
-        found.append(finding("error", "ml.consumer",
-                             f"ml.consumer の {consumer} は知らない使い道"
-                             "です"))
+        found.append(finding("error", f"{PART}.consumer",
+                             f"使い道の {consumer} は知らない使い道です"))
     constraints = get_value(problem, "ml.constraints")
     if constraints is not None and not is_names(constraints):
         found.append(finding("error", "ml.constraints",
                              "ml.constraints は文の並びにしてください"))
-    task = get_value(problem, "ml.task")
+    task = get_value(problem, f"{PART}.task")
     if isinstance(task, str) and task not in TASK_NAMES:
-        found.append(finding("error", "ml.task",
-                             f"ml.task の {task} は知らないタスクです"))
-    metric = get_value(problem, "evaluation.metric")
+        found.append(finding("error", f"{PART}.task",
+                             f"タスクの {task} は知らないタスクです"))
+    metric = get_value(problem, f"{PART}.evaluation.metric")
     if isinstance(metric, str) and metric not in [m["value"]
                                                    for m in METRICS]:
-        found.append(finding("error", "evaluation.metric",
+        found.append(finding("error", f"{PART}.evaluation.metric",
                              f"evaluation.metric の {metric} は知らない指標"
                              "です"))
+    for key, choices in PART_CHOICES.items():
+        value = get_value(problem, key)
+        if isinstance(value, str) and value not in [
+            item["value"] for item in choices
+        ]:
+            found.append(finding("error", key,
+                                 f"{key} の {value} は知らない値です"))
+    if get_value(problem, f"{PART}.evaluation.better") not in (
+        None, "lower", "higher"
+    ):
+        found.append(finding("error", f"{PART}.evaluation.better",
+                             "指標の向きは lower か higher にしてください"))
     decision = get_value(problem, "action.decision")
     if decision is not None and not (
         isinstance(decision, dict) and isinstance(decision.get("type"), str)
@@ -243,7 +280,7 @@ def check_task(problem: dict) -> list[dict]:
     """
     # 行動の型に合うタスク
     found = []
-    task = active_value(problem, "ml.task")
+    task = active_value(problem, f"{PART}.task")
     decision = active_value(problem, "action.decision") or {}
     kind = decision.get("type")
     if task and kind in DECISION_TASKS and task not in DECISION_TASKS[kind]:
@@ -256,39 +293,39 @@ def check_task(problem: dict) -> list[dict]:
 
     # 分類で行動を決めるなら当たりのクラス
     if task == "classification" and kind in ("select", "triage") and (
-        not active_value(problem, "ml.positive")
+        not active_value(problem, f"{PART}.positive")
     ):
         found.append(finding(
-            "error", "ml.positive",
+            "error", f"{PART}.positive",
             f"{DECISION_NAMES[kind]}には当たりのクラス (行動の対象) が要り"
             "ます"
         ))
 
     # 時刻の列と, 目的の列と系列の列の重なり
-    target = active_value(problem, "ml.target")
-    time_column = active_value(problem, "ml.time_column")
-    series = active_value(problem, "ml.series_by") or []
+    target = active_value(problem, f"{PART}.target.column")
+    time_column = active_value(problem, f"{PART}.time_column")
+    series = active_value(problem, f"{PART}.series_by") or []
     if time_column and time_column == target:
-        found.append(finding("error", "ml.time_column",
+        found.append(finding("error", f"{PART}.time_column",
                              "時刻の列が目的の列と同じです"))
     if time_column and time_column in series:
-        found.append(finding("error", "ml.series_by",
+        found.append(finding("error", f"{PART}.series_by",
                              "系列を分ける列に時刻の列が入っています"))
     if target and target in series:
-        found.append(finding("error", "ml.series_by",
+        found.append(finding("error", f"{PART}.series_by",
                              "系列を分ける列に目的の列が入っています"))
-    split_time = active_value(problem, "ml.split_time_column")
+    split_time = active_value(problem, f"{PART}.split_time_column")
     if split_time and split_time == target:
-        found.append(finding("error", "ml.split_time_column",
+        found.append(finding("error", f"{PART}.split_time_column",
                              "時刻の順で分ける列が目的の列です"))
-    group = active_value(problem, "ml.group_column")
+    group = active_value(problem, f"{PART}.group_column")
     if group and group in (target, time_column, split_time):
-        found.append(finding("error", "ml.group_column",
+        found.append(finding("error", f"{PART}.group_column",
                              "相手をまとめる列が目的の列か時刻の列です"))
 
     # 何期先までと, 何期前まで分かるか (1 以上の整数)
-    for key, name in (("ml.horizon", "何期先まで"),
-                      ("ml.available_lag", "何期前の分まで分かるか")):
+    for key, name in ((f"{PART}.horizon", "何期先まで"),
+                      (f"{PART}.available_lag", "何期前の分まで分かるか")):
         value = active_value(problem, key)
         if value is not None and not (
             isinstance(value, int) and not isinstance(value, bool)
@@ -319,8 +356,8 @@ def check_columns(problem: dict) -> list[dict]:
     columns = active_value(problem, "information.columns") or []
     if not columns:
         return found
-    for key in ("ml.target", "ml.time_column", "ml.group_column",
-                "ml.split_time_column"):
+    for key in (f"{PART}.target.column", f"{PART}.time_column",
+                f"{PART}.group_column", f"{PART}.split_time_column"):
         name = active_value(problem, key)
         if name and name not in columns:
             found.append(finding("error", key,
@@ -353,8 +390,8 @@ def check_information(problem: dict) -> list[dict]:
     """
     # 目的の列そのものを使う, 分かる列と使わない列の重なり
     found = []
-    target = active_value(problem, "ml.target")
-    time_column = active_value(problem, "ml.time_column")
+    target = active_value(problem, f"{PART}.target.column")
+    time_column = active_value(problem, f"{PART}.time_column")
     columns = active_value(problem, "information.columns") or []
     known = active_value(problem, "information.known") or []
     unknown = active_value(problem, "information.unknown") or []
@@ -376,14 +413,14 @@ def check_information(problem: dict) -> list[dict]:
             ))
     if time_column and time_column in unknown + forbidden:
         found.append(finding(
-            "error", "ml.time_column",
+            "error", f"{PART}.time_column",
             "時刻の列が使わない列に入っています (時刻は予測の時点で分かる)"
         ))
 
     # 決めていない列 (目的, 時刻, 系列の列は除く)
     roles = {target, time_column,
-             active_value(problem, "ml.split_time_column"),
-             *(active_value(problem, "ml.series_by") or [])}
+             active_value(problem, f"{PART}.split_time_column"),
+             *(active_value(problem, f"{PART}.series_by") or [])}
     undecided = [name for name in columns
                  if name not in known + unknown + forbidden
                  and name not in roles]
@@ -652,19 +689,32 @@ def check_evaluation(problem: dict) -> list[dict]:
     found: list[dict]
         確かめ
     """
-    # 指標がタスクに合うか
+    # 指標が受け持ち, 正解の種類, タスクに合うか
     found = []
-    task = active_value(problem, "ml.task")
-    metric = active_value(problem, "evaluation.metric")
-    allowed = {item["value"]: item["tasks"] for item in METRICS}
-    if task and metric and task not in allowed.get(metric, []):
+    task = active_value(problem, f"{PART}.task")
+    metric = active_value(problem, f"{PART}.evaluation.metric")
+    if metric and not any(item["value"] == metric
+                          and choice_fits(problem, item) for item in METRICS):
+        where = TASK_NAMES.get(task, task) if task else (
+            "今の受け持ちと正解の種類"
+        )
         found.append(finding(
-            "error", "evaluation.metric",
-            f"指標 {metric} は{TASK_NAMES.get(task, task)}に合いません"
+            "error", f"{PART}.evaluation.metric",
+            f"指標 {metric} は{where}に合いません"
         ))
-    if metric and not get_value(problem, "evaluation.link"):
+    name = active_value(problem, f"{PART}.evaluation.name")
+    if isinstance(name, str) and (
+        not METRIC_NAME.fullmatch(name) or name in (".", "..")
+    ):
         found.append(finding(
-            "warning", "evaluation.link",
+            "error", f"{PART}.evaluation.name",
+            f"指標の名前 {name} は英数字と _ . @ - だけで書いてください "
+            "(学習の記録の名前 valid/<名前> と, 曲線のファイルの名前にする"
+            "ため)"
+        ))
+    if metric and not get_value(problem, f"{PART}.evaluation.link"):
+        found.append(finding(
+            "warning", f"{PART}.evaluation.link",
             "学習の指標と業務の指標のつながりが空です. 指標が良くなっても"
             "課題が解けるとは限りません"
         ))
@@ -702,34 +752,188 @@ def check(problem: dict) -> list[dict]:
     found: list[dict]
         確かめ (level, id, message) の並び. error, warning, info の順
     """
-    # 新しい版の知らせ (読める項目だけを使用)
-    found = []
-    version = problem.get("format_version")
-    if isinstance(version, int) and version > FORMAT_VERSION:
-        found.append(finding(
-            "info", "format_version",
-            f"このファイルは新しい版 ({version}) の ML-Quest で書かれました. "
-            "読める項目だけを使います"
-        ))
+    # 版でない値と新しい版は読み込み無し (読める項目だけを使うと黙って
+    # 読み違えるため)
+    message = version_message(problem, "この問題の設定")
+    if message:
+        found = [finding("error", "format_version", message)]
+        return found
 
-    # 形の崩れ (あれば他は確かめない), 答えの空, 筋道
+    # 版 2 への移行の後, 版 1 の場所に残した知らない指標, 形の崩れと受け
+    # 持ちの数 (あれば他は確かめない), 答えの空, 筋道
+    problem = upgrade_problem(problem)
+    shape = check_v1(problem) + check_parts(problem)
+    if shape:
+        return shape
     shape = check_shape(problem)
     if shape:
-        return found + shape
-    found += check_missing(problem)
+        return shape
+    found = check_missing(problem)
     found += check_issue(problem)
     found += check_guard(problem)
-    if get_value(problem, "ml.use") is True and get_value(
-        problem, "ml.task"
-    ) in (None, *[task["value"] for task in TASKS]):
-        found += check_task(problem)
-        found += check_columns(problem)
-        found += check_information(problem)
-        found += check_decision(problem)
+    if get_value(problem, "ml.use") is True:
+        if is_column_part(problem):
+            found += check_task(problem)
+            found += check_columns(problem)
+            found += check_information(problem)
+            found += check_decision(problem)
+        found += check_part(problem)
         found += check_evaluation(problem)
         found += check_consumer(problem)
     found = [item for level in ("error", "warning", "info")
              for item in found if item["level"] == level]
+
+    return found
+
+
+def is_column_part(problem: dict) -> bool:
+    """
+    受け持ちが列の予測 (予測するで, 正解の種類が表の列) かを返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    column: bool
+        列の予測か
+    """
+    # 受け持ちと正解の種類の答え (要らない問いの古い答えは除外)
+    column = active_value(problem, f"{PART}.role") == "predict" and (
+        active_value(problem, f"{PART}.target.kind") == "column"
+    )
+
+    return column
+
+
+def check_v1(problem: dict) -> list[dict]:
+    """
+    版 1 のファイルに書いた, 4 つの他の指標を確かめる関数
+
+    版 2 へ移すとき, 4 つの他の指標は移さず版 1 の場所に残す
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (版 1 の場所に残った指標は error)
+    """
+    # その他と, 版 2 で足した指標は版 1 では知らない指標
+    found = []
+    stale = problem.get("evaluation")
+    metric = stale.get("metric") if isinstance(stale, dict) else None
+    if metric in V1_METRICS:
+        found.append(finding(
+            "error", f"{PART}.evaluation.metric",
+            f"evaluation.metric の {metric} は版 1 の場所です. 版 2 では最良"
+            "を選ぶ指標を ml.parts.0.evaluation に書いてください"
+        ))
+    elif metric is not None:
+        found.append(finding(
+            "error", f"{PART}.evaluation.metric",
+            f"evaluation.metric の {metric} は知らない指標です (版 1 のファ"
+            f"イルで書けるのは {', '.join(V1_METRICS)}. 版 2 では "
+            "ml.parts.0.evaluation に書く)"
+        ))
+
+    return found
+
+
+def check_parts(problem: dict) -> list[dict]:
+    """
+    受け持ちの並びの形と数を確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (並びでない, 辞書でない, 2 つ以上は error)
+    """
+    # 今は 1 つだけ (段どうしのつなぎを決めていないため)
+    found: list[dict] = []
+    parts = get_value(problem, "ml.parts")
+    if parts is None:
+        return found
+    if not isinstance(parts, list) or not all(
+        isinstance(part, dict) for part in parts
+    ):
+        found.append(finding("error", "ml.parts",
+                             "ml.parts は受け持ちの辞書の並びにしてください"))
+    elif len(parts) > 1:
+        found.append(finding(
+            "error", "ml.parts",
+            f"受け持ちは今は 1 つだけ書けます (ml.parts に {len(parts)} つ"
+            "あります). 課題を分けるか, 1 つにしてください"
+        ))
+    else:
+        found += [
+            finding("error", key, f"{key} は辞書にしてください")
+            for key in PART_DICTS
+            if get_value(problem, key) is not None
+            and not isinstance(get_value(problem, key), dict)
+        ]
+
+    return found
+
+
+def check_part(problem: dict) -> list[dict]:
+    """
+    受け持ちと, 出力の形, 正解の種類, タスクの食い違いを確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ
+    """
+    # 受け持ちに合わない出力の形と正解の種類 (選択肢に無い値)
+    found = []
+    for key, choices in ((f"{PART}.output", OUTPUTS),
+                         (f"{PART}.target.kind", TARGET_KINDS)):
+        value = active_value(problem, key)
+        choice = next((item for item in choices if item["value"] == value),
+                      None)
+        if choice is not None and not choice_fits(problem, choice):
+            found.append(finding(
+                "error", key,
+                f"{value} は受け持ち {get_value(problem, f'{PART}.role')} "
+                "に合いません"
+            ))
+
+    # 列の予測の正解の種類と出力の形 (表の列はクラスか値か分布)
+    task = active_value(problem, f"{PART}.task")
+    output = active_value(problem, f"{PART}.output")
+    if is_column_part(problem) and output not in (
+        None, *COLUMN_OUTPUTS
+    ):
+        found.append(finding(
+            "error", f"{PART}.output",
+            f"正解の種類が表の列なので, 出力の形は {', '.join(COLUMN_OUTPUTS)}"
+            f" のどれかにしてください (今は {output})"
+        ))
+
+    # 列の予測のタスクと出力の形
+    if task == "classification" and output not in (None, "class"):
+        found.append(finding("warning", f"{PART}.output",
+                             "分類なのに, 出力の形がクラスではありません"))
+    if task in ("regression", "forecasting") and output == "class":
+        found.append(finding("warning", f"{PART}.output",
+                             f"{TASK_NAMES[task]}なのに, 出力の形がクラス"
+                             "です"))
 
     return found
 
@@ -750,7 +954,7 @@ def check_consumer(problem: dict) -> list[dict]:
     """
     # 自動で決めるのに意思決定の無い場合と, 後段に渡すのに求めるものの無い場合
     found: list[dict] = []
-    consumer = active_value(problem, "ml.consumer")
+    consumer = active_value(problem, f"{PART}.consumer")
     decision = active_value(problem, "action.decision") or {}
     kind = decision.get("type") if isinstance(decision, dict) else None
     if consumer == "rule" and kind == "none":
@@ -760,10 +964,10 @@ def check_consumer(problem: dict) -> list[dict]:
             "量, 選ぶ, 振り分けのどれかと損得を書いてください"
         ))
     if consumer in ("system", "model") and not active_value(
-        problem, "ml.downstream"
+        problem, f"{PART}.downstream"
     ):
         found.append(finding(
-            "warning", "ml.downstream",
+            "warning", f"{PART}.downstream",
             "予測を後段に渡すのに, 後段が求める形と精度がありません. 評価"
             "は後段の結果で見るので, 先に書いてください"
         ))

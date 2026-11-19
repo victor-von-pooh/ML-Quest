@@ -1,13 +1,44 @@
 import copy
 from typing import Any
 
-from ml_quest.check import finding
+from ml_quest.check import finding, is_column_part
 from ml_quest.handoff import handoff
-from ml_quest.problem import active_value, answer, get_value, set_value
+from ml_quest.problem import (
+    active_value, answer, get_value, set_value, upgrade_problem
+)
+from ml_quest.questions import PART
 
 # レシピの分割の割合の既定値 (データの分析の段階で変えられる)
 VALID_RATIO = 0.15
 TEST_RATIO = 0.15
+
+
+def require_column_part(problem: dict, purpose: str) -> None:
+    """
+    列の予測 (予測するで, 正解の種類が表の列) でなければ止める関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+    purpose: str
+        誤りの文に使う, 何をしようとしたか
+
+    Returns
+    ----------
+    None
+
+    Raises
+    ----------
+    ValueError
+        列の予測でない場合
+    """
+    # 他の受け持ちのデータの約束は, データの分析の段階の版の上げの後
+    if not is_column_part(problem):
+        raise ValueError(
+            f"{purpose}は, 予測するで正解の種類が表の列の場合だけです (他の"
+            "受け持ちと正解の種類はまだ扱えません)"
+        )
 
 
 def recipe_from(problem: dict) -> dict:
@@ -30,10 +61,12 @@ def recipe_from(problem: dict) -> dict:
     Raises
     ----------
     ValueError
-        受け渡せない問題の設定の場合
+        受け渡せない問題の設定の場合と, 列の予測でない場合
     """
-    # 受け渡しの値 (渡せなければ誤り)
+    # 受け渡しの値 (渡せなければ誤り. 版 1 は先に版 2 へ移行). 列の予測だけ
+    problem = upgrade_problem(problem)
     stages = handoff(problem)
+    require_column_part(problem, "レシピの下書き")
     data = stages["data"]
     notes = []
 
@@ -44,7 +77,7 @@ def recipe_from(problem: dict) -> dict:
         recipe = copy.deepcopy(saved)
         notes += [item["message"] for item in recipe_conflicts(
             problem, recipe
-        )[0] if item["id"] == "ml.group_column"]
+        )[0] if item["id"] == f"{PART}.group_column"]
     else:
         recipe = skeleton_recipe(problem, data, notes)
 
@@ -166,22 +199,24 @@ def apply_recipe(problem: dict, recipe: dict) -> dict:
     Returns
     ----------
     result: dict
-        problem (書き戻した問題の設定. レシピも data.recipe に持つ),
+        problem (書き戻した問題の設定 (版 2). レシピも data.recipe に持つ),
         changes (変えた点の文), conflicts (確かめの形の食い違い),
         choices (列ごとの選ぶ問い. 分からない列をレシピで使った場合)
     """
-    # 目的の列とタスク (新しい目的の列は列の使い方から外す)
-    updated = copy.deepcopy(problem)
+    # 目的の列とタスク (新しい目的の列は列の使い方から外す. 版 1 は先に
+    # 移す). 列の予測だけ
+    updated = copy.deepcopy(upgrade_problem(problem))
+    require_column_part(updated, "レシピの書き戻し")
     changes = []
-    old_target = get_value(updated, "ml.target")
+    old_target = get_value(updated, f"{PART}.target.column")
     task = recipe.get("task")
-    if task and task != "none" and task != get_value(updated, "ml.task"):
-        updated = answer(updated, "ml.task", task)
+    if task and task != "none" and task != get_value(updated, f"{PART}.task"):
+        updated = answer(updated, f"{PART}.task", task)
         changes.append(f"タスクを {task} に書き戻した (後の問いを確かめて"
                        "ください)")
     target = recipe.get("target")
     if target and target != old_target:
-        updated = answer(updated, "ml.target", target)
+        updated = answer(updated, f"{PART}.target.column", target)
         for key in ("information.known", "information.unknown",
                     "information.forbidden"):
             names = [n for n in active_value(updated, key) or []
@@ -233,7 +268,7 @@ def recipe_conflicts(problem: dict, recipe: dict) -> tuple[list, list]:
     target = recipe.get("target")
     if target and target in dropped:
         conflicts.append(finding(
-            "error", "ml.target",
+            "error", f"{PART}.target.column",
             f"レシピが目的の列 {target} を落としています. 落とす手順から"
             "外してください"
         ))
@@ -257,34 +292,34 @@ def recipe_conflicts(problem: dict, recipe: dict) -> tuple[list, list]:
     ]
 
     # 決める時点で分からない期の値と, 時系列の分割
-    min_lag = active_value(problem, "ml.available_lag")
+    min_lag = active_value(problem, f"{PART}.available_lag")
     if min_lag and smallest and smallest < min_lag:
         conflicts.append(finding(
-            "warning", "ml.available_lag",
+            "warning", f"{PART}.available_lag",
             f"レシピの過去の値が {smallest} 期前から始まっていますが, 決める"
             f"時点で分かるのは {min_lag} 期前からです (漏れになります)"
         ))
     method = (recipe.get("split") or {}).get("method")
-    group = active_value(problem, "ml.group_column")
+    group = active_value(problem, f"{PART}.group_column")
     written = (recipe.get("split") or {}).get("column") or None
     if group != written:
         conflicts.append(finding(
-            "warning", "ml.group_column",
+            "warning", f"{PART}.group_column",
             f"相手をまとめる列が, 問題の設定では {group or 'なし'}, レシピの"
             f"分割では {written or 'なし'} です (どちらかに合わせてください)"
         ))
-    if active_value(problem, "ml.split_time_column") and method and (
+    if active_value(problem, f"{PART}.split_time_column") and method and (
         method != "time"
     ):
         conflicts.append(finding(
-            "warning", "ml.split_time_column",
+            "warning", f"{PART}.split_time_column",
             f"時刻の順で分けて確かめると決めたのに, 分割が {method} です"
         ))
-    if active_value(problem, "ml.task") == "forecasting" and method and (
+    if active_value(problem, f"{PART}.task") == "forecasting" and method and (
         method != "time"
     ):
         conflicts.append(finding(
-            "warning", "ml.task",
+            "warning", f"{PART}.task",
             f"時系列の予測なのに, 分割が {method} です (先の期間で確かめる"
             "には時刻の順)"
         ))
@@ -316,7 +351,7 @@ def resolve_choice(problem: dict, column: str, option: str) -> dict:
     # 落とす手順で元の列を落とす (前の手順が使っても失敗しないように)
     if option not in ("known", "drop"):
         raise ValueError("option は known か drop にしてください")
-    updated = copy.deepcopy(problem)
+    updated = copy.deepcopy(upgrade_problem(problem))
     if option == "known":
         unknown = [n for n in active_value(updated, "information.unknown")
                    or [] if n != column]
