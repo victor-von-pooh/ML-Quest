@@ -5,7 +5,17 @@ from ml_quest.problem import (
     DECISION_NAMES, DECISION_OPTIONS, FIELD_NAMES, OPTION_NAMES,
     active_value, data_location, get_value, upgrade_problem
 )
-from ml_quest.questions import CONSUMERS, METRICS, PART, ROLES, TASKS
+from ml_quest.questions import (
+    CONSUMERS, FALLBACKS, METRICS, PART, ROLES, TASKS
+)
+from ml_quest.requirements import required_features
+
+# 方策の守りの項目 (ML-Found の make_guards と safety_key に渡す答え)
+POLICY_KEYS = ["action_limits", "stop", "fallback", "fallback_action",
+               "safety_key", "approver"]
+
+# 安全の違反の信号の名前の既定 (ML-Found の safety_key の既定)
+DEFAULT_SAFETY_KEY = "cost"
 
 # 選んで書く意思決定の項目 (値を名前にして文にする)
 OPTION_FIELDS = {
@@ -81,7 +91,8 @@ def handoff(problem: dict) -> dict:
     ----------
     stages: dict
         data (データの分析), model (モデルの作成), training (学習・評価),
-        inference (推論) ごとの値
+        inference (推論) ごとの値と, part (受け持ちの答え), requires (要る
+        機能の名前), policy (方策の守り. 方策でなければ None)
 
     Raises
     ----------
@@ -113,6 +124,8 @@ def handoff(problem: dict) -> dict:
             "training": training,
             "inference": {"decision": None, "conclusion": {},
                           "horizon": None},
+            "requires": required_features(problem),
+            "policy": policy_of(problem),
         }
         return stages
 
@@ -128,6 +141,8 @@ def handoff(problem: dict) -> dict:
         "inference": {"decision": decision_of(problem),
                       "conclusion": conclusion_of(problem),
                       "horizon": value(problem, f"{PART}.horizon")},
+        "requires": required_features(problem),
+        "policy": policy_of(problem),
     }
 
     return stages
@@ -165,6 +180,33 @@ def part_of(problem: dict) -> dict:
     }
 
     return part
+
+
+def policy_of(problem: dict) -> Optional[dict]:
+    """
+    続けて行動を選ぶ方策の守りの答えをまとめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    policy: Optional[dict]
+        action_limits, stop, fallback, fallback_action, safety_key,
+        approver (方策でなければ None. 信号の名前は答えていなければ cost)
+    """
+    # 方策と答えたときだけ (要らなくなった問いの古い答えは除外)
+    if active_value(problem, f"{PART}.autonomous") is not True:
+        return None
+    policy = {key: active_value(problem, f"{PART}.policy.{key}")
+              for key in POLICY_KEYS}
+
+    # 信号の名前の既定 (None を渡すと ML-Found は違反を数えないため)
+    policy["safety_key"] = policy["safety_key"] or DEFAULT_SAFETY_KEY
+
+    return policy
 
 
 def training_of(problem: dict) -> dict:
@@ -317,12 +359,55 @@ def describe(problem: dict) -> list[str]:
     constraints = value(problem, "ml.constraints")
     if isinstance(constraints, list) and constraints:
         sentences.append("守る制約: " + ", ".join(map(str, constraints)))
+    if value(problem, f"{PART}.autonomous") is True and isinstance(
+        value(problem, f"{PART}.policy"), dict
+    ):
+        sentences.append(policy_text(problem))
+    features = required_features(problem)
+    if features:
+        sentences.append("要る機能: " + ", ".join(features))
     if value(problem, "verification.success"):
         sentences.append(
             f"成功の基準: {value(problem, 'verification.success')}"
         )
 
     return sentences
+
+
+def policy_text(problem: dict) -> str:
+    """
+    方策の守りを文にする関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    text: str
+        「方策の守り: 行動の上限 x. 止める条件 y. 外れたら z. 決める人 w」
+        の形 (答えた項目だけ)
+    """
+    # 答えた項目だけの並び (外れたときの動きは名前)
+    value = active_value
+    names = {item["value"]: item["label"] for item in FALLBACKS}
+    fallback = value(problem, f"{PART}.policy.fallback")
+    action = value(problem, f"{PART}.policy.fallback_action")
+    items = [
+        ("行動の上限", value(problem, f"{PART}.policy.action_limits")),
+        ("止める条件", value(problem, f"{PART}.policy.stop")),
+        ("外れたら", names.get(str(fallback), fallback)
+         if fallback else None),
+        ("その行動", action),
+        ("違反の信号", value(problem, f"{PART}.policy.safety_key")),
+        ("決める人", value(problem, f"{PART}.policy.approver")),
+    ]
+    parts = [f"{name} {item}" for name, item in items
+             if item is not None and item != ""]
+    text = "方策の守り: " + ". ".join(parts)
+
+    return text
 
 
 def guard_text(guard: dict) -> str:

@@ -121,6 +121,32 @@ METHODS = [
     {"value": "scratch", "label": "一から学習"},
 ]
 
+# 効果を見積もるの受け持ちの場合だけの問い
+EFFECT = [USES_ML, {"id": f"{PART}.role", "equals": "effect"}]
+
+# 続けて行動を選ぶ方策の場合だけの問い (守りの問い)
+AUTONOMOUS = [*EFFECT, {"id": f"{PART}.autonomous", "equals": True}]
+
+# 行動の結果の集め方 (online と simulator は試して集める)
+COLLECTS = [
+    {"value": "log", "label": "今ある記録から (新しく試さない)"},
+    {"value": "online", "label": "実際に試しながら集める"},
+    {"value": "simulator", "label": "シミュレータで試して集める"},
+]
+
+# シミュレータ
+SIMULATORS = [
+    {"value": "mujoco", "label": "MuJoCo (物理のシミュレータ)"},
+    {"value": "other", "label": "その他 (自分で作った環境, 他の道具)"},
+]
+
+# 方策が守りを外れたときの動き (名前は ML-Found の make_guards の fallback)
+FALLBACKS = [
+    {"value": "stop", "label": "その場で止める"},
+    {"value": "handover", "label": "元の制御 (今のやり方) に戻す"},
+    {"value": "action", "label": "決めた行動にする (例: 動かさない)"},
+]
+
 # 意思決定の型と, 型ごとの欄 (画面はこれだけで描く. 項目は ML-Inference の
 # 形. required は要る欄, choices は選んで書く欄, unset は選ばないときの意味,
 # when は他の欄の値で要るかが決まる欄)
@@ -383,6 +409,27 @@ QUESTIONS: list[dict[str, Any]] = [
     {"id": f"{PART}.item", "section": 5, "kind": "text", "required": True,
      "when": USES_ML, "title": "1 件は何ですか",
      "help": "出力の単位. 例: 店, 品, 日ごとの 1 行"},
+    {"id": f"{PART}.autonomous", "section": 5, "kind": "boolean",
+     "required": False, "when": EFFECT,
+     "title": "機械学習が, 続けて自分で行動を選びますか (方策)",
+     "help": "はい: 機械の動かし方のように, 観測を見て次の行動を次々に決め"
+             "る (人は 1 回ごとに確かめない). 守りを問う. いいえ: 誰に行動"
+             "するかを選び, 人や決まりが行動する"},
+    {"id": f"{PART}.collect", "section": 5, "kind": "choice",
+     "required": False, "when": EFFECT, "choices": COLLECTS,
+     "title": "行動の結果のデータは, どう集めますか",
+     "help": "試して集めるなら, 学習で環境とのやり取り (強化学習) の道具が"
+             "要る. 実際に試すなら, 外れたときの損に気を付ける"},
+    {"id": f"{PART}.simulator", "section": 5, "kind": "choice",
+     "required": True,
+     "when": [*EFFECT, {"id": f"{PART}.collect", "equals": "simulator"}],
+     "choices": SIMULATORS, "title": "どのシミュレータを使いますか",
+     "help": "MuJoCo は pip で入るが, 描画には OpenGL が要る"},
+    {"id": f"{PART}.ros2", "section": 5, "kind": "boolean",
+     "required": False, "when": AUTONOMOUS,
+     "title": "機械を ROS2 で動かしますか",
+     "help": "ROS2 は pip では入らないので, 公式の手順で先に入れる. 実機で"
+             "動かすのは道具の外 (方策と守りを書き出すところまで)"},
     {"id": "data.source", "section": 5, "kind": "source",
      "required": False, "when": USES_ML, "title": "手元のデータは",
      "help": "あれば入れると, 後の問いの答えの候補 (目的の列, 時刻の列, 漏れ"
@@ -517,6 +564,41 @@ QUESTIONS: list[dict[str, Any]] = [
      "help": "1 行に 1 つ. 作り方 (既製のモデル, 外のサービス) を選ぶ前に"
              "決める. 例: データを社外に出せない, 商用で使えるライセンス"
              "だけ, 1 件 1 秒以内に返す, 手元の計算機で動く"},
+    {"id": "ml.gpu", "section": 7, "kind": "boolean", "required": False,
+     "when": USES_ML, "title": "GPU (CUDA) が要りますか",
+     "help": "画像, 文, 大きなモデルの学習は, 多くの場合要る. NVIDIA の"
+             "ドライバと CUDA 付きの PyTorch を先に入れる. 分からなければ"
+             "空のまま"},
+    {"id": f"{PART}.policy.action_limits", "section": 7, "kind": "text",
+     "required": True, "when": AUTONOMOUS,
+     "title": "行動の上限は (守り)",
+     "help": "方策が出してよい行動の範囲. 書き出す方策は, 行動をこの範囲に"
+             "収める. 例: 各関節の速さは毎秒 0.5 rad まで, 選んでよいのは"
+             "左右と止まるだけ"},
+    {"id": f"{PART}.policy.stop", "section": 7, "kind": "text",
+     "required": True, "when": AUTONOMOUS,
+     "title": "何がどの範囲を外れたら, その場で方策の出力を止めますか (止める"
+              "条件)",
+     "help": "観測 (位置, 角度, 温度など) ごとの範囲. 外れたら下の「外れた"
+             "ときの動き」にする. 例: 腕の先が台の上 0 から 0.3 m を出たら"},
+    {"id": f"{PART}.policy.fallback", "section": 7, "kind": "choice",
+     "required": True, "when": AUTONOMOUS, "choices": FALLBACKS,
+     "title": "外れたときは, どうしますか",
+     "help": "止める条件に当たったときと, 観測やモデルの出力が読めないとき"
+             "の動き"},
+    {"id": f"{PART}.policy.fallback_action", "section": 7, "kind": "text",
+     "required": False,
+     "when": [*AUTONOMOUS, {"id": f"{PART}.policy.fallback",
+                            "equals": "action"}],
+     "title": "その決めた行動は",
+     "help": "例: 全ての関節を止める. 番号で選ぶ行動なら, その番号 (要る)."
+             " 量で決める行動なら, 空のときは全ての量を 0 にする"},
+    {"id": f"{PART}.policy.safety_key", "section": 7, "kind": "text",
+     "required": False, "when": AUTONOMOUS,
+     "title": "安全の違反を知らせる信号の名前は",
+     "help": "シミュレータや記録が, 違反した歩に 0 より大きい値を入れる項目"
+             "の名前. 学習と評価で違反の数を数える. 無ければ空のまま (学習の"
+             "段階の既定は cost)"},
 
     # 8. 学習の指標
     {"id": f"{PART}.evaluation.metric", "section": 8, "kind": "choice",
@@ -580,6 +662,12 @@ QUESTIONS: list[dict[str, Any]] = [
      "title": "変更 (予測の外れ方の見積もりを新しい実績で直すなど) は誰が"
               "承認しますか",
      "help": "例: 本部"},
+    {"id": f"{PART}.policy.approver", "section": 10, "kind": "text",
+     "required": True, "when": AUTONOMOUS,
+     "title": "方策を使ってよいかと, 守りの範囲は誰が決めますか",
+     "help": "人が決めるのは 1 回 1 回の行動ではなく, 方策を使ってよいかと"
+             "守り (行動の上限, 止める条件, 外れたときの動き) の範囲. 例: "
+             "設備の責任者"},
     {"id": "operation.stop", "section": 10, "kind": "text",
      "required": False, "when": USES_ML, "title": "どうなったら止めますか",
      "help": "例: 損が今のやり方より悪い月が 2 回続いたら"},
