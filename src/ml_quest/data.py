@@ -7,8 +7,9 @@ import uuid
 
 import numpy as np
 import pandas as pd
+import yaml
 
-from ml_quest.check import finding
+from ml_quest.check import finding, is_column_part
 from ml_quest.problem import (
     active_value, answer, data_location, get_value, set_value,
     upgrade_problem
@@ -36,6 +37,13 @@ VOLATILE_OPTIONS = {"time_column"}
 # 写しごとのサブディレクトリの名前 (16 進の桁数. 片付けはこの名前だけ)
 COPY_DIGITS = 12
 COPY_NAME = re.compile(f"[0-9a-f]{{{COPY_DIGITS}}}")
+
+# ML-EDA の版 2 のデータセット (ファイルの組) の読み方の名前と版
+ITEMS_LOADER = "items"
+ITEMS_VERSION = 2
+
+# 版 2 のデータセットで骨組みを書き出せる正解の種類 (予測するの受け持ち)
+ITEMS_KINDS = ("mask", "point_cloud")
 
 
 def import_eda() -> Any:
@@ -131,6 +139,101 @@ def source_of(data: Any) -> dict:
               "size": raw.get("size"), "modified": raw.get("modified")}
 
     return source
+
+
+def dataset_info(location: Union[str, Path]) -> Optional[dict]:
+    """
+    ML-EDA の書き出したデータセットの説明を返す関数
+
+    Parameters
+    ----------
+    location: Union[str, Path]
+        データの場所
+
+    Returns
+    ----------
+    info: Optional[dict]
+        dataset.yaml の中身 (dataset.yaml を持つディレクトリでなければ
+        None)
+
+    Raises
+    ----------
+    ValueError
+        dataset.yaml が読めないか, 辞書でない場合
+    """
+    # ML-EDA に頼らない YAML の直接の読み込み (版の確かめは呼ぶ側)
+    path = Path(location) / "dataset.yaml"
+    if not path.is_file():
+        info = None
+        return info
+    try:
+        info = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
+        raise ValueError(f"{path} を読めません: {error}") from error
+    if not isinstance(info, dict):
+        raise ValueError(f"{path} の中身が辞書ではありません")
+
+    return info
+
+
+def items_message(problem: dict) -> Optional[str]:
+    """
+    入れたデータセットが受け持ちに合わない理由を返す関数
+
+    ファイルの組の受け持ち (予測するの mask と point_cloud) には, 受け持ち
+    と正解の種類が同じ版 2 のデータセットだけが使える. 他の受け持ちでは
+    データセットを見ない (列の予測が dataset.yaml で新しく止まらないように)
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    message: Optional[str]
+        合わない理由 (合うか, ファイルの組の受け持ちでないか, データセット
+        を入れていなければ None)
+    """
+    # ファイルの組の受け持ちで, データセットを入れた場合だけ (元のファイル
+    # は書き出す前)
+    role = active_value(problem, f"{PART}.role")
+    kind = active_value(problem, f"{PART}.target.kind")
+    location = data_location(problem)
+    if role != "predict" or kind not in ITEMS_KINDS:
+        message: Optional[str] = None
+        return message
+    try:
+        info = dataset_info(location) if location else None
+    except ValueError as error:
+        message = str(error)
+        return message
+    if info is None:
+        message = None
+        return message
+
+    # 版, 受け持ち, 正解の種類の比べ
+    version = info.get("format_version")
+    target = info.get("target")
+    target = target if isinstance(target, dict) else {}
+    message = None
+    if isinstance(version, int) and version > ITEMS_VERSION:
+        message = (f"入れたデータセットの版 {version} は, この ML-Quest では"
+                   "読めません (新しい ML-Quest を使ってください)")
+    elif version != ITEMS_VERSION:
+        message = (f"入れたデータセットの版が {version} です. 正解の種類が "
+                   f"{kind} の受け持ちには, ML-EDA の版 2 のデータセット "
+                   "(export_image_masks か export_capture_clouds の書き出し) "
+                   "を入れてください")
+    elif version == ITEMS_VERSION and (
+        info.get("role") != role or target.get("kind") != kind
+    ):
+        message = (f"入れたデータセットは受け持ち {info.get('role')}, 正解の"
+                   f"種類 {target.get('kind')} ですが, 問題の設定は受け持ち "
+                   f"{role}, 正解の種類 {kind} です (データを入れ直すか, "
+                   "答えを直してください)")
+
+    return message
 
 
 def copy_data(location: Path, copy_to: Path) -> Path:
@@ -370,6 +473,9 @@ def attach_data(
     try:
         if fresh is not None:
             copied = copy_data(location, fresh)
+        if is_items(copied or location):
+            updated = attach_items(problem, location, copied)
+            return updated
         data, _ = read_data(copied or location, None, {}, None)
     except Exception as error:
         if fresh is not None:
@@ -397,6 +503,136 @@ def attach_data(
     updated = answer(updated, "information.columns", columns)
 
     return updated
+
+
+def is_items(location: Path) -> bool:
+    """
+    データの場所が ML-EDA の版 2 のデータセットかを返す関数
+
+    Parameters
+    ----------
+    location: Path
+        データの場所
+
+    Returns
+    ----------
+    items: bool
+        dataset.yaml の版が 2 のディレクトリか (読めない説明は False. 読む
+        ときに ML-EDA が誤りを出す)
+    """
+    # 版 1 は今までどおり ML-EDA の読み込みへ
+    try:
+        info = dataset_info(location)
+    except ValueError:
+        info = None
+    items = info is not None and info.get("format_version") == ITEMS_VERSION
+
+    return items
+
+
+def attach_items(
+    problem: dict, location: Path, copied: Optional[Path]
+) -> dict:
+    """
+    版 2 のデータセットを確かめ, 場所と読み方を入れる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+    location: Path
+        元の場所 (resolve 済み)
+    copied: Optional[Path]
+        写した場所 (写さないなら None)
+
+    Returns
+    ----------
+    updated: dict
+        data (source, origin, loader, options, size, modified,
+        interval_seconds) を入れた問題の設定 (列の名前は入れない)
+    """
+    # 読めるかの確かめ (読めなければ ML-EDA の誤り)
+    place = copied or location
+    import_eda().load_items(place)
+
+    # 場所と読み方 (写したなら元の場所も). 列と時刻は持たない
+    updated = answer(problem, "data.source", str(place))
+    origin = None
+    if copied == location:
+        same = str(location) == get_value(problem, "data.source")
+        origin = get_value(problem, "data.origin") if same else None
+    elif copied is not None:
+        origin = str(location)
+    values = {
+        "origin": origin, "loader": ITEMS_LOADER, "options": None,
+        "size": size_of(place),
+        "modified": (place / "dataset.yaml").stat().st_mtime,
+        "interval_seconds": None,
+    }
+    for key, value in values.items():
+        set_value(updated, f"data.{key}", value)
+
+    return updated
+
+
+def items_overview(problem: dict, location: str) -> dict:
+    """
+    入れた版 2 のデータセットの概要と確かめを返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+    location: str
+        データセットの場所
+
+    Returns
+    ----------
+    result: dict
+        overview (表でないので None), suggestions (空), findings (件数と
+        正解の種類と出どころの info, 受け持ちに合わなければ error)
+    """
+    # 説明から件数, 分割, 正解の種類と出どころ (読めなければ error)
+    try:
+        info = dataset_info(location) or {}
+    except ValueError as error:
+        result = {"overview": None, "suggestions": [], "findings": [
+            finding("error", "data.source", str(error))
+        ]}
+        return result
+    target = info.get("target")
+    target = target if isinstance(target, dict) else {}
+    origin = target.get("origin")
+    origin = origin if isinstance(origin, dict) else {}
+    splits = info.get("splits")
+    splits = splits if isinstance(splits, dict) else {}
+    counts = ", ".join(f"{name} {value.get('items')}"
+                       for name, value in splits.items()
+                       if isinstance(value, dict))
+    findings = [finding(
+        "info", "data.source",
+        f"ML-EDA の版 2 のデータセット {info.get('name')}: 正解の種類 "
+        f"{target.get('kind')}, 分割 ({counts or 'なし'}), 正解の出どころ "
+        f"{origin.get('type', 'unknown')}"
+        + (f" ({origin['name']})" if origin.get("name") else "")
+    )]
+
+    # 受け持ちに合うか (列の予測には使えないことも) と, 検証用の分割
+    message = items_message(problem)
+    if is_column_part(problem):
+        message = ("版 2 のデータセットは列の予測には使えません (受け持ちと"
+                   "正解の種類を答え直すか, 表のデータを入れてください)")
+    if message is not None:
+        findings.append(finding("error", "data.source", message))
+    if "valid" not in splits:
+        findings.append(finding(
+            "warning", "data.source",
+            "検証用の分割がありません. 最も良いモデルを選ぶために, 検証用の"
+            "割合を 0 より大きくして書き出し直してください"
+        ))
+    result = {"overview": None, "suggestions": [], "findings": findings}
+
+    return result
 
 
 def copy_place(
@@ -1211,6 +1447,9 @@ def inspect_data(problem: dict) -> Optional[dict]:
     source = data_location(problem)
     if not source:
         return None
+    if get_value(problem, "data.loader") == ITEMS_LOADER:
+        result = items_overview(problem, source)
+        return result
     try:
         eda = import_eda()
         data, note = read_data(
