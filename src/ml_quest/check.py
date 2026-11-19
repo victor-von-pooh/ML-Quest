@@ -10,6 +10,10 @@ from ml_quest.questions import (
     TARGET_KINDS, TARGET_SOURCES, UNITS, V1_METRICS
 )
 
+# 受け持ちの中の, 辞書で書く項目
+PART_DICTS = [f"{PART}.target", f"{PART}.target.process",
+              f"{PART}.evaluation"]
+
 # 受け持ちの, 選んで書く項目と選択肢 (手で書いたファイルの確かめ)
 PART_CHOICES = {
     f"{PART}.role": ROLES, f"{PART}.unit": UNITS,
@@ -82,7 +86,7 @@ def is_names(value: Any) -> bool:
 
 def check_shape(problem: dict) -> list[dict]:
     """
-    手で書いたファイルや新しい版の, 値の形の崩れを一覧にする関数
+    手で書いたファイルの, 値の形の崩れを一覧にする関数
 
     Parameters
     ----------
@@ -740,7 +744,7 @@ def check(problem: dict) -> list[dict]:
     found: list[dict]
         確かめ (level, id, message) の並び. error, warning, info の順
     """
-    # 新しい版は読まない (読める項目だけを使うと黙って読み違えるため)
+    # 新しい版は読み込み無し (読める項目だけを使うと黙って読み違えるため)
     version = problem.get("format_version")
     if isinstance(version, int) and not isinstance(version, bool) and (
         version > FORMAT_VERSION
@@ -749,11 +753,10 @@ def check(problem: dict) -> list[dict]:
                          newer_message(version, "この問題の設定"))]
         return found
 
-    # 版 1 だけの形 (4 つの指標) を見てから版 2 に移す. 形の崩れと受け持ち
-    # の数 (あれば他は確かめない), 答えの空, 筋道
-    shape = check_v1(problem) if version == 1 else []
+    # 版 2 への移行の後, 版 1 の場所に残した知らない指標, 形の崩れと受け
+    # 持ちの数 (あれば他は確かめない), 答えの空, 筋道
     problem = upgrade_problem(problem)
-    shape += check_parts(problem)
+    shape = check_v1(problem) + check_parts(problem)
     if shape:
         return shape
     shape = check_shape(problem)
@@ -801,22 +804,25 @@ def is_column_part(problem: dict) -> bool:
 
 def check_v1(problem: dict) -> list[dict]:
     """
-    版 1 のファイルだけの形 (書ける指標は 4 つ) を確かめる関数
+    版 1 のファイルに書いた, 4 つの他の指標を確かめる関数
+
+    版 2 へ移すとき, 4 つの他の指標は移さず版 1 の場所に残す
 
     Parameters
     ----------
     problem: dict
-        版 1 の問題の設定
+        問題の設定 (版 2)
 
     Returns
     ----------
     found: list[dict]
-        確かめ (4 つの他の指標は error)
+        確かめ (版 1 の場所に残った指標は error)
     """
     # その他と, 版 2 で足した指標は版 1 では知らない指標
     found = []
-    metric = get_value(problem, "evaluation.metric")
-    if isinstance(metric, str) and metric not in V1_METRICS:
+    stale = problem.get("evaluation")
+    metric = stale.get("metric") if isinstance(stale, dict) else None
+    if metric is not None:
         found.append(finding(
             "error", f"{PART}.evaluation.metric",
             f"evaluation.metric の {metric} は知らない指標です (版 1 のファ"
@@ -840,7 +846,7 @@ def check_parts(problem: dict) -> list[dict]:
     found: list[dict]
         確かめ (並びでない, 辞書でない, 2 つ以上は error)
     """
-    # 今は 1 つだけ書ける (段どうしのつなぎを決めていないため)
+    # 今は 1 つだけ (段どうしのつなぎを決めていないため)
     found: list[dict] = []
     parts = get_value(problem, "ml.parts")
     if parts is None:
@@ -853,14 +859,16 @@ def check_parts(problem: dict) -> list[dict]:
     elif len(parts) > 1:
         found.append(finding(
             "error", "ml.parts",
-            f"受け持ちは今は 1 つだけ書けます (ml.parts に {len(parts)} つ "
+            f"受け持ちは今は 1 つだけ書けます (ml.parts に {len(parts)} つ"
             "あります). 課題を分けるか, 1 つにしてください"
         ))
-    elif parts and get_value(problem, f"{PART}.target") is not None and (
-        not isinstance(get_value(problem, f"{PART}.target"), dict)
-    ):
-        found.append(finding("error", f"{PART}.target",
-                             "target は辞書にしてください"))
+    else:
+        found += [
+            finding("error", key, f"{key} は辞書にしてください")
+            for key in PART_DICTS
+            if get_value(problem, key) is not None
+            and not isinstance(get_value(problem, key), dict)
+        ]
 
     return found
 

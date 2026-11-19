@@ -206,10 +206,19 @@ def test_upgrade_round_trip(tmp_path: Path) -> None:
         "format_version"
     ] == 1
 
-    # 機械学習を使わない版 1 は受け持ちを作らない
+    # 機械学習を使わない版 1 は受け持ち無し
     plain = {"format_version": 1, "name": "x", "created_at": "t",
              "ml": {"use": False, "reason": "規則で足りる"}}
     assert "parts" not in upgrade_problem(plain)["ml"]
+
+    # 空の版 1 の項目は残さず, 版 1 に手で書いた受け持ちは残す
+    sparse = {"format_version": 1, "name": "x", "created_at": "t",
+              "ml": {"use": True, "task": None, "positive": None,
+                     "parts": [{"note": "手書き"}]}}
+    moved = upgrade_problem(sparse)["ml"]
+    assert "task" not in moved and "positive" not in moved
+    assert moved["parts"][0]["note"] == "手書き"
+    assert moved["parts"][0]["role"] == "predict"
 
 
 def test_legacy_names_on_version2() -> None:
@@ -225,7 +234,7 @@ def test_legacy_names_on_version2() -> None:
     ----------
     None
     """
-    # 版 1 の問題の設定に答えると版 2 になる
+    # 版 1 の問題の設定への答えの後は版 2
     problem = answer(v1_problem(), "ml.target", "promo")
     assert problem["format_version"] == 2
     assert get_value(problem, "ml.parts.0.target.column") == "promo"
@@ -323,7 +332,7 @@ def test_point_cloud_handoff() -> None:
     assert any("予測すること: 試しの出力" in text
                for text in describe(problem))
 
-    # 今の処理の名前は要る. 表の列の段階は渡せない
+    # 今の処理の名前は必須. 表の列の段階は対象外
     nameless = answer(problem, "ml.parts.0.target.process.name", None)
     assert "ml.parts.0.target.process.name" in errors_of(nameless)
     with pytest.raises(ValueError, match="表の列"):
@@ -343,7 +352,7 @@ def test_each_role_checks() -> None:
     ----------
     None
     """
-    # 受け持ちごとの候補の指標で渡せる
+    # 受け持ちごとの候補の指標での受け渡し
     for role, answers in ROLE_ANSWERS.items():
         problem = role_problem(role, answers)
         assert errors_of(problem) == [], role
@@ -394,19 +403,23 @@ def test_one_part_only() -> None:
     with pytest.raises(ValueError, match="1 つだけ"):
         handoff(problem)
 
-    # 並びでない受け持ち
+    # 並びでない受け持ちと, 辞書でない指標
     problem["ml"]["parts"] = {"role": "predict"}
     assert errors_of(problem) == ["ml.parts"]
+    problem = example_problem("総菜の作る量")
+    problem["ml"]["parts"][0]["evaluation"] = "rmse"
+    assert errors_of(problem) == ["ml.parts.0.evaluation"]
 
 
-def test_other_metric() -> None:
+def test_other_metric(tmp_path: Path) -> None:
     """
     最良を選ぶ指標のその他が, 名前と向きで監視する指標として渡り, 版 1 の
     ファイルでは知らない指標になることを確かめる関数
 
     Parameters
     ----------
-    None
+    tmp_path: Path
+        一時ディレクトリ
 
     Returns
     ----------
@@ -440,6 +453,18 @@ def test_other_metric() -> None:
             "ml.parts.0.evaluation.metric"
         ]
         assert "知らない指標" in found[0]["message"]
+
+    # 読み込んだ版 1 のファイルでも同じで, 指標に答え直すと直る
+    path = tmp_path / "problem.yaml"
+    old = v1_problem()
+    old["evaluation"]["metric"] = "other"
+    path.write_text(yaml.safe_dump(old, allow_unicode=True),
+                    encoding="utf-8")
+    loaded = load_problem(path)
+    assert "知らない指標" in check(loaded)[0]["message"]
+    fixed = answer(loaded, "ml.parts.0.evaluation.metric", "mae")
+    assert "evaluation" not in fixed
+    assert errors_of(fixed) == []
 
 
 def test_newer_version_stops(tmp_path: Path) -> None:

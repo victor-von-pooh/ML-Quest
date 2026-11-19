@@ -27,8 +27,13 @@ def require_column_part(problem: dict, purpose: str) -> None:
     Returns
     ----------
     None
+
+    Raises
+    ----------
+    ValueError
+        列の予測でない場合
     """
-    # 他の受け持ちのデータの約束は, データの分析の段階の版を上げてから
+    # 他の受け持ちのデータの約束は, データの分析の段階の版の上げの後
     if not is_column_part(problem):
         raise ValueError(
             f"{purpose}は, 予測するで正解の種類が表の列の場合だけです (他の"
@@ -58,7 +63,7 @@ def recipe_from(problem: dict) -> dict:
     ValueError
         受け渡せない問題の設定の場合と, 列の予測でない場合
     """
-    # 受け渡しの値 (渡せなければ誤り. 版 1 は先に移す). 列の予測だけ
+    # 受け渡しの値 (渡せなければ誤り. 版 1 は先に版 2 へ移行). 列の予測だけ
     problem = upgrade_problem(problem)
     stages = handoff(problem)
     require_column_part(problem, "レシピの下書き")

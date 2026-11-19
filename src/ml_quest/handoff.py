@@ -88,7 +88,7 @@ def handoff(problem: dict) -> dict:
     ValueError
         機械学習を使わない場合と, 確かめに error がある場合
     """
-    # 渡せる問題の設定か (版 1 は先に移す)
+    # 渡せる問題の設定か (版 1 は先に版 2 へ移行)
     problem = upgrade_problem(problem)
     if get_value(problem, "ml.use") is not True:
         raise ValueError("機械学習を使わない問題の設定は, 後ろの段階に渡す"
@@ -187,10 +187,11 @@ def training_of(problem: dict) -> dict:
     metric = active_value(problem, f"{PART}.evaluation.metric")
     better = next((item["better"] for item in METRICS
                    if item["value"] == metric), "lower")
+    monitor = "valid/mse" if metric == "rmse" else f"valid/{metric}"
     if metric == "other":
         metric = active_value(problem, f"{PART}.evaluation.name")
         better = active_value(problem, f"{PART}.evaluation.better")
-    monitor = "valid/mse" if metric == "rmse" else f"valid/{metric}"
+        monitor = f"valid/{metric}"
     training = {"metric": metric, "monitor": monitor,
                 "mode": "max" if better == "higher" else "min"}
 
@@ -255,7 +256,7 @@ def describe(problem: dict) -> list[str]:
     sentences: list[str]
         要約の文 (答えた項目だけ)
     """
-    # 課題と指標 (要らなくなった問いの古い答えは使わない. 版 1 は先に移す)
+    # 課題と指標 (要らなくなった問いの古い答えは使わない. 版 1 は先に版 2 へ移行)
     problem = upgrade_problem(problem)
     value = active_value
     sentences = []

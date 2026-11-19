@@ -359,7 +359,7 @@ def attach_data(
         相対パスの場合, ML-EDA が無い場合, 読めない場合
     """
     # 絶対パスだけ. 写してから 1 回だけ読み, 読めなければ新しい写しを消す.
-    # 版 1 は先に移す
+    # 版 1 は先に版 2 へ移行
     problem = upgrade_problem(problem)
     location = Path(path).expanduser()
     target = Path(copy_to).expanduser() if copy_to is not None else None
@@ -1206,7 +1206,7 @@ def inspect_data(problem: dict) -> Optional[dict]:
         overview (行, 列, 種類, 時刻の範囲と間隔, 見本で分析したか),
         suggestions, findings (データを入れていなければ None)
     """
-    # 機械学習を使い, データを入れた場合だけ (版 1 は先に移す)
+    # 機械学習を使い, データを入れた場合だけ (版 1 は先に版 2 へ移行)
     problem = upgrade_problem(problem)
     source = data_location(problem)
     if not source:

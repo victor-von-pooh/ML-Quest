@@ -9,7 +9,7 @@ import uuid
 import pandas as pd
 import yaml
 
-from ml_quest.questions import BY_ID, PART, QUESTIONS
+from ml_quest.questions import BY_ID, PART, QUESTIONS, V1_METRICS
 
 # 問題の設定の形の版
 FORMAT_VERSION = 2
@@ -139,7 +139,7 @@ def get_value(problem: dict, key: str) -> Any:
     value: Any
         値 (無ければ None)
     """
-    # 辞書の順のたどり (並びは番号で). 版 2 では版 1 の名前を移した先に
+    # 辞書の順のたどり (並びは番号で). 版 2 では版 1 の名前は移した先
     key = current_key(problem, key)
     value: Any = problem
     for part in key.split("."):
@@ -201,8 +201,9 @@ def set_value(problem: dict, key: str, value: Any) -> None:
     ----------
     None
     """
-    # 消す場合は, 空になった親の辞書も消去. 次が番号なら並び (受け持ち)
-    parts = key.split(".")
+    # 消す場合は, 空になった親の辞書も消去. 次が番号なら並び (受け持ち).
+    # 版 2 では版 1 の名前は移した先
+    parts = current_key(problem, key).split(".")
     if value is None:
         remove_value(problem, parts)
         return
@@ -272,10 +273,16 @@ def remove_value(node: Any, parts: list[str]) -> bool:
     head = parts[0]
     if isinstance(node, list):
         index = int(head) if head.isdigit() else len(node)
-        if index < len(node) and isinstance(node[index], dict) and (
-            len(parts) > 1 and remove_value(node[index], parts[1:])
-        ) and index == len(node) - 1:
+        last = index == len(node) - 1
+        if last and (len(parts) == 1 or (
+            isinstance(node[index], dict)
+            and remove_value(node[index], parts[1:])
+        )):
             node.pop()
+        elif index < len(node) - 1 and len(parts) > 1 and isinstance(
+            node[index], dict
+        ):
+            remove_value(node[index], parts[1:])
         empty = not node
         return empty
     if len(parts) == 1:
@@ -478,7 +485,7 @@ def questions(problem: dict) -> list[dict]:
         問い (id, section, kind, title, help, required, choices) に,
         value, answered, applies を足したものの並び
     """
-    # 画面に出す順 (版 1 は先に移す)
+    # 画面に出す順 (版 1 は先に版 2 へ移行)
     problem = upgrade_problem(problem)
     items = []
     for question in QUESTIONS:
@@ -849,7 +856,7 @@ def answer(problem: dict, key: str, value: Any) -> dict:
     updated: dict
         答えを入れた問題の設定 (版 2)
     """
-    # 版 1 は先に移す (版 1 の名前の問いは移した先). 知らない問いは誤り
+    # 版 1 は先に版 2 へ移行 (版 1 の名前の問いは移した先). 知らない問いは誤り
     problem = upgrade_problem(problem)
     key = current_key(problem, key)
     if key not in BY_ID:
@@ -857,6 +864,13 @@ def answer(problem: dict, key: str, value: Any) -> dict:
     cleaned = clean_answer(problem, BY_ID[key], value)
     updated = copy.deepcopy(problem)
     set_value(updated, key, cleaned)
+
+    # 最良を選ぶ指標に答えたら, 版 1 の場所に残した知らない指標は削除
+    stale = updated.get("evaluation")
+    if key == f"{PART}.evaluation.metric" and isinstance(stale, dict):
+        stale.pop("metric", None)
+        if not stale:
+            updated.pop("evaluation")
 
     # データの場所を変えたら, 前の読み方は使わない (attach_data で読み直す)
     if key == "data.source" and get_value(problem, key) != cleaned:
@@ -930,24 +944,29 @@ def upgrade_problem(problem: dict, name: str = "問題の設定") -> dict:
     ValueError
         知っている版より新しい場合
     """
-    # 版 2 はそのまま, 新しい版は読まない (黙って読み違えないように)
+    # 版 2 はそのまま, 新しい版は読み込み無し (黙って読み違えないように)
     version = problem.get("format_version")
-    if isinstance(version, int) and not isinstance(version, bool) and (
-        version > FORMAT_VERSION
-    ):
+    numbered = isinstance(version, int) and not isinstance(version, bool)
+    if numbered and version > FORMAT_VERSION:
         raise ValueError(newer_message(version, name))
-    if version != 1:
+    if not numbered or version != 1:
         return problem
     upgraded = copy.deepcopy(problem)
     upgraded["format_version"] = FORMAT_VERSION
 
-    # 受け持ちの項目の取り出し (知らない項目は ml に残す)
+    # 受け持ちの項目の取り出し (空の項目も元の場所から削除. 知らない項目は
+    # ml に残す). 版 1 の 4 つの他の指標は移さず, 版 1 の場所に残して確かめ
+    # で知らない指標に
     moved: dict = {}
     for old, new in LEGACY_KEYS.items():
         value = get_value(problem, old)
+        if old == "evaluation.metric" and isinstance(value, str) and (
+            value not in V1_METRICS
+        ):
+            continue
         if value is not None:
             moved[new] = value
-            remove_value(upgraded, old.split("."))
+        remove_value(upgraded, old.split("."))
     ml = upgraded.get("ml")
     if not moved and not (isinstance(ml, dict) and ml.get("use") is True):
         return upgraded
@@ -963,7 +982,10 @@ def upgrade_problem(problem: dict, name: str = "問題の設定") -> dict:
     }
     if not isinstance(upgraded.get("ml"), dict):
         upgraded["ml"] = {}
-    upgraded["ml"]["parts"] = [{}]
+    parts = upgraded["ml"].get("parts")
+    if not (isinstance(parts, list) and parts and isinstance(parts[0],
+                                                             dict)):
+        upgraded["ml"]["parts"] = [{}]
     for key, value in {**defaults, **moved}.items():
         set_value(upgraded, key, value)
 
@@ -988,7 +1010,7 @@ def newer_message(version: int, name: str) -> str:
     """
     # 読める版と, 直し方
     message = (
-        f"{name} は新しい版 (format_version: {version}) の問題の設定です. "
+        f"新しい版 (format_version: {version}) の問題の設定です ({name}). "
         f"この ML-Quest が読めるのは版 {FORMAT_VERSION} までです. ML-Quest "
         "を新しくしてください"
     )
