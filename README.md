@@ -78,6 +78,8 @@ problem = example_problem("総菜の作る量")
 
 書き出した骨組みの README に, 次にすること (データの分析で選ぶ値, モデルの出力の大きさ, 学習の起動, 推論の一式の登録) が書かれる. 学習のスクリプトは ML-EDA, ML-ModelControl, ML-Found, ML-Inference を使うので, 学習する環境にはそれらを入れる.
 
+骨組みを書き出せるのは, 列の予測 (分類, 回帰, 時系列の予測) と, 予測するで正解の種類が画像の領域か点群の受け持ち. 後の 2 つは ML-EDA の版 2 のデータセット (`export_image_masks`, `export_capture_clouds`) で学習する骨組みで, 入れた版 2 のデータセットをプロジェクトに写し, 仮のモデル (印 TODO) と, 損失と指標 (領域は交差エントロピーと IoU, 点群は Chamfer) を書く. 書き出せない理由は `project_error(problem)` で分かる.
+
 ## 開発
 
 ```bash
@@ -94,6 +96,7 @@ python -m venv .venv
 | `src/ml_quest/handoff.py` | 受け渡しの値と要約の文 |
 | `src/ml_quest/requirements.py` | 要る機能の名前 (ML-Found の登録簿の名前) と, 答えから要る機能 |
 | `src/ml_quest/skeleton.py` | ML-Found のプロジェクトの骨組み |
+| `src/ml_quest/items_skeleton.py` | ML-EDA の版 2 のデータセット (画像と領域, 撮影と点群) で学習する骨組み |
 | `src/ml_quest/examples.py` | 見本の問題の設定 |
 | `src/ml_quest/data.py` | 手元のデータの読み込みと写し, 答えの候補と確かめ, 今のやり方の損 (ML-EDA) |
 | `src/ml_quest/bridge.py` | データの分析の段階とつなぐ部品 (レシピの雛形と書き戻し) |

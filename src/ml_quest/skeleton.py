@@ -8,9 +8,12 @@ from typing import Any, Optional, Union
 
 import yaml
 
-from ml_quest.bridge import require_column_part
-from ml_quest.data import copy_data
+from ml_quest.check import is_column_part
+from ml_quest.data import ITEMS_KINDS, copy_data, dataset_info, items_message
 from ml_quest.handoff import describe, handoff
+from ml_quest.items_skeleton import (
+    dataset_place, items_config, items_name, items_readme, items_script
+)
 from ml_quest.problem import (
     active_value, data_location, get_value, set_value, upgrade_problem
 )
@@ -466,13 +469,16 @@ def experiment_name(problem: dict, name: Optional[str]) -> str:
     Returns
     ----------
     text: str
-        文字と数字と _ と - だけの名前 (省略すると目的の列とタスクから.
-        日本語の列の名前も残す)
+        文字と数字と _ と - だけの名前 (省略すると目的の列とタスクか,
+        正解の種類と受け持ちから. 日本語の列の名前も残す)
     """
-    # 区切りや空白などのディレクトリに使いにくい文字を _ に
+    # 区切りや空白などのディレクトリに使いにくい文字の _ への置き換え.
+    # ファイルの組の既定は正解の種類と受け持ち
     target = active_value(problem, f"{PART}.target.column")
     task = active_value(problem, f"{PART}.task")
-    raw = name or f"{target}_{task}"
+    default = (f"{target}_{task}" if is_column_part(problem)
+               else items_name(problem))
+    raw = name or default
     text = re.sub(r"[^\w-]+", "_", raw).strip("_") or "problem"
 
     return text
@@ -605,7 +611,8 @@ def project_error(problem: dict) -> Optional[str]:
     """
     骨組みを書き出せない理由を, make_project が出す誤りの文で返す関数
 
-    受け渡し, 列の予測か, 指標がその他でないか, の順に確かめる
+    受け渡し, 書き出せる受け持ちと正解の種類か, 指標がその他でないか,
+    入れたデータセットが受け持ちに合うか, の順に確かめる
 
     Parameters
     ----------
@@ -617,22 +624,108 @@ def project_error(problem: dict) -> Optional[str]:
     message: Optional[str]
         誤りの文 (書き出せるなら None. 書き出し先のファイルは見ない)
     """
-    # 受け渡しと列の予測 (渡せない理由は ValueError の文のまま)
+    # 受け渡し (渡せない理由は ValueError の文のまま)
     message: Optional[str] = None
     try:
         upgraded = upgrade_problem(problem)
         handoff(upgraded)
-        require_column_part(upgraded, "骨組みの書き出し")
     except ValueError as error:
         message = str(error)
+        return message
+
+    # 列の予測と, 予測するの画像の領域と点群だけ
+    if not is_column_part(upgraded) and skeleton_kind(upgraded) is None:
+        message = ("骨組みを書き出せるのは, 予測するで正解の種類が表の列, "
+                   "画像の領域, 点群の場合だけです (作る, 並べる, まとめる, "
+                   "効果を見積もるの受け持ちと, 他の正解の種類はまだ扱えま"
+                   "せん)")
         return message
 
     # 骨組みが記録できる指標だけ
     if active_value(upgraded, f"{PART}.evaluation.metric") == "other":
         message = ("最良を選ぶ指標がその他の場合は, 骨組みを書き出せません "
-                   "(学習のスクリプトがその指標を記録できないため)")
+                   "(学習のスクリプトがその指標の求め方を知らないため). 候補"
+                   "の指標 (loss など) で書き出し, その指標は学習のスクリプト"
+                   "に足して記録してください")
+        return message
+
+    # 入れたデータセットの版, 受け持ち, 正解の種類
+    message = items_message(upgraded)
 
     return message
+
+
+def skeleton_kind(problem: dict) -> Optional[str]:
+    """
+    ファイルの組の骨組みを書き出す正解の種類を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    kind: Optional[str]
+        予測するで正解の種類が mask か point_cloud ならその種類, 他は None
+    """
+    # 予測するの受け持ちだけ
+    kind = active_value(problem, f"{PART}.target.kind")
+    if active_value(problem, f"{PART}.role") != "predict" or (
+        kind not in ITEMS_KINDS
+    ):
+        kind = None
+
+    return kind
+
+
+def project_files(
+    problem: dict, stages: dict, name: Optional[str],
+    data_file: Optional[Path], info: Optional[dict]
+) -> dict:
+    """
+    受け持ちに合う README, config の基準, 学習のスクリプトを作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. データの場所はプロジェクトの写し)
+    stages: dict
+        受け渡し
+    name: Optional[str]
+        実験の名前
+    data_file: Optional[Path]
+        プロジェクトに写すデータ (プロジェクトからの相対. 無ければ None)
+    info: Optional[dict]
+        入れたデータセットの説明 (データセットでなければ None)
+
+    Returns
+    ----------
+    files: dict
+        README.md, configs/default/train.yaml, train.py の中身
+    """
+    # 列の予測
+    kind = skeleton_kind(problem)
+    if kind is None:
+        files = {
+            "README.md": project_readme(problem, stages),
+            "configs/default/train.yaml": config_text(problem, stages, name),
+            "train.py": training_script(problem, stages),
+        }
+        return files
+
+    # ファイルの組 (入れたデータが版 2 のデータセットなら, その写しを読む)
+    dataset = dataset_place(info, data_file)
+    raw = data_file.as_posix() if data_file and info is None else None
+    files = {
+        "README.md": items_readme(problem, stages, kind, dataset, info, raw),
+        "configs/default/train.yaml": items_config(
+            experiment_name(problem, name), stages, kind, dataset
+        ),
+        "train.py": items_script(problem, kind, literal, comment_lines),
+    }
+
+    return files
 
 
 def make_project(
@@ -661,8 +754,9 @@ def make_project(
     Raises
     ----------
     ValueError
-        渡せない問題の設定の場合, 列の予測でないか指標がその他の場合と,
-        上書きしない既にあるファイルがある場合
+        渡せない問題の設定の場合, 書き出せない受け持ちか指標がその他の
+        場合, 入れたデータセットが受け持ちに合わない場合と, 上書きしない
+        既にあるファイルがある場合
     """
     # 書き出せるか (project_error と同じ決まり). 受け渡しの値 (版 1 は先に
     # 版 2 へ移行). データはプロジェクトの data に写し, 写した問題の設定は
@@ -677,6 +771,7 @@ def make_project(
     data_file = (Path("data") / Path(source).name
                  if isinstance(source, str) and Path(source).exists()
                  else None)
+    info = dataset_info(source) if data_file is not None else None
     if data_file is not None:
         problem = copy.deepcopy(problem)
         set_value(problem, "data.origin",
@@ -685,10 +780,8 @@ def make_project(
     files = {
         "problem.yaml": yaml.safe_dump(problem, allow_unicode=True,
                                        sort_keys=False),
-        "README.md": project_readme(problem, stages),
-        "configs/default/train.yaml": config_text(problem, stages, name),
+        **project_files(problem, stages, name, data_file, info),
         "configs/experiment/train.yaml": EXPERIMENT,
-        "train.py": training_script(problem, stages),
     }
 
     # 既にあるファイルと, ディレクトリを作れない場所の確かめ (全てを確かめ
