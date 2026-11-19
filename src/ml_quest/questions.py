@@ -18,6 +18,13 @@ SECTIONS = {
 # 並びで, 全てを満たすときに必要
 USES_ML = {"id": "ml.use", "equals": True}
 
+# 受け持ちの場所 (今は 1 つだけ書ける. 問いの識別子は並びの番号を持つ)
+PART = "ml.parts.0"
+
+# 予測するで, 正解の種類が表の列 (列の予測) の場合だけの問い
+COLUMN_TARGET = [USES_ML, {"id": f"{PART}.role", "equals": "predict"},
+                 {"id": f"{PART}.target.kind", "equals": "column"}]
+
 # 守る指標を書いた場合だけの問い
 HAS_GUARD = {"id": "issue.guard.name", "filled": True}
 
@@ -32,7 +39,87 @@ CONSUMERS = [
 ]
 
 # 後段のある使い道
-DOWNSTREAM = {"id": "ml.consumer", "in": ["system", "model"]}
+DOWNSTREAM = {"id": f"{PART}.consumer", "in": ["system", "model"]}
+
+# 受け持ち (課題から見た, 機械学習の最後の出力)
+ROLES = [
+    {"value": "predict", "label": "予測する (正解が 1 つに決まるものを当てる"
+     ". 値, クラス, 領域, 3D の形, 異常も)"},
+    {"value": "generate", "label": "作る (正解が 1 つに決まらない中身. 文章"
+     "の下書き, 画像, 合成データ)"},
+    {"value": "rank", "label": "並べる (多くの候補から要求に合うものを順に."
+     " 推薦, 検索)"},
+    {"value": "group", "label": "まとめる (正解の無いデータを, 人が分かる"
+     "まとまりに. 顧客の群分け)"},
+    {"value": "effect", "label": "効果を見積もる (行動したときとしないとき"
+     "の差. 誰に行動するか)"},
+]
+
+# 1 件の単位
+UNITS = [
+    {"value": "row", "label": "行 (表の 1 行)"},
+    {"value": "bundle", "label": "まとまり (1 回の撮影, 文書と添付)"},
+    {"value": "pair", "label": "対 (入力と正解のファイル)"},
+    {"value": "query", "label": "要求と候補の組"},
+    {"value": "collection", "label": "集まり (文書の束)"},
+    {"value": "window", "label": "時間の窓"},
+]
+
+# 出力の形 (roles は合う受け持ち)
+OUTPUTS = [
+    {"value": "class", "label": "クラス", "roles": ["predict"]},
+    {"value": "value", "label": "値", "roles": ["predict"]},
+    {"value": "distribution", "label": "分布 (分位点, 区間)",
+     "roles": ["predict"]},
+    {"value": "region", "label": "位置や領域", "roles": ["predict"]},
+    {"value": "shape", "label": "3D の形 (点群, メッシュ)",
+     "roles": ["predict", "generate"]},
+    {"value": "text", "label": "文", "roles": ["predict", "generate"]},
+    {"value": "image", "label": "画像", "roles": ["generate"]},
+    {"value": "table", "label": "表 (合成のデータ)", "roles": ["generate"]},
+    {"value": "ranking", "label": "順位", "roles": ["rank"]},
+    {"value": "cluster", "label": "群", "roles": ["group"]},
+    {"value": "effect", "label": "行動ごとの差", "roles": ["effect"]},
+]
+
+# 正解の出どころ
+TARGET_SOURCES = [
+    {"value": "column", "label": "データの列"},
+    {"value": "files", "label": "対のファイル (入力ごとの正解のファイル)"},
+    {"value": "self", "label": "自分自身 (隠して当てる, 元に戻す)"},
+    {"value": "none", "label": "無い"},
+    {"value": "few", "label": "少し (確かめの組だけ)"},
+    {"value": "process", "label": "今の処理の出力 (シミュレーション, 今の"
+     "計算)"},
+    {"value": "objective", "label": "目的の式 (方程式の残差, 再描画の誤差)"},
+    {"value": "feedback", "label": "行動の結果 (見せたものにだけ反応)"},
+    {"value": "intervention", "label": "介入の記録 (無作為の試験, 記録した"
+     "方策の確率)"},
+    {"value": "human", "label": "人の判断と好み"},
+    {"value": "instruction", "label": "指示 (プロンプト) と例"},
+]
+
+# 正解の種類 (予測すると作るで問う. roles は合う受け持ち)
+TARGET_KINDS = [
+    {"value": "column", "label": "表の列 (クラスか値)", "roles": ["predict"]},
+    {"value": "mask", "label": "画像の領域", "roles": ["predict"]},
+    {"value": "point_cloud", "label": "点群",
+     "roles": ["predict", "generate"]},
+    {"value": "text", "label": "文", "roles": ["predict", "generate"]},
+    {"value": "image", "label": "画像", "roles": ["generate"]},
+    {"value": "table", "label": "表 (合成のデータ)", "roles": ["generate"]},
+]
+
+# 作り方
+METHODS = [
+    {"value": "rule", "label": "規則 (機械学習でない)"},
+    {"value": "pretrained", "label": "既製のモデルをそのまま (指示, 例, "
+     "検索を足す)"},
+    {"value": "head", "label": "既製の特徴の上に頭だけ学習"},
+    {"value": "partial", "label": "一部を微調整"},
+    {"value": "finetune", "label": "全体を微調整"},
+    {"value": "scratch", "label": "一から学習"},
+]
 
 # 意思決定の型と, 型ごとの欄 (画面はこれだけで描く. 項目は ML-Inference の
 # 形. required は要る欄, choices は選んで書く欄, unset は選ばないときの意味,
@@ -98,19 +185,58 @@ TASKS = [
      "label": "時系列の予測 (時刻の順に, 過去の値から先の値)"},
 ]
 
-# 学習で見る指標 (タスクごと. better は大きいほど良いか小さいほど良いか)
+# 最良のモデルを選ぶ指標. fits は合う受け持ち, 正解の種類, タスクの組の
+# 並び (kinds と tasks が無ければ問わない). better は大きいほど良いか小さい
+# ほど良いか. tasks は版 1 の形 (列の予測のタスク)
 METRICS = [
     {"value": "accuracy", "label": "当たった割合 (正解率. 大きいほど良い)",
-     "tasks": ["classification"], "better": "higher"},
+     "tasks": ["classification"], "better": "higher",
+     "fits": [{"role": "predict", "kinds": ["column"],
+               "tasks": ["classification"]}]},
     {"value": "loss", "label": "確率の当たり具合 (交差エントロピー. 小さい"
      "ほど良い. 確率で行動を決めるなら)", "tasks": ["classification"],
-     "better": "lower"},
+     "better": "lower",
+     "fits": [{"role": "predict", "kinds": ["column"],
+               "tasks": ["classification"]}]},
     {"value": "mae", "label": "外れの大きさの平均 (平均絶対誤差. 小さいほど"
-     "良い)", "tasks": ["regression", "forecasting"], "better": "lower"},
+     "良い)", "tasks": ["regression", "forecasting"], "better": "lower",
+     "fits": [{"role": "predict", "kinds": ["column"],
+               "tasks": ["regression", "forecasting"]}]},
     {"value": "rmse", "label": "大きな外れを重く見た外れ (二乗平均平方根誤差"
      ". 小さいほど良い)", "tasks": ["regression", "forecasting"],
-     "better": "lower"},
+     "better": "lower",
+     "fits": [{"role": "predict", "kinds": ["column"],
+               "tasks": ["regression", "forecasting"]}]},
+    {"value": "loss", "label": "検証用の分割での損失 (小さいほど良い)",
+     "better": "lower",
+     "fits": [{"role": "predict", "kinds": ["mask", "point_cloud", "text"]},
+              {"role": "generate"}, {"role": "rank"}, {"role": "group"},
+              {"role": "effect"}]},
+    {"value": "iou", "label": "領域の重なり (IoU. 大きいほど良い)",
+     "better": "higher", "fits": [{"role": "predict", "kinds": ["mask"]}]},
+    {"value": "chamfer", "label": "点群どうしの近さ (Chamfer 距離. 小さい"
+     "ほど良い)", "better": "lower",
+     "fits": [{"role": "predict", "kinds": ["point_cloud"]},
+              {"role": "generate", "kinds": ["point_cloud"]}]},
+    {"value": "cer", "label": "文字の誤り率 (CER. 小さいほど良い)",
+     "better": "lower", "fits": [{"role": "predict", "kinds": ["text"]}]},
+    {"value": "fid", "label": "作った画像と本物の分布の近さ (FID. 小さい"
+     "ほど良い)", "better": "lower",
+     "fits": [{"role": "generate", "kinds": ["image"]}]},
+    {"value": "recall_at_k", "label": "上位 K 件に正解が入る割合 (Recall@K"
+     ". 大きいほど良い)", "better": "higher", "fits": [{"role": "rank"}]},
+    {"value": "ndcg", "label": "順位の良さ (NDCG. 大きいほど良い)",
+     "better": "higher", "fits": [{"role": "rank"}]},
+    {"value": "silhouette", "label": "群のまとまり (シルエット係数. 大きい"
+     "ほど良い)", "better": "higher", "fits": [{"role": "group"}]},
+    {"value": "qini", "label": "効果の順の当たり (Qini 係数. 大きいほど"
+     "良い)", "better": "higher", "fits": [{"role": "effect"}]},
+    {"value": "other", "label": "その他 (名前と, 大きいほど良いか小さい"
+     "ほど良いかを書く)", "better": None, "fits": [{}]},
 ]
+
+# 版 1 のファイルで書ける指標
+V1_METRICS = ["accuracy", "loss", "mae", "rmse"]
 
 # 問いの並び (上から順)
 QUESTIONS: list[dict[str, Any]] = [
@@ -202,13 +328,58 @@ QUESTIONS: list[dict[str, Any]] = [
      "title": "そう決めた理由は",
      "help": "使う場合は, 今のやり方やルールで足りない理由. 使わない場合は, "
              "代わりに何をするか"},
-    {"id": "ml.predict", "section": 5, "kind": "text", "required": True,
-     "when": USES_ML, "title": "何を予測しますか",
+    {"id": f"{PART}.role", "section": 5, "kind": "choice", "required": True,
+     "when": USES_ML, "choices": ROLES,
+     "title": "機械学習は何を受け持ちますか",
+     "help": "課題から見た, 機械学習の最後の出力. 正解が 1 つに決まるなら"
+             "予測する (訳や要約のように多くの答えが許されるなら作る). 今の"
+             "時間のかかる処理を速くするなら, 予測するか作るで, 正解の出どころ"
+             "を今の処理の出力にする. 今は 1 つだけ書ける"},
+    {"id": f"{PART}.unit", "section": 5, "kind": "choice", "required": True,
+     "when": USES_ML, "choices": UNITS, "title": "1 件の単位は",
+     "help": "データの書き出しの形, 推論の出力の形, 分割の単位が決まる. 例: "
+             "表の 1 行, 1 回の撮影 (まとまり), 画像と正解の領域 (対)"},
+    {"id": f"{PART}.output", "section": 5, "kind": "choice",
+     "required": True, "when": USES_ML, "choices": OUTPUTS,
+     "title": "出力の形は",
+     "help": "推論の一式, 結論と意思決定, 要る精度の決め方が変わる"},
+    {"id": f"{PART}.target.source", "section": 5, "kind": "choice",
+     "required": True, "when": USES_ML, "choices": TARGET_SOURCES,
+     "title": "正解は誰が, いつ, どう確定させますか (正解の出どころ)",
+     "help": "確かめ方と, 漏れの型がほぼこれで決まる. 例: データの列にある, "
+             "今の処理で作れる, 無い"},
+    {"id": f"{PART}.target.process.name", "section": 5, "kind": "text",
+     "required": True,
+     "when": [USES_ML, {"id": f"{PART}.target.source",
+                        "equals": "process"}],
+     "title": "正解を作る今の処理の名前は",
+     "help": "評価と結論で, その処理を超えられないことを示すために残す. "
+             "例: 今の計算の道具の名前と版"},
+    {"id": f"{PART}.target.process.settings", "section": 5, "kind": "text",
+     "required": False,
+     "when": [USES_ML, {"id": f"{PART}.target.source",
+                        "equals": "process"}],
+     "title": "その処理の設定は",
+     "help": "正解の質を決める設定 (細かさ, 回数など). 無ければ空のまま"},
+    {"id": f"{PART}.method", "section": 5, "kind": "choice",
+     "required": True, "when": USES_ML, "choices": METHODS,
+     "title": "どう作りますか (作り方)",
+     "help": "規則と既製のモデルから試し, 足りなければ学習を足す. 学習しない"
+             "なら, モデルの作成と学習の段階を通らない. 例: 表の予測は一から"
+             "学習, 少ない画像は既製の特徴の上に頭だけ"},
+    {"id": f"{PART}.target.kind", "section": 5, "kind": "choice",
+     "required": True,
+     "when": [USES_ML, {"id": f"{PART}.role",
+                        "in": ["predict", "generate"]}],
+     "choices": TARGET_KINDS, "title": "正解 (出力) の種類は",
+     "help": "表の列なら, 続けて目的の列とタスクを問う"},
+    {"id": f"{PART}.what", "section": 5, "kind": "text", "required": True,
+     "when": USES_ML, "title": "何を出させますか",
      "help": "4 で決めることのために, 何が分かればよいか. 文で. 例: 作る量"
              "を決めるために, 翌日の品ごとの売れる数"},
-    {"id": "ml.row", "section": 5, "kind": "text", "required": True,
-     "when": USES_ML, "title": "1 行 (1 件) は何ですか",
-     "help": "予測の単位. 例: 店, 品, 日ごとの 1 行"},
+    {"id": f"{PART}.item", "section": 5, "kind": "text", "required": True,
+     "when": USES_ML, "title": "1 件は何ですか",
+     "help": "出力の単位. 例: 店, 品, 日ごとの 1 行"},
     {"id": "data.source", "section": 5, "kind": "source",
      "required": False, "when": USES_ML, "title": "手元のデータは",
      "help": "あれば入れると, 後の問いの答えの候補 (目的の列, 時刻の列, 漏れ"
@@ -217,88 +388,92 @@ QUESTIONS: list[dict[str, Any]] = [
              "決めることはデータ無しで答える (データから考え始めると, 何が"
              "予測できるかが先に立つため)"},
     {"id": "information.columns", "section": 5, "kind": "list",
-     "required": True, "when": USES_ML, "title": "使えるデータの列は",
+     "required": True, "when": COLUMN_TARGET, "title": "使えるデータの列は",
      "help": "データのファイルから読める (画面では「ファイルから読む」). "
              "後の問いで, この中から目的の列と使ってよい列を選ぶ"},
-    {"id": "ml.task", "section": 5, "kind": "choice", "required": True,
-     "when": USES_ML, "choices": TASKS, "title": "どの種類の問題ですか",
+    {"id": f"{PART}.task", "section": 5, "kind": "choice", "required": True,
+     "when": COLUMN_TARGET, "choices": TASKS, "title": "どの種類の問題ですか",
      "help": "目的の値がクラスなら分類, 値なら回帰. 時刻の順に過去から先を"
              "予測するなら時系列の予測. 4 で決めることが量なら回帰か時系列の"
              "予測, 対象を選ぶか振り分けるなら分類"},
-    {"id": "ml.target", "section": 5, "kind": "column", "required": True,
-     "when": USES_ML, "title": "目的の列は",
+    {"id": f"{PART}.target.column", "section": 5, "kind": "column",
+     "required": True,
+     "when": COLUMN_TARGET, "title": "目的の列は",
      "help": "予測する値の列"},
-    {"id": "ml.group_column", "section": 5, "kind": "column",
-     "required": False, "when": USES_ML,
+    {"id": f"{PART}.group_column", "section": 5, "kind": "column",
+     "required": False, "when": COLUMN_TARGET,
      "title": "同じ相手の行をまとめる列は (分割をまたがせない)",
      "help": "1 人の会員, 1 台の機械に行が何行もあるとき, 学習と確かめに同じ"
              "相手が入ると, 確かめが甘くなる (覚えた相手を当てるだけになる)."
              " 書くと, データの分析の段階で相手ごとに分ける. 例: member_id. "
              "無ければ空のまま"},
-    {"id": "ml.positive", "section": 5, "kind": "text", "required": False,
-     "when": [USES_ML, {"id": "ml.task", "equals": "classification"}],
+    {"id": f"{PART}.positive", "section": 5, "kind": "text",
+     "required": False,
+     "when": [*COLUMN_TARGET,
+              {"id": f"{PART}.task", "equals": "classification"}],
      "title": "当たりのクラスは (2 クラスの分類で行動を決める場合)",
      "help": "行動の対象になるクラス. 例: 解約, 不良"},
-    {"id": "ml.time_column", "section": 5, "kind": "column",
+    {"id": f"{PART}.time_column", "section": 5, "kind": "column",
      "required": True,
-     "when": [USES_ML, {"id": "ml.task", "equals": "forecasting"}],
+     "when": [*COLUMN_TARGET, {"id": f"{PART}.task", "equals": "forecasting"}],
      "title": "時刻の列は", "help": "時刻の順に並べ, 分けるのに使う列"},
-    {"id": "ml.split_time_column", "section": 5, "kind": "column",
+    {"id": f"{PART}.split_time_column", "section": 5, "kind": "column",
      "required": False,
-     "when": [USES_ML,
-              {"id": "ml.task", "in": ["classification", "regression"]}],
+     "when": [*COLUMN_TARGET,
+              {"id": f"{PART}.task",
+               "in": ["classification", "regression"]}],
      "title": "時刻の順で分けて確かめるなら, その時刻の列は",
      "help": "使うときは過去から先を当てるなら (今月の申し込みで来月の解約を"
              "当てるなど), 先の期間を検証用とテスト用に残すと, 使うときの当たり"
              "具合に近い確かめになる (無作為に分けると, 先の様子を学習に使って"
              "甘くなる). 時刻の列を学習に使わない列にしてもよい (分けるのにだけ"
              "使う). 無ければ空のまま"},
-    {"id": "ml.series_by", "section": 5, "kind": "columns",
+    {"id": f"{PART}.series_by", "section": 5, "kind": "columns",
      "required": False,
-     "when": [USES_ML, {"id": "ml.task", "equals": "forecasting"}],
+     "when": [*COLUMN_TARGET, {"id": f"{PART}.task", "equals": "forecasting"}],
      "title": "系列を分ける列は (複数の系列が並ぶ場合)",
      "help": "例: 店, 品. 過去の値は系列ごとにずらす"},
-    {"id": "ml.available_lag", "section": 5, "kind": "number",
+    {"id": f"{PART}.available_lag", "section": 5, "kind": "number",
      "required": True,
-     "when": [USES_ML, {"id": "ml.task", "equals": "forecasting"}],
+     "when": [*COLUMN_TARGET, {"id": f"{PART}.task", "equals": "forecasting"}],
      "title": "決める時点 (4 の「いつ決めますか」) で, 目的の値は何期前の"
               "分まで分かっていますか",
      "help": "過去の値の列に使ってよい, 最も新しい値. 例: 前の日の 17 時に"
              "翌日の量を決めるなら, 前の日の売れた数はまだ確定しないので 2 "
              "(2 日前まで). 前の日が締まってから決めるなら 1. 分からない値を"
              "学習に使うと, 学習のときだけ当たり, 使うときに外れる"},
-    {"id": "ml.horizon", "section": 5, "kind": "number",
+    {"id": f"{PART}.horizon", "section": 5, "kind": "number",
      "required": True,
-     "when": [USES_ML, {"id": "ml.task", "equals": "forecasting"}],
+     "when": [*COLUMN_TARGET, {"id": f"{PART}.task", "equals": "forecasting"}],
      "title": "何期先まで予測しますか",
      "help": "時刻の列の 1 つ分を 1 期として. 例: 翌日だけなら 1, 1 週間分を"
              "まとめて決めるなら 7. 先ほど外れやすく, 予測の時点で分かる列も"
              "変わる"},
-    {"id": "ml.baseline", "section": 5, "kind": "text", "required": True,
+    {"id": f"{PART}.baseline", "section": 5, "kind": "text", "required": True,
      "when": USES_ML, "title": "機械学習を使わない比べる相手は",
      "help": "機械学習が要るかは, 素朴なやり方より良いかで決まる. 多くは"
              "1 の「今のやり方」と同じ. 例: 前の週の同じ曜日と同じ数"},
-    {"id": "ml.consumer", "section": 5, "kind": "choice",
+    {"id": f"{PART}.consumer", "section": 5, "kind": "choice",
      "required": False, "when": USES_ML, "choices": CONSUMERS,
-     "title": "予測を誰が (何が) 使いますか",
+     "title": "出力を誰が (何が) 使いますか",
      "help": "使い道で, 確かめ方と要る精度が変わる. 人が見るなら説明, 自動"
              "で決めるなら損得 (7 の節), 後段に渡すなら後段が求める形と精度"},
-    {"id": "ml.downstream", "section": 5, "kind": "text",
+    {"id": f"{PART}.downstream", "section": 5, "kind": "text",
      "required": False, "when": [USES_ML, DOWNSTREAM],
-     "title": "後段は何で, 予測に何を求めますか",
+     "title": "後段は何で, 出力に何を求めますか",
      "help": "形, 単位, 要る精度. 評価は後段の結果で見る (予測の誤差が小さく"
              "ても後段の判定が変わることがある). 例: 点群から寸法を測る決"
              "まり. 1 mm の差が分かる精度が要る"},
 
     # 6. 使える情報
     {"id": "information.known", "section": 6, "kind": "columns",
-     "required": True, "when": USES_ML,
+     "required": True, "when": COLUMN_TARGET,
      "title": "予測の時点で分かっている列は",
      "help": "学習に使ってよい列. 予測の時点で分からない列 (当日の客数など)"
              "で学習すると, 学習のときだけ当たり, 使うときに当たらない. 目的"
              "の列そのものは入れない (過去の値はデータの分析で作る)"},
     {"id": "information.unknown", "section": 6, "kind": "columns",
-     "required": False, "when": USES_ML,
+     "required": False, "when": COLUMN_TARGET,
      "title": "予測の時点では分からない列は",
      "help": "学習に使わない列 (当日の客数など. 予測のときに分からない)"},
     {"id": "data.missing", "section": 6, "kind": "list", "required": False,
@@ -307,14 +482,14 @@ QUESTIONS: list[dict[str, Any]] = [
              "記録. 要るデータが無いなら, まずデータを集めることが答えになる"
              "こともある"},
     {"id": "information.forbidden", "section": 6, "kind": "columns",
-     "required": False, "when": USES_ML,
+     "required": False, "when": COLUMN_TARGET,
      "title": "分かっていても使ってはいけない列は",
      "help": "ID, 個人を特定できる情報, 使うと公平でない情報など. 学習に"
              "使わない"},
 
     # 7. 損得と制約
     {"id": "action.decision", "section": 7, "kind": "decision",
-     "required": True, "when": USES_ML, "choices": DECISION_TYPES,
+     "required": True, "when": COLUMN_TARGET, "choices": DECISION_TYPES,
      "title": "行動の損得と制約は",
      "help": "量を決める: 1 単位足りないときの損と余ったときの損. 対象を選ぶ: "
              "当たり 1 件の価値, 行動 1 件の費用, 行動で防げる割合 (仮定), "
@@ -322,7 +497,7 @@ QUESTIONS: list[dict[str, Any]] = [
              ". 人が予測を見て決めるなら「意思決定しない」"},
     {"id": "action.current", "section": 7, "kind": "baseline",
      "required": False,
-     "when": [USES_ML, {"id": "action.decision.type",
+     "when": [*COLUMN_TARGET, {"id": "action.decision.type",
                         "in": ["quantity", "select", "triage"]}],
      "title": "今のやり方をデータで書くと",
      "help": "1 の「今のやり方」を, データの上の決まりにする. 量なら k 期前と同じ"
@@ -330,7 +505,7 @@ QUESTIONS: list[dict[str, Any]] = [
              "値の列. 選ぶと振り分けなら, 行動したかの列. 書くと, データから"
              "今のやり方の損 (指標の今の値の候補) が出る"},
     {"id": "action.basis", "section": 7, "kind": "text", "required": False,
-     "when": USES_ML, "title": "損得の値の根拠は",
+     "when": COLUMN_TARGET, "title": "損得の値の根拠は",
      "help": "例: 欠品は粗利 200 円, 廃棄は原価 150 円. 根拠の無い値では, "
              "意思決定はもっともらしいだけになる"},
     {"id": "ml.constraints", "section": 7, "kind": "list",
@@ -341,11 +516,27 @@ QUESTIONS: list[dict[str, Any]] = [
              "だけ, 1 件 1 秒以内に返す, 手元の計算機で動く"},
 
     # 8. 学習の指標
-    {"id": "evaluation.metric", "section": 8, "kind": "choice",
+    {"id": f"{PART}.evaluation.metric", "section": 8, "kind": "choice",
      "required": True, "when": USES_ML, "choices": METRICS,
-     "title": "学習で何を見ますか",
-     "help": "検証用の分割で見て, 最も良いモデルを選ぶ指標"},
-    {"id": "evaluation.link", "section": 8, "kind": "text",
+     "title": "最も良いモデルを何で選びますか",
+     "help": "検証用の分割で見て, 最も良いモデルを選ぶ指標 (学習の損失の"
+             "種類はモデルの作成と学習の段階で決める). 候補に無ければその他"},
+    {"id": f"{PART}.evaluation.name", "section": 8, "kind": "text",
+     "required": True,
+     "when": [USES_ML, {"id": f"{PART}.evaluation.metric",
+                        "equals": "other"}],
+     "title": "その指標の名前は",
+     "help": "学習の記録の名前 (空白と / は使えない). 検証用の分割の値 "
+             "valid/<名前> を監視する指標として渡す. 例: f1, map50"},
+    {"id": f"{PART}.evaluation.better", "section": 8, "kind": "choice",
+     "required": True,
+     "when": [USES_ML, {"id": f"{PART}.evaluation.metric",
+                        "equals": "other"}],
+     "choices": [{"value": "lower", "label": "小さいほど良い"},
+                 {"value": "higher", "label": "大きいほど良い"}],
+     "title": "その指標は, 小さいほど良いですか, 大きいほど良いですか",
+     "help": "最良のモデルを選ぶ向き"},
+    {"id": f"{PART}.evaluation.link", "section": 8, "kind": "text",
      "required": False, "when": USES_ML,
      "title": "その指標が良くなると, 業務の指標はどう良くなりますか",
      "help": "例: 誤差が小さいほど作る量の外れが減り, 廃棄と欠品の損が減る"},

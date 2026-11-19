@@ -11,6 +11,28 @@ from ml_quest import (
 from ml_quest.examples import example_problem
 
 
+def column_problem(name: str) -> dict:
+    """
+    機械学習を使い, 受け持ちを列の予測にした問題の設定を作る関数
+
+    Parameters
+    ----------
+    name: str
+        問題の名前
+
+    Returns
+    ----------
+    problem: dict
+        問題の設定
+    """
+    # 予測するで, 正解の種類が表の列
+    problem = answer(new_problem(name), "ml.use", True)
+    problem = answer(problem, "ml.parts.0.role", "predict")
+    problem = answer(problem, "ml.parts.0.target.kind", "column")
+
+    return problem
+
+
 def shop_csv(tmp_path: Path) -> Path:
     """
     2 店の日々の売上と, 売上から作った客数と, 天気と ID の列の表を書く
@@ -81,7 +103,7 @@ def test_attach_and_inspect(tmp_path: Path) -> None:
     # ML-EDA が無ければ飛ばす
     pytest.importorskip("ml_eda")
     path = shop_csv(tmp_path)
-    problem = answer(new_problem("店"), "ml.use", True)
+    problem = column_problem("店")
     assert inspect_data(problem) is None
     problem = attach_data(problem, path)
     assert get_value(problem, "data.source") == str(path)
@@ -95,25 +117,25 @@ def test_attach_and_inspect(tmp_path: Path) -> None:
     found = inspect_data(problem)
     assert found["overview"]["rows"] == 240
     suggested = ids_of(found["suggestions"])
-    assert "sales" in suggested["ml.target"]
-    assert "row_id" not in suggested["ml.target"]
-    assert suggested["ml.time_column"] == ["date"]
-    assert suggested["ml.series_by"] == ["shop"]
+    assert "sales" in suggested["ml.parts.0.target.column"]
+    assert "row_id" not in suggested["ml.parts.0.target.column"]
+    assert suggested["ml.parts.0.time_column"] == ["date"]
+    assert suggested["ml.parts.0.series_by"] == ["shop"]
     assert suggested["information.forbidden"] == ["row_id"]
 
     # タスクを答えると目的の列は数だけ. 漏れの疑いは値でなく確かめ
-    problem = answer(problem, "ml.task", "forecasting")
-    problem = answer(problem, "ml.target", "sales")
-    problem = answer(problem, "ml.time_column", "date")
-    problem = answer(problem, "ml.horizon", 30)
+    problem = answer(problem, "ml.parts.0.task", "forecasting")
+    problem = answer(problem, "ml.parts.0.target.column", "sales")
+    problem = answer(problem, "ml.parts.0.time_column", "date")
+    problem = answer(problem, "ml.parts.0.horizon", 30)
     found = inspect_data(problem)
     suggested = ids_of(found["suggestions"])
-    assert "shop" not in suggested["ml.target"]
-    assert "ml.task" not in suggested
+    assert "shop" not in suggested["ml.parts.0.target.column"]
+    assert "ml.parts.0.task" not in suggested
     assert "information.unknown" not in suggested
     by_id = {f["id"]: f for f in found["findings"]}
     assert "customers" in by_id["information.unknown"]["message"]
-    assert "期先までの予測" in by_id["ml.horizon"]["message"]
+    assert "期先までの予測" in by_id["ml.parts.0.horizon"]["message"]
     decided = answer(problem, "information.unknown", ["customers"])
     assert not any(f["id"] == "information.unknown"
                    for f in inspect_data(decided)["findings"])
@@ -171,20 +193,20 @@ def test_stale_time_column_and_file(tmp_path: Path) -> None:
     # 時刻の列を答えてからデータを入れる (列 day は無い)
     pytest.importorskip("ml_eda")
     path = shop_csv(tmp_path)
-    problem = answer(new_problem("店"), "ml.use", True)
-    problem = answer(problem, "ml.task", "forecasting")
-    problem = answer(problem, "ml.time_column", "day")
+    problem = column_problem("店")
+    problem = answer(problem, "ml.parts.0.task", "forecasting")
+    problem = answer(problem, "ml.parts.0.time_column", "day")
     problem = attach_data(problem, path)
     assert "time_column" not in (get_value(problem, "data.options") or {})
     found = inspect_data(problem)
     assert found["overview"] is not None
-    assert any(f["id"] == "ml.time_column" for f in found["findings"])
-    assert ids_of(found["suggestions"])["ml.time_column"] == ["date"]
+    assert any(f["id"] == "ml.parts.0.time_column" for f in found["findings"])
+    assert ids_of(found["suggestions"])["ml.parts.0.time_column"] == ["date"]
 
     # 回帰に変えると時刻の列の答えは効かない
-    regression = answer(answer(problem, "ml.time_column", "date"),
-                        "ml.task", "regression")
-    assert not any(f["id"] == "ml.time_column"
+    regression = answer(answer(problem, "ml.parts.0.time_column", "date"),
+                        "ml.parts.0.task", "regression")
+    assert not any(f["id"] == "ml.parts.0.time_column"
                    for f in inspect_data(regression)["findings"])
 
     # 入れた後にファイルが変わると知らせ
@@ -217,17 +239,18 @@ def test_classification_values(tmp_path: Path) -> None:
     path = tmp_path / "churn.csv"
     pd.DataFrame({"months": rng.integers(1, 40, 30),
                   "churned": labels}).to_csv(path, index=False)
-    problem = attach_data(answer(new_problem("解約"), "ml.use", True), path)
-    problem = answer(problem, "ml.task", "classification")
-    problem = answer(problem, "ml.target", "churned")
+    problem = attach_data(column_problem("解約"), path)
+    problem = answer(problem, "ml.parts.0.task", "classification")
+    problem = answer(problem, "ml.parts.0.target.column", "churned")
     found = inspect_data(problem)
-    assert sorted(ids_of(found["suggestions"])["ml.positive"]) == ["0", "1"]
+    suggested = ids_of(found["suggestions"])
+    assert sorted(suggested["ml.parts.0.positive"]) == ["0", "1"]
     assert any("少なく" in f["message"] for f in found["findings"])
-    right = answer(problem, "ml.positive", "1")
-    assert not any(f["id"] == "ml.positive"
+    right = answer(problem, "ml.parts.0.positive", "1")
+    assert not any(f["id"] == "ml.parts.0.positive"
                    for f in inspect_data(right)["findings"])
-    wrong = answer(problem, "ml.positive", "解約")
-    assert any(f["id"] == "ml.positive"
+    wrong = answer(problem, "ml.parts.0.positive", "解約")
+    assert any(f["id"] == "ml.parts.0.positive"
                for f in inspect_data(wrong)["findings"])
 
     # データの問いは確かめ (check) の足りない答えにはならない (任意)
@@ -256,7 +279,7 @@ def test_unreadable_and_missing_eda(
     pytest.importorskip("ml_eda")
     broken = tmp_path / "broken.xlsx"
     broken.write_bytes(b"not a zip")
-    problem = answer(new_problem("壊れ"), "ml.use", True)
+    problem = column_problem("壊れ")
     problem = answer(problem, "data.source", str(broken))
     found = inspect_data(problem)
     assert found["findings"][0]["level"] == "error"
@@ -293,13 +316,15 @@ def test_series_by_two_columns(tmp_path: Path) -> None:
     pd.DataFrame(rows, columns=["date", "store", "item", "sales"]).to_csv(
         path, index=False
     )
-    problem = attach_data(answer(new_problem("総菜"), "ml.use", True), path)
-    assert ids_of(inspect_data(problem)["suggestions"])["ml.series_by"] == [
+    problem = attach_data(column_problem("総菜"), path)
+    suggested = ids_of(inspect_data(problem)["suggestions"])
+    assert suggested["ml.parts.0.series_by"] == [
         "store", "item"
     ]
-    problem = answer(problem, "ml.time_column", "date")
-    problem = answer(problem, "ml.task", "forecasting")
+    problem = answer(problem, "ml.parts.0.time_column", "date")
+    problem = answer(problem, "ml.parts.0.task", "forecasting")
     found = inspect_data(problem)
-    assert ids_of(found["suggestions"])["ml.series_by"] == ["store", "item"]
+    suggested = ids_of(found["suggestions"])
+    assert suggested["ml.parts.0.series_by"] == ["store", "item"]
     assert not any("間隔が一定ではありません" in f["message"]
                    for f in found["findings"])

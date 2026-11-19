@@ -10,8 +10,10 @@ import pandas as pd
 
 from ml_quest.check import finding
 from ml_quest.problem import (
-    active_value, answer, data_location, get_value, set_value
+    active_value, answer, data_location, get_value, set_value,
+    upgrade_problem
 )
+from ml_quest.questions import PART
 
 # 行が少ないとみなす行の数
 FEW_ROWS = 100
@@ -356,7 +358,9 @@ def attach_data(
     ValueError
         相対パスの場合, ML-EDA が無い場合, 読めない場合
     """
-    # 絶対パスだけ. 写してから 1 回だけ読み, 読めなければ新しい写しを消す
+    # 絶対パスだけ. 写してから 1 回だけ読み, 読めなければ新しい写しを消す.
+    # 版 1 は先に移す
+    problem = upgrade_problem(problem)
     location = Path(path).expanduser()
     target = Path(copy_to).expanduser() if copy_to is not None else None
     if not location.is_absolute() or (target and not target.is_absolute()):
@@ -385,7 +389,9 @@ def attach_data(
     set_value(updated, "data.origin", origin)
     for key, value in source_of(data).items():
         set_value(updated, f"data.{key}", copy.deepcopy(value))
-    time = active_value(problem, "ml.time_column") or data.roles.get("time")
+    time = active_value(problem, f"{PART}.time_column") or data.roles.get(
+        "time"
+    )
     set_value(updated, "data.interval_seconds", interval_of(data, time))
     columns = [str(name) for name in data.frame.columns]
     updated = answer(updated, "information.columns", columns)
@@ -523,10 +529,10 @@ def series_columns(
     series: list[str] = []
     times = [str(n) for n, info in profiled["columns"].items()
              if info.get("type") == "datetime"]
-    time = active_value(problem, "ml.time_column") or data.roles.get(
+    time = active_value(problem, f"{PART}.time_column") or data.roles.get(
         "time"
     ) or (times[0] if len(times) == 1 else None)
-    target = active_value(problem, "ml.target")
+    target = active_value(problem, f"{PART}.target.column")
     frame = data.frame
     if not time or time not in frame.columns:
         return series
@@ -659,9 +665,11 @@ def suggestions_of(
     columns = profiled["columns"]
     times = [str(n) for n, info in columns.items()
              if info.get("type") == "datetime"]
-    time = active_value(problem, "ml.time_column") or data.roles.get("time")
-    task = active_value(problem, "ml.task")
-    target = active_value(problem, "ml.target")
+    time = active_value(problem, f"{PART}.time_column") or data.roles.get(
+        "time"
+    )
+    task = active_value(problem, f"{PART}.task")
+    target = active_value(problem, f"{PART}.target.column")
     skip = flagged.get("id_like", set()) | flagged.get("constant", set())
     items = []
 
@@ -674,7 +682,7 @@ def suggestions_of(
                                    task)
     if candidates:
         items.append(suggestion(
-            "ml.target", candidates,
+            f"{PART}.target.column", candidates,
             "答えたタスクに合う型の列 (回帰と予測は数, 分類は種類の少ない"
             "列. ID のような列, 定数の列, 時刻と系列の列は除く)"
         ))
@@ -686,20 +694,20 @@ def suggestions_of(
             guess = "forecasting"
         if guess in ("classification", "regression", "forecasting"):
             items.append(suggestion(
-                "ml.task", [guess], "目的の列の型と, データが時系列か"
+                f"{PART}.task", [guess], "目的の列の型と, データが時系列か"
             ))
     if task == "classification" and target and target in data.frame.columns:
         values = class_values(data.frame[target])
         if 0 < len(values) <= CLASS_UNIQUE:
-            items.append(suggestion("ml.positive", values,
+            items.append(suggestion(f"{PART}.positive", values,
                                     "目的の列の値 (多い順)"))
 
     # 時刻の列, 系列を分ける列, 使ってはいけない列
     if times:
-        items.append(suggestion("ml.time_column", times, "日時の列"))
+        items.append(suggestion(f"{PART}.time_column", times, "日時の列"))
     if series:
         items.append(suggestion(
-            "ml.series_by", series,
+            f"{PART}.series_by", series,
             "同じ時刻に複数の値が並ぶ列 (店や品ごとの系列)"
         ))
     ids = sorted(flagged.get("id_like", set()))
@@ -783,7 +791,7 @@ def data_findings(
     # 時刻の列, 行の数, 入れた後のデータの変化
     found = []
     if note:
-        found.append(finding("warning", "ml.time_column", note))
+        found.append(finding("warning", f"{PART}.time_column", note))
     rows = len(data.frame)
     if rows < FEW_ROWS:
         found.append(finding(
@@ -810,11 +818,11 @@ def data_findings(
         ))
 
     # 目的の列と当たりのクラス (全ての値で, 数は数として比べる)
-    target = active_value(problem, "ml.target")
-    positive = active_value(problem, "ml.positive")
+    target = active_value(problem, f"{PART}.target.column")
+    positive = active_value(problem, f"{PART}.positive")
     if target and target not in columns:
         found.append(finding(
-            "warning", "ml.target",
+            "warning", f"{PART}.target.column",
             f"目的の列 {target} がデータにありません. 目的の列に関わる候補"
             "は出せません"
         ))
@@ -822,17 +830,17 @@ def data_findings(
         values = class_values(data.frame[target])
         if label_text(number_or_text(positive)) not in values:
             found.append(finding(
-                "warning", "ml.positive",
+                "warning", f"{PART}.positive",
                 f"当たりのクラス {positive} が目的の列 {target} の値に"
                 f"ありません (値: {', '.join(values[:10])})"
             ))
         guess = (profiled.get("target") or {}).get("task")
-        task = active_value(problem, "ml.task")
+        task = active_value(problem, f"{PART}.task")
         if task in ("regression", "forecasting") and guess == (
             "classification"
         ):
             found.append(finding(
-                "info", "ml.task",
+                "info", f"{PART}.task",
                 f"目的の列 {target} は種類の少ない値なので, 分類とも読めます"
                 " (量を決めるなら回帰か時系列の予測のまま)"
             ))
@@ -860,8 +868,8 @@ def data_findings(
 
     # 問題の設定に関わる ML-EDA の気付き (重さはそのまま. 系列が並ぶ
     # データの「同じ時刻」は間隔の乱れではないので除く)
-    paneled = bool(active_value(problem, "ml.series_by")) or any(
-        item["id"] == "ml.series_by" for item in suggestions
+    paneled = bool(active_value(problem, f"{PART}.series_by")) or any(
+        item["id"] == f"{PART}.series_by" for item in suggestions
     )
     for item in profiled["findings"]:
         if item["code"] == "irregular_interval" and paneled:
@@ -917,7 +925,7 @@ def horizon_findings(problem: dict, profiled: dict) -> list[dict]:
     # データの間隔で数えた期の数 (予測の 1 期と間隔が違えば目安だけ)
     found: list[dict] = []
     series = profiled.get("timeseries") or {}
-    horizon = active_value(problem, "ml.horizon")
+    horizon = active_value(problem, f"{PART}.horizon")
     interval = series.get("interval_seconds")
     if not (horizon and interval and series.get("start")
             and series.get("end")):
@@ -927,7 +935,7 @@ def horizon_findings(problem: dict, profiled: dict) -> list[dict]:
     periods = span / interval + 1
     if horizon * 10 > periods:
         found.append(finding(
-            "warning", "ml.horizon",
+            "warning", f"{PART}.horizon",
             f"データは {interval / 86400:g} 日間隔で {periods:,.0f} 期分です."
             f" {horizon} 期先までの予測を確かめるには短めです (先の長さの "
             "10 倍ほどあるとよい. 予測の 1 期とデータの間隔が違えば目安)"
@@ -1060,9 +1068,11 @@ def baseline_result(problem: dict, data: Any) -> Optional[dict]:
     if not current:
         return None
     decision = active_value(problem, "action.decision") or {}
-    target = active_value(problem, "ml.target")
+    target = active_value(problem, f"{PART}.target.column")
     frame = data.frame
-    time = active_value(problem, "ml.time_column") or data.roles.get("time")
+    time = active_value(problem, f"{PART}.time_column") or data.roles.get(
+        "time"
+    )
     interval = get_value(problem, "data.interval_seconds") or interval_of(
         data, time
     )
@@ -1084,7 +1094,7 @@ def baseline_result(problem: dict, data: Any) -> Optional[dict]:
     if reason:
         return {"reason": reason}
     try:
-        series = [name for name in active_value(problem, "ml.series_by")
+        series = [name for name in active_value(problem, f"{PART}.series_by")
                   or [] if name in frame.columns]
         values = rows_result(problem, frame, decision, current, target,
                              series, time, interval)
@@ -1163,7 +1173,7 @@ def rows_result(
         return values
 
     # 振り分け: 回したかの列と, 当たりか (読めない値は除く)
-    positive = active_value(problem, "ml.positive")
+    positive = active_value(problem, f"{PART}.positive")
     if kind != "triage" or positive is None:
         return None
     flags = acted(frame[current["column"]])
@@ -1196,7 +1206,8 @@ def inspect_data(problem: dict) -> Optional[dict]:
         overview (行, 列, 種類, 時刻の範囲と間隔, 見本で分析したか),
         suggestions, findings (データを入れていなければ None)
     """
-    # 機械学習を使い, データを入れた場合だけ
+    # 機械学習を使い, データを入れた場合だけ (版 1 は先に移す)
+    problem = upgrade_problem(problem)
     source = data_location(problem)
     if not source:
         return None
@@ -1205,9 +1216,9 @@ def inspect_data(problem: dict) -> Optional[dict]:
         data, note = read_data(
             source, get_value(problem, "data.loader"),
             dict(get_value(problem, "data.options") or {}),
-            active_value(problem, "ml.time_column")
+            active_value(problem, f"{PART}.time_column")
         )
-        target = active_value(problem, "ml.target")
+        target = active_value(problem, f"{PART}.target.column")
         columns = [str(name) for name in data.frame.columns]
         profiled = eda.profile(
             data, target=target if target in columns else None

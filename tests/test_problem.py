@@ -85,17 +85,22 @@ def test_questions_and_answers() -> None:
     items = {item["id"]: item for item in questions(problem)}
     assert len(items) == len(QUESTIONS)
     assert items["issue.pain"]["applies"] is True
-    assert items["ml.target"]["applies"] is False
-    assert items["ml.time_column"]["applies"] is False
+    assert items["ml.parts.0.target.column"]["applies"] is False
+    assert items["ml.parts.0.time_column"]["applies"] is False
 
     # 予測を選ぶと時刻の列の問いが要り, 指標は回帰と予測のものだけ
     problem = answer(problem, "ml.use", True)
-    problem = answer(problem, "ml.task", "forecasting")
     items = {item["id"]: item for item in questions(problem)}
-    assert items["ml.time_column"]["applies"] is True
-    assert [c["value"] for c in items["evaluation.metric"]["choices"]] == [
-        "mae", "rmse"
-    ]
+    assert items["ml.parts.0.role"]["applies"] is True
+    assert items["ml.parts.0.task"]["applies"] is False
+    problem = answer(problem, "ml.parts.0.role", "predict")
+    problem = answer(problem, "ml.parts.0.target.kind", "column")
+    problem = answer(problem, "ml.parts.0.task", "forecasting")
+    items = {item["id"]: item for item in questions(problem)}
+    assert items["ml.parts.0.time_column"]["applies"] is True
+    assert [c["value"] for c in items["ml.parts.0.evaluation.metric"][
+        "choices"
+    ]] == ["mae", "rmse", "other"]
 
     # 元の問題の設定の不変
     assert get_value(new_problem("試し"), "ml.use") is None
@@ -111,7 +116,7 @@ def test_questions_and_answers() -> None:
     with pytest.raises(ValueError, match="数で"):
         answer(problem, "issue.kpi.current", "たくさん")
     with pytest.raises(ValueError, match="どれか"):
-        answer(problem, "ml.task", "clustering")
+        answer(problem, "ml.parts.0.task", "clustering")
     with pytest.raises(ValueError, match="はいかいいえ"):
         answer(problem, "ml.use", "yes")
     with pytest.raises(ValueError, match="書けません"):
@@ -120,7 +125,7 @@ def test_questions_and_answers() -> None:
     columns = answer(problem, "information.columns", ["a", "b", "a"])
     assert get_value(columns, "information.columns") == ["a", "b"]
     with pytest.raises(ValueError, match="列にありません"):
-        answer(columns, "ml.target", "c")
+        answer(columns, "ml.parts.0.target.column", "c")
 
 
 def test_decision_values() -> None:
@@ -159,7 +164,7 @@ def test_check_finds_inconsistencies() -> None:
     """
     # 量を決めるのに分類, 目的の列を分かる列に, 目指す値の向きが逆
     problem = example_problem("総菜の作る量")
-    problem = answer(problem, "ml.task", "classification")
+    problem = answer(problem, "ml.parts.0.task", "classification")
     problem = answer(problem, "information.known",
                      ["sales", "promo", "customers"])
     problem = answer(problem, "issue.kpi.target", 1500000)
@@ -168,7 +173,7 @@ def test_check_finds_inconsistencies() -> None:
     assert "information.known" in found["error"]
     assert "information.unknown" in found["error"]
     assert "issue.kpi.target" in found["error"]
-    assert "evaluation.metric" in found["error"]
+    assert "ml.parts.0.evaluation.metric" in found["error"]
     assert is_ready(problem) is False
     with pytest.raises(ValueError, match="直すところ"):
         handoff(problem)
@@ -181,10 +186,10 @@ def test_check_finds_inconsistencies() -> None:
     churn = answer(churn, "action.basis", None)
     churn = answer(churn, "verification.method", "backtest")
     churn = answer(churn, "verification.backtest", "過去 1 年")
-    churn = answer(churn, "ml.positive", None)
+    churn = answer(churn, "ml.parts.0.positive", None)
     found = levels(churn)
     assert "action.decision" in found["error"]
-    assert "ml.positive" in found["error"]
+    assert "ml.parts.0.positive" in found["error"]
     assert "action.basis" in found["warning"]
     assert "verification.method" in found["warning"]
 
@@ -207,7 +212,7 @@ def test_check_finds_inconsistencies() -> None:
     # 何を決めるかは, 機械学習を使うかより先に, 使わない場合も問う
     order = [question["id"] for question in QUESTIONS]
     assert order.index("action.what") < order.index("ml.use")
-    assert order.index("action.when") < order.index("ml.predict")
+    assert order.index("action.when") < order.index("ml.parts.0.what")
     assert "action.what" in missing
 
 
@@ -228,7 +233,8 @@ def test_handoff_values() -> None:
     assert stages["data"]["split"] == "time"
     assert stages["data"]["drop"] == ["customers"]
     assert stages["training"] == {"metric": "mae", "monitor": "valid/mae",
-                                  "mode": "min"}
+                                  "mode": "min", "role": "predict",
+                                  "target_kind": "column"}
     assert stages["inference"]["decision"]["type"] == "quantity"
     assert stages["inference"]["conclusion"] == {"group_by": "store"}
 
@@ -240,8 +246,8 @@ def test_handoff_values() -> None:
     assert stages["inference"]["decision"]["positive"] == "yes"
 
     # 正解率は大きいほど良い. 意思決定しないなら None
-    problem = answer(example_problem("解約の引き止め"), "evaluation.metric",
-                     "accuracy")
+    problem = answer(example_problem("解約の引き止め"),
+                     "ml.parts.0.evaluation.metric", "accuracy")
     problem = answer(problem, "action.decision", {"type": "none"})
     stages = handoff(problem)
     assert stages["training"]["mode"] == "max"
@@ -422,15 +428,15 @@ def test_review_fixes(tmp_path: Path) -> None:
     # 形の崩れは例外でなく error
     broken = example_problem("総菜の作る量")
     broken["action"]["decision"] = {"type": "foo"}
-    broken["ml"]["series_by"] = "store"
+    broken["ml"]["parts"][0]["series_by"] = "store"
     broken["decomposition"] = ["文字"]
     found = levels(broken)
-    assert {"action.decision", "ml.series_by",
+    assert {"action.decision", "ml.parts.0.series_by",
             "decomposition"} <= set(found["error"])
     assert is_ready(broken) is False
 
     # タスクを変えると, 時刻と系列の古い答えは受け渡さない
-    regression = answer(example_problem("総菜の作る量"), "ml.task",
+    regression = answer(example_problem("総菜の作る量"), "ml.parts.0.task",
                         "regression")
     stages = handoff(regression)
     assert stages["data"]["time_column"] is None
@@ -438,15 +444,15 @@ def test_review_fixes(tmp_path: Path) -> None:
     assert stages["inference"]["conclusion"] == {}
     off = answer(regression, "ml.use", False)
     items = {item["id"]: item for item in questions(off)}
-    assert items["ml.time_column"]["applies"] is False
+    assert items["ml.parts.0.time_column"]["applies"] is False
     assert items["verification.backtest"]["applies"] is False
 
     # 列を答え直した後に残った古い名前は error
     narrowed = answer(example_problem("総菜の作る量"),
                       "information.columns", ["date", "x"])
     found = levels(narrowed)
-    assert {"ml.target", "information.known",
-            "ml.series_by"} <= set(found["error"])
+    assert {"ml.parts.0.target.column", "information.known",
+            "ml.parts.0.series_by"} <= set(found["error"])
 
     # 損得の値: 数の文字列は数, 列の名前は使えるデータの列から
     problem = example_problem("総菜の作る量")
@@ -467,8 +473,8 @@ def test_review_fixes(tmp_path: Path) -> None:
     assert "action.decision" in levels(by_column)["error"]
 
     # 改行や三重の引用符を含む答えでも, 学習のスクリプトは壊れない
-    odd = answer(problem, "ml.baseline", "前の週\n(手計算) \"\"\" \\")
-    odd = answer(odd, "ml.predict", "売れる数 \"\"\"")
+    odd = answer(problem, "ml.parts.0.baseline", "前の週\n(手計算) \"\"\" \\")
+    odd = answer(odd, "ml.parts.0.what", "売れる数 \"\"\"")
     odd["name"] = "名前 \"\"\" " + "長い" * 60
     make_project(odd, tmp_path / "odd")
     script = (tmp_path / "odd" / "train.py").read_text(encoding="utf-8")
@@ -502,7 +508,7 @@ def test_monitor_and_config(tmp_path: Path) -> None:
     None
     """
     # RMSE はバッチの平均で書けないので, 二乗誤差を監視
-    rmse = answer(example_problem("総菜の作る量"), "evaluation.metric",
+    rmse = answer(example_problem("総菜の作る量"), "ml.parts.0.evaluation.metric",
                   "rmse")
     assert handoff(rmse)["training"]["monitor"] == "valid/mse"
     make_project(rmse, tmp_path / "rmse")
@@ -512,7 +518,7 @@ def test_monitor_and_config(tmp_path: Path) -> None:
 
     # 正解率は同じ値を取りやすい
     accuracy = answer(example_problem("解約の引き止め"),
-                      "evaluation.metric", "accuracy")
+                      "ml.parts.0.evaluation.metric", "accuracy")
     make_project(accuracy, tmp_path / "acc")
     config = yaml.safe_load(
         (tmp_path / "acc" / "configs/default/train.yaml").read_text("utf-8")
@@ -523,7 +529,7 @@ def test_monitor_and_config(tmp_path: Path) -> None:
     japanese = answer(example_problem("総菜の作る量"), "information.columns",
                       ["date", "store", "item", "売上", "temperature_forecast",
                        "promo", "customers"])
-    japanese = answer(japanese, "ml.target", "売上")
+    japanese = answer(japanese, "ml.parts.0.target.column", "売上")
     make_project(japanese, tmp_path / "ja")
     config = yaml.safe_load(
         (tmp_path / "ja" / "configs/default/train.yaml").read_text("utf-8")
@@ -572,11 +578,13 @@ def test_scalar_shapes_and_blocked_paths(tmp_path: Path) -> None:
     None
     """
     # 並びや辞書のタスク, 目的の列, 意思決定の型も例外でなく error
-    for key, value in (("ml", {"use": True, "task": [1]}),
-                       ("ml", {"use": True, "target": {"a": 1}}),
+    for key, value in (("part", {"task": [1]}),
+                       ("part", {"target": {"column": {"a": 1}}}),
+                       ("part", {"target": "sales"}),
                        ("action", {"decision": {"type": ["quantity"]}})):
         broken = example_problem("総菜の作る量")
-        broken[key].update(value)
+        place = broken["ml"]["parts"][0] if key == "part" else broken[key]
+        place.update(value)
         assert levels(broken)["error"], key
         assert is_ready(broken) is False
 
@@ -608,13 +616,13 @@ def test_available_lag() -> None:
     # 見本は前の日の 17 時に決めるので 2
     problem = example_problem("総菜の作る量")
     assert handoff(problem)["data"]["min_lag"] == 2
-    missing = answer(problem, "ml.available_lag", None)
-    assert "ml.available_lag" in levels(missing)["error"]
-    zero = answer(problem, "ml.available_lag", 0)
-    assert "ml.available_lag" in levels(zero)["error"]
+    missing = answer(problem, "ml.parts.0.available_lag", None)
+    assert "ml.parts.0.available_lag" in levels(missing)["error"]
+    zero = answer(problem, "ml.parts.0.available_lag", 0)
+    assert "ml.parts.0.available_lag" in levels(zero)["error"]
 
     # 回帰では問わず, 受け渡しにも出さない
-    regression = answer(problem, "ml.task", "regression")
+    regression = answer(problem, "ml.parts.0.task", "regression")
     assert handoff(regression)["data"]["min_lag"] is None
 
 
@@ -742,11 +750,12 @@ def test_output_use() -> None:
     # 後段に渡すときだけ後段の問いが要り, 書かなければ見直し
     problem = example_problem("総菜の作る量")
     needed = {item["id"]: item["applies"] for item in questions(problem)}
-    assert needed["ml.consumer"] and not needed["ml.downstream"]
-    downstream = answer(problem, "ml.consumer", "system")
-    assert "ml.downstream" in levels(downstream)["warning"]
-    downstream = answer(downstream, "ml.downstream", "発注の仕組み. 個数")
-    assert "ml.downstream" not in levels(downstream)["warning"]
+    assert needed["ml.parts.0.consumer"]
+    assert not needed["ml.parts.0.downstream"]
+    downstream = answer(problem, "ml.parts.0.consumer", "system")
+    assert "ml.parts.0.downstream" in levels(downstream)["warning"]
+    downstream = answer(downstream, "ml.parts.0.downstream", "発注の仕組み. 個数")
+    assert "ml.parts.0.downstream" not in levels(downstream)["warning"]
     assert any("後段が求めるもの: 発注の仕組み" in text
                for text in describe(downstream))
 
@@ -762,11 +771,15 @@ def test_output_use() -> None:
 
     # 手で書いた崩れた値は形の誤りで, 要約は落ちない
     raw = example_problem("解約の引き止め")
-    raw["ml"].update(consumer=["rule"], constraints="外に出さない")
-    assert {"ml.consumer", "ml.constraints"} <= set(levels(raw)["error"])
+    raw["ml"]["parts"][0]["consumer"] = ["rule"]
+    raw["ml"]["constraints"] = "外に出さない"
+    assert {"ml.parts.0.consumer", "ml.constraints"} <= set(
+        levels(raw)["error"]
+    )
     assert describe(raw)
-    raw["ml"].update(consumer="robot", constraints=["外に出さない"])
-    assert "ml.consumer" in levels(raw)["error"]
+    raw["ml"]["parts"][0]["consumer"] = "robot"
+    raw["ml"]["constraints"] = ["外に出さない"]
+    assert "ml.parts.0.consumer" in levels(raw)["error"]
 
 
 def test_decision_choices() -> None:
@@ -816,7 +829,7 @@ def test_group_column() -> None:
     None
     """
     # 分類は相手ごとの分割に (レシピの下書きも)
-    problem = answer(example_problem("解約の引き止め"), "ml.group_column",
+    problem = answer(example_problem("解約の引き止め"), "ml.parts.0.group_column",
                      "member_id")
     assert levels(problem)["error"] == []
     data = handoff(problem)["data"]
@@ -825,25 +838,27 @@ def test_group_column() -> None:
     assert (split["method"], split["column"]) == ("group", "member_id")
 
     # 時系列は時刻の順のまま, 列は渡す (重なりを知らせるため)
-    sozai = answer(example_problem("総菜の作る量"), "ml.group_column",
+    sozai = answer(example_problem("総菜の作る量"), "ml.parts.0.group_column",
                    "store")
     split = recipe_from(sozai)["recipe"]["split"]
     assert (split["method"], split["column"]) == ("time", "store")
 
     # 目的の列は誤り, 無い列は答えられない
-    wrong = answer(problem, "ml.group_column", "churned")
-    assert "ml.group_column" in levels(wrong)["error"]
+    wrong = answer(problem, "ml.parts.0.group_column", "churned")
+    assert "ml.parts.0.group_column" in levels(wrong)["error"]
     with pytest.raises(ValueError, match="no_such"):
-        answer(problem, "ml.group_column", "no_such")
+        answer(problem, "ml.parts.0.group_column", "no_such")
 
     # 書き戻したレシピと相手の列が食い違えば知らせる
     saved = apply_recipe(example_problem("解約の引き止め"),
                          recipe_from(example_problem("解約の引き止め"))[
                              "recipe"])["problem"]
-    later = answer(saved, "ml.group_column", "member_id")
+    later = answer(saved, "ml.parts.0.group_column", "member_id")
     assert any("member_id" in note for note in recipe_from(later)["notes"])
     result = apply_recipe(later, recipe_from(later)["recipe"])
-    assert [c["id"] for c in result["conflicts"]] == ["ml.group_column"]
+    assert [c["id"] for c in result["conflicts"]] == [
+        "ml.parts.0.group_column"
+    ]
 
 
 def test_split_time_column() -> None:
@@ -866,7 +881,7 @@ def test_split_time_column() -> None:
     forbidden = get_value(problem, "information.forbidden") or []
     problem = answer(problem, "information.forbidden",
                      forbidden + ["applied_at"])
-    problem = answer(problem, "ml.split_time_column", "applied_at")
+    problem = answer(problem, "ml.parts.0.split_time_column", "applied_at")
     assert levels(problem)["error"] == []
     data = handoff(problem)["data"]
     assert (data["split"], data["time_column"]) == ("time", "applied_at")
@@ -876,13 +891,15 @@ def test_split_time_column() -> None:
     # 書き戻したレシピが時刻の順でなければ知らせる
     other = dict(start["recipe"], split={"method": "stratified"})
     result = apply_recipe(problem, other)
-    assert "ml.split_time_column" in [c["id"] for c in result["conflicts"]]
+    assert "ml.parts.0.split_time_column" in [
+        c["id"] for c in result["conflicts"]
+    ]
 
     # 目的の列は誤り
-    wrong = answer(problem, "ml.split_time_column", "churned")
-    assert "ml.split_time_column" in levels(wrong)["error"]
-    same = answer(problem, "ml.group_column", "applied_at")
-    assert "ml.group_column" in levels(same)["error"]
+    wrong = answer(problem, "ml.parts.0.split_time_column", "churned")
+    assert "ml.parts.0.split_time_column" in levels(wrong)["error"]
+    same = answer(problem, "ml.parts.0.group_column", "applied_at")
+    assert "ml.parts.0.group_column" in levels(same)["error"]
 
     # 分けるのにだけ使う時刻の列は, 決めていない列の知らせに出さない
     loose = answer(problem, "information.forbidden", forbidden or None)
