@@ -511,7 +511,8 @@ def config_text(problem: dict, stages: dict, name: Optional[str]) -> str:
     note = (" (RMSE は二乗誤差で選ぶ. 並びは同じ)"
             if training["metric"] == "rmse" else "")
     text = CONFIG.substitute(
-        experiment=experiment_name(problem, name),
+        experiment=json.dumps(experiment_name(problem, name),
+                              ensure_ascii=False),
         monitor=training["monitor"], mode=training["mode"],
         tiebreak=tiebreak, monitor_note=note,
     )
@@ -771,7 +772,8 @@ def make_project(
     data_file = (Path("data") / Path(source).name
                  if isinstance(source, str) and Path(source).exists()
                  else None)
-    info = dataset_info(source) if data_file is not None else None
+    info = (dataset_info(source)
+            if data_file is not None and skeleton_kind(problem) else None)
     if data_file is not None:
         problem = copy.deepcopy(problem)
         set_value(problem, "data.origin",

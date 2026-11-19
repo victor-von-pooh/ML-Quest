@@ -50,8 +50,8 @@ SPLITS = ("train", "valid", "test")
 MASK_PART = '''
 # テスト用の評価の名前と説明 (evaluations/<名前>.json)
 EVALUATION = "test_iou"
-EVALUATION_TEXT = ("テスト用の分割のクラスごとの IoU (最良のモデル). mean は"
-                   "背景 (値 0) を除いた平均")
+EVALUATION_TEXT = ("テスト用の分割のクラスごとの IoU ({weights}). mean は"
+                   "背景 (値 0) を除いた平均. 予測にも正解にも無いクラスは 1")
 
 
 class MaskDataset(Dataset):
@@ -160,12 +160,12 @@ class MaskTrainer(Trainer):
         super(MaskTrainer, self).__init__(model, experiment, None)
 
         # クラスの名前, 背景でないクラスの番号, 損失関数 (知らない値の -1 は
-        # 除く) と, エポックごとの重なりと和の画素数を保存
+        # 除く) と, エポックごとの重なり, 和, 正解の画素数を保存
         self.names = names
         self.foreground = foreground
         self.ce = nn.CrossEntropyLoss(ignore_index=-1)
-        self.intersection = torch.zeros(len(names))
-        self.union = torch.zeros(len(names))
+        self.counts = torch.zeros(3, len(names))
+        self.warned = False
 
     def on_epoch_start(self, phase: str) -> None:
         """
@@ -180,9 +180,8 @@ class MaskTrainer(Trainer):
         ----------
         None
         """
-        # クラスごとの重なりと和の 0 への戻し
-        self.intersection = torch.zeros(len(self.names))
-        self.union = torch.zeros(len(self.names))
+        # クラスごとの重なり, 和, 正解の画素数の 0 への戻し
+        self.counts = torch.zeros(3, len(self.names))
 
     def step(self, batch: tuple, phase: str) -> dict:
         """
@@ -204,9 +203,8 @@ class MaskTrainer(Trainer):
         x, y = batch
         logits = self.model(x)
         loss = self.ce(logits, y)
-        counts = overlap_counts(logits.argmax(dim=1), y, len(self.names))
-        self.intersection += counts[0]
-        self.union += counts[1]
+        self.counts += overlap_counts(logits.argmax(dim=1), y,
+                                      len(self.names))
         outputs = {"loss": loss}
 
         return outputs
@@ -225,14 +223,24 @@ class MaskTrainer(Trainer):
         metrics: dict
             背景を除いたクラスの IoU の平均 (iou)
         """
+        # 検証用の分割の正解に背景しか無い場合の警告 (IoU は全て 1 に)
+        present = self.counts[2, self.foreground].sum()
+        if phase == "valid" and present == 0 and not self.warned:
+            self.logger.warning(
+                "検証用の分割の正解に背景しかありません. valid/iou では"
+                "モデルの良し悪しが分かりません"
+            )
+            self.warned = True
+
         # 最良のモデルの選びは検証の段階の値 (valid/iou)
-        value = mean_iou(self.intersection, self.union, self.foreground)
-        metrics = {"iou": value}
+        metrics = {"iou": mean_iou(self.counts, self.foreground)}
 
         return metrics
 
 
-def class_table(dataset: ItemDataset) -> tuple[np.ndarray, list, list]:
+def class_table(
+    dataset: ItemDataset
+) -> tuple[np.ndarray, list, list, list]:
     """
     説明の classes (無ければ values) から, 領域の値の番号の表を作る関数
 
@@ -243,33 +251,49 @@ def class_table(dataset: ItemDataset) -> tuple[np.ndarray, list, list]:
 
     Returns
     ----------
-    table: tuple[np.ndarray, list, list]
-        値から番号の表 (知らない値は -1), 番号の順の名前, 背景 (値 0) で
-        ない番号
+    table: tuple[np.ndarray, list, list, list]
+        値から番号の表 (名前の無い値は -1), 番号の順の名前, 背景 (値 0) で
+        ない番号, 名前の無い値
+
+    Raises
+    ----------
+    ValueError
+        名前も値の一覧も無い場合と, クラスが 2 つ未満の場合
     """
-    # 値の小さい順の番号 (名前も値の一覧も無ければ止める)
+    # 名前の付いた値 (名前が無ければ値の一覧の全て)
     entry = dataset.entries[entry_names(dataset)[1]]
-    if not entry.get("classes") and not entry.get("values"):
+    values = [int(value) for value in entry.get("values") or []]
+    classes = entry.get("classes") or [
+        {"value": value, "name": str(value)} for value in values
+    ]
+    if not classes:
         raise ValueError("領域の値の名前 (classes) も値の一覧 (values) も"
                          "ありません. 書き出しで classes を渡してください")
-    classes = entry.get("classes") or [
-        {"value": value, "name": str(value)} for value in entry["values"]
-    ]
-    values = sorted(int(item["value"]) for item in classes)
     names = {int(item["value"]): str(item["name"]) for item in classes}
-    lookup = np.full(max(values) + 1, -1, dtype=np.int64)
-    lookup[values] = np.arange(len(values))
-    table = (lookup, [names[value] for value in values],
-             [index for index, value in enumerate(values) if value != 0])
+
+    # 名前の無い値 0 は背景のクラスとして追加 (除くと正解が全て背景の外に
+    # なり, 損失 0, IoU 1 の見かけだけの学習になるため)
+    if 0 in values and 0 not in names:
+        names[0] = "background"
+    if len(names) < 2:
+        raise ValueError(f"領域のクラスが 2 つ未満です: {names}")
+
+    # 値の小さい順の番号
+    ordered = sorted(names)
+    lookup = np.full(max(ordered) + 1, -1, dtype=np.int64)
+    lookup[ordered] = np.arange(len(ordered))
+    table = (lookup, [names[value] for value in ordered],
+             [index for index, value in enumerate(ordered) if value != 0],
+             sorted(set(values) - set(names)))
 
     return table
 
 
 def overlap_counts(
     predicted: torch.Tensor, target: torch.Tensor, count: int
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
     """
-    クラスごとの重なりと和の画素数を数える関数
+    クラスごとの重なり, 和, 正解の画素数を数える関数
 
     Parameters
     ----------
@@ -282,48 +306,44 @@ def overlap_counts(
 
     Returns
     ----------
-    counts: tuple[torch.Tensor, torch.Tensor]
-        クラスごとの重なり (予測と正解の両方) と和 (どちらか) の画素数
+    counts: torch.Tensor
+        (3, クラス数) の, 重なり (予測と正解の両方), 和 (どちらか), 正解の
+        画素数
     """
     # クラスごとの予測と正解の画素の集合の比べ
     known = target >= 0
-    intersection = torch.zeros(count)
-    union = torch.zeros(count)
+    counts = torch.zeros(3, count)
     for index in range(count):
         guess = (predicted == index) & known
         truth = target == index
-        intersection[index] = (guess & truth).sum().item()
-        union[index] = (guess | truth).sum().item()
-    counts = (intersection, union)
+        counts[0, index] = (guess & truth).sum().item()
+        counts[1, index] = (guess | truth).sum().item()
+        counts[2, index] = truth.sum().item()
 
     return counts
 
 
-def mean_iou(
-    intersection: torch.Tensor, union: torch.Tensor, foreground: list[int]
-) -> float:
+def mean_iou(counts: torch.Tensor, foreground: list[int]) -> float:
     """
     背景でないクラスの IoU の平均を求める関数
 
     Parameters
     ----------
-    intersection: torch.Tensor
-        クラスごとの重なりの画素数
-    union: torch.Tensor
-        クラスごとの和の画素数
+    counts: torch.Tensor
+        overlap_counts の (3, クラス数) の画素数
     foreground: list[int]
         背景でないクラスの番号
 
     Returns
     ----------
     value: float
-        IoU の平均 (和が 0 のクラスは除く. 1 つも無ければ 0. 監視する
-        指標が nan だと ML-Found が止まるため)
+        IoU の平均 (予測にも正解にも無いクラスは 1. 当てるものが無く, 外し
+        てもいないため)
     """
-    # 予測にも正解にも無いクラスは平均の対象外
-    values = [(intersection[index] / union[index]).item()
-              for index in foreground if union[index] > 0]
-    value = float(np.mean(values)) if values else 0.0
+    # 和が 0 のクラス (空と空) は 1
+    values = [(counts[0, index] / counts[1, index]).item()
+              if counts[1, index] > 0 else 1.0 for index in foreground]
+    value = float(np.mean(values)) if values else 1.0
 
     return value
 
@@ -399,8 +419,12 @@ def make_trainer(
     trainer: Trainer
         MaskTrainer
     """
-    # クラスの名前と背景でない番号
-    _, names, foreground = class_table(dataset)
+    # クラスの名前と背景でない番号. 名前の無い値は除くことの警告
+    _, names, foreground, unnamed = class_table(dataset)
+    if unnamed:
+        experiment.logger.warning(
+            f"名前の無い領域の値 {unnamed} は, 損失と IoU から除きます"
+        )
     trainer = MaskTrainer(model, experiment, names, foreground)
 
     return trainer
@@ -415,7 +439,7 @@ def evaluate_test(
     Parameters
     ----------
     trainer: Trainer
-        学習した後の MaskTrainer (最良のモデルの重み)
+        学習した後の MaskTrainer
     loader: DataLoader
         テスト用の DataLoader
     experiment: Experiment
@@ -424,22 +448,21 @@ def evaluate_test(
     Returns
     ----------
     rows: list[dict]
-        class と iou (和が 0 のクラスは None) の行と, 最後に mean の行
+        class と iou (予測にも正解にも無いクラスは None) の行と, 最後に
+        mean の行
     """
-    # 学習と同じ数え方で, 最良のモデルの予測の重なりと和
+    # 学習と同じ数え方で, 学習した後の予測の重なりと和
     model = trainer.model.cpu().eval()
-    count = len(trainer.names)
-    intersection, union = torch.zeros(count), torch.zeros(count)
+    counts = torch.zeros(3, len(trainer.names))
     with torch.no_grad():
         for x, y in loader:
-            counts = overlap_counts(model(x).argmax(dim=1), y, count)
-            intersection += counts[0]
-            union += counts[1]
-    rows = [{"class": name, "iou": (intersection[index] / union[index]).item()
-             if union[index] > 0 else None}
+            counts += overlap_counts(model(x).argmax(dim=1), y,
+                                     len(trainer.names))
+    rows = [{"class": name, "iou": (counts[0, index] / counts[1, index])
+             .item() if counts[1, index] > 0 else None}
             for index, name in enumerate(trainer.names)]
-    rows.append({"class": "mean", "iou": mean_iou(intersection, union,
-                                                  trainer.foreground)})
+    rows.append({"class": "mean",
+                 "iou": mean_iou(counts, trainer.foreground)})
     experiment.logger.info(f"テスト用の IoU (背景を除く平均): "
                            f"{rows[-1]['iou']:.4f}")
 
@@ -452,23 +475,25 @@ $baseline_comment
 CLOUD_PART = '''
 # テスト用の評価の名前と説明 (evaluations/<名前>.json)
 EVALUATION = "test_chamfer"
-EVALUATION_TEXT = ("テスト用の分割の Chamfer 距離 (最良のモデル. 単位は"
+EVALUATION_TEXT = ("テスト用の分割の Chamfer 距離 ({weights}. 単位は"
                    "データセットのまま)")
 
 
 class CloudDataset(Dataset):
     def __init__(
-        self, items: ItemSplit, names: tuple, counts: tuple, seed: int
+        self, items: ItemSplit, names: tuple, counts: tuple, seed: int,
+        resample: bool
     ):
         # 親クラスのコンストラクタを呼び出す
         super(CloudDataset, self).__init__()
 
         # ML-EDA の分割の件の並び, 入力と正解の項目の名前, 選ぶ点の数 (入力
-        # と正解), 点を選ぶ乱数の種を保存
+        # と正解), 点を選ぶ乱数の種, 読むたびに選び直すかを保存
         self.items = items
         self.names = names
         self.counts = counts
         self.seed = seed
+        self.resample = resample
 
     def __len__(self) -> int:
         """
@@ -502,9 +527,13 @@ class CloudDataset(Dataset):
         pair: tuple[torch.Tensor, torch.Tensor]
             (入力の点の数, 3) と (正解の点の数, 3) の float32
         """
-        # 件ごとに決まった乱数での選び. 撮影 (辞書) は深度から点に
+        # 学習用は読むたびに選び直し (torch の乱数の種から. 実験の種で同じ
+        # 並び), 検証用とテスト用は件ごとに決まった選び. 撮影 (辞書) は
+        # 深度から点に
         item = self.items[index]
-        rng = np.random.default_rng([self.seed, index])
+        seed = (int(torch.randint(0, 2 ** 31 - 1, (1,)).item())
+                if self.resample else self.seed)
+        rng = np.random.default_rng([seed, index])
         source = item[self.names[0]]
         points = backproject(source) if isinstance(source, dict) else source
         pair = (
@@ -562,30 +591,9 @@ class CloudTrainer(Trainer):
         # step_fn は None)
         super(CloudTrainer, self).__init__(model, experiment, None)
 
-        # 検証の予測と正解の入れ物
-        self.predictions: list[torch.Tensor] = []
-        self.targets: list[torch.Tensor] = []
-
-    def on_epoch_start(self, phase: str) -> None:
-        """
-        エポックの始めに予測と正解の入れ物を空にする関数
-
-        Parameters
-        ----------
-        phase: str
-            train, valid, train_eval のどれか
-
-        Returns
-        ----------
-        None
-        """
-        # 入れ物の片付け
-        self.predictions = []
-        self.targets = []
-
     def step(self, batch: tuple, phase: str) -> dict:
         """
-        1 バッチ分の Chamfer の損失を求め, 検証では予測を貯める関数
+        1 バッチ分の Chamfer の損失と, 学習以外で Chamfer 距離を求める関数
 
         Parameters
         ----------
@@ -597,45 +605,21 @@ class CloudTrainer(Trainer):
         Returns
         ----------
         outputs: dict
-            2 乗の距離の Chamfer (loss) とバッチの件数
+            2 乗の距離の Chamfer (loss), バッチの件数と, 学習以外では
+            距離の Chamfer (chamfer. ML-Found が件数の重みで平均)
         """
-        # 予測と, 2 乗の距離の Chamfer (学習の損失)
+        # 予測と, 2 乗の距離の Chamfer (学習の損失). 検証の段階は
+        # trainer.valid_every_n_epochs ごとと最後のエポックだけ
         x, y = batch
         predicted = self.model(x)
-        loss = chamfer(predicted, y, True).mean()
-        if phase == "valid":
-            self.predictions.append(predicted.detach().cpu())
-            self.targets.append(y.detach().cpu())
-        outputs = {"loss": loss, "batch_size": len(y)}
+        outputs = {"loss": chamfer(predicted, y, True).mean(),
+                   "batch_size": len(y)}
+        if phase != "train":
+            with torch.no_grad():
+                distance = chamfer(predicted, y, False).mean().item()
+            outputs["chamfer"] = distance
 
         return outputs
-
-    def on_epoch_end(self, phase: str) -> dict:
-        """
-        検証したエポックだけ, Chamfer 距離を求める関数
-
-        Parameters
-        ----------
-        phase: str
-            train, valid, train_eval のどれか
-
-        Returns
-        ----------
-        metrics: dict
-            検証では chamfer (距離の平均), 他は空
-        """
-        # 重い指標は検証の段階だけ. 検証の段階は trainer.valid_every_n_epochs
-        # ごとと最後のエポックだけ
-        if phase != "valid" or not self.predictions:
-            metrics = {}
-            return metrics
-        with torch.no_grad():
-            distance = chamfer(
-                torch.cat(self.predictions), torch.cat(self.targets), False
-            )
-        metrics = {"chamfer": distance.mean().item()}
-
-        return metrics
 
 
 def chamfer(
@@ -777,7 +761,7 @@ def make_datasets(dataset: ItemDataset, cfg: object) -> dict:
         if name in dataset.info["splits"]:
             datasets[name] = CloudDataset(
                 dataset.split(name), entry_names(dataset), counts,
-                cfg.data.seed + offset
+                cfg.data.seed + offset, name == "train"
             )
 
     return datasets
@@ -840,7 +824,7 @@ def evaluate_test(
     Parameters
     ----------
     trainer: Trainer
-        学習した後の CloudTrainer (最良のモデルの重み)
+        学習した後の CloudTrainer
     loader: DataLoader
         テスト用の DataLoader
     experiment: Experiment
@@ -851,7 +835,7 @@ def evaluate_test(
     rows: list[dict]
         answer (model) と chamfer の行
     """
-    # 最良のモデルの予測と正解の距離の平均
+    # 学習した後の予測と正解の距離の平均
     model = trainer.model.cpu().eval()
     distances = []
     with torch.no_grad():
@@ -982,20 +966,26 @@ def main() -> None:
     if cfg.model.spec:
         shutil.copy(PROJECT_DIR / cfg.model.spec, run_dir / "model_spec.yaml")
 
-    # 結果の表示と, 指標が何との一致か
-    best_epoch = trainer.checkpoint.best_epoch
+    # 結果の表示と, 指標が何との一致か. 学習した後の重みは, 最良のモデル
+    # に戻した場合だけ最良のエポック (select_best: false などは最後)
+    best = trainer.final_weights == "best"
+    epoch = trainer.checkpoint.best_epoch if best else trainer.epoch
+    weights = "最良のモデル" if best else "最後のエポックの重み"
     print(f"保存先: {run_dir}")
-    print(f"ベストモデルのエポック: {best_epoch}")
-    print(f"ベストの {cfg.trainer.monitor}: {trainer.checkpoint.best_value}")
+    print(f"評価する重み: {weights} (エポック {epoch})")
+    if best:
+        print(f"ベストの {cfg.trainer.monitor}: "
+              f"{trainer.checkpoint.best_value}")
     print(describe_origin(task["target"]["origin"]))
 
-    # テスト用の分割があれば, 最良のモデルの評価を evaluations/ へ保存
+    # テスト用の分割があれば, 学習した後の重みの評価を evaluations/ へ保存
     if "test" not in loaders:
         experiment.logger.info("テスト用の分割が無いので, 評価しません")
         return
     rows = evaluate_test(trainer, loaders["test"], experiment)
     save_evaluation(experiment, EVALUATION, rows, "test",
-                    description=EVALUATION_TEXT, epoch=best_epoch)
+                    description=EVALUATION_TEXT.format(weights=weights),
+                    epoch=epoch)
 
 
 if __name__ == "__main__":
@@ -1119,7 +1109,8 @@ def items_config(
     training = stages["training"]
     cloud = kind == "point_cloud"
     text = ITEMS_CONFIG.substitute(
-        experiment=experiment, monitor=training["monitor"],
+        experiment=json.dumps(experiment, ensure_ascii=False),
+        monitor=training["monitor"],
         mode=training["mode"],
         dataset=json.dumps(dataset, ensure_ascii=False),
         every=CLOUD_EVERY if cloud else "",
@@ -1254,7 +1245,10 @@ def items_readme(
         " ML-CreateArchitecture で組んだ定義を `models/` に置き, config の "
         "`model.spec` にその場所を書く"
         + (". 入力は (バッチ, チャンネル, 高さ, 幅) の 0 から 1 の画像, 出力は"
-           " (バッチ, クラス数, 高さ, 幅) のスコア" if kind == "mask" else
+           " (バッチ, クラス数, 高さ, 幅) のスコア. クラスは `dataset.yaml` の"
+           " `classes` (無ければ `values`). 名前の無い値 0 は背景 "
+           "(`background`) のクラスとして足し, 他の名前の無い値は損失と IoU "
+           "から除いて `train.log` に警告を出す" if kind == "mask" else
            ". 入力は (バッチ, 点の数, 3) の点, 出力は (バッチ, 点の数, 3) の"
            "点"),
         "3. **学習** (ML-Found, ML-Dashboard): `python train.py`. 結果は "

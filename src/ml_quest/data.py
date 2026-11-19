@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from ml_quest.check import finding
+from ml_quest.check import finding, is_column_part
 from ml_quest.problem import (
     active_value, answer, data_location, get_value, set_value,
     upgrade_problem
@@ -180,8 +180,9 @@ def items_message(problem: dict) -> Optional[str]:
     """
     入れたデータセットが受け持ちに合わない理由を返す関数
 
-    版 2 のデータセットは, 受け持ちと正解の種類が問題の設定と同じときだけ
-    使える. ファイルの組の受け持ちには, 版 2 のデータセットだけが使える
+    ファイルの組の受け持ち (予測するの mask と point_cloud) には, 受け持ち
+    と正解の種類が同じ版 2 のデータセットだけが使える. 他の受け持ちでは
+    データセットを見ない (列の予測が dataset.yaml で新しく止まらないように)
 
     Parameters
     ----------
@@ -191,34 +192,39 @@ def items_message(problem: dict) -> Optional[str]:
     Returns
     ----------
     message: Optional[str]
-        合わない理由 (合うか, データセットを入れていなければ None)
+        合わない理由 (合うか, ファイルの組の受け持ちでないか, データセット
+        を入れていなければ None)
     """
-    # データセットを入れていなければ確かめない (元のファイルは書き出す前)
+    # ファイルの組の受け持ちで, データセットを入れた場合だけ (元のファイル
+    # は書き出す前)
+    role = active_value(problem, f"{PART}.role")
+    kind = active_value(problem, f"{PART}.target.kind")
     location = data_location(problem)
+    if role != "predict" or kind not in ITEMS_KINDS:
+        message: Optional[str] = None
+        return message
     try:
         info = dataset_info(location) if location else None
     except ValueError as error:
-        message: Optional[str] = str(error)
+        message = str(error)
         return message
     if info is None:
         message = None
         return message
 
     # 版, 受け持ち, 正解の種類の比べ
-    role = active_value(problem, f"{PART}.role")
-    kind = active_value(problem, f"{PART}.target.kind")
     version = info.get("format_version")
     target = info.get("target")
     target = target if isinstance(target, dict) else {}
     message = None
-    if version != ITEMS_VERSION and kind in ITEMS_KINDS:
+    if isinstance(version, int) and version > ITEMS_VERSION:
+        message = (f"入れたデータセットの版 {version} は, この ML-Quest では"
+                   "読めません (新しい ML-Quest を使ってください)")
+    elif version != ITEMS_VERSION:
         message = (f"入れたデータセットの版が {version} です. 正解の種類が "
                    f"{kind} の受け持ちには, ML-EDA の版 2 のデータセット "
                    "(export_image_masks か export_capture_clouds の書き出し) "
                    "を入れてください")
-    elif isinstance(version, int) and version > ITEMS_VERSION:
-        message = (f"入れたデータセットの版 {version} は, この ML-Quest では"
-                   "読めません (新しい ML-Quest を使ってください)")
     elif version == ITEMS_VERSION and (
         info.get("role") != role or target.get("kind") != kind
     ):
@@ -611,8 +617,11 @@ def items_overview(problem: dict, location: str) -> dict:
         + (f" ({origin['name']})" if origin.get("name") else "")
     )]
 
-    # 受け持ちに合うかと, 検証用の分割
+    # 受け持ちに合うか (列の予測には使えないことも) と, 検証用の分割
     message = items_message(problem)
+    if is_column_part(problem):
+        message = ("版 2 のデータセットは列の予測には使えません (受け持ちと"
+                   "正解の種類を答え直すか, 表のデータを入れてください)")
     if message is not None:
         findings.append(finding("error", "data.source", message))
     if "valid" not in splits:

@@ -275,19 +275,29 @@ def test_items_mismatch(tmp_path: Path) -> None:
     ----------
     None
     """
-    # 点群の問題に領域のデータセットと, 列の予測に版 2 のデータセット
+    # 点群の問題に領域のデータセット
     paths = write_datasets(tmp_path / "datasets")
     cloud = attach_data(kind_problem("point_cloud"), str(paths["mask"]))
-    column = answer(example_problem("総菜の作る量"), "data.source",
-                    str(paths["mask"]))
-    for problem in (cloud, column):
-        message = project_error(problem)
-        assert message is not None and "入れたデータセット" in message
-        with pytest.raises(ValueError) as raised:
-            make_project(problem, tmp_path / "never")
-        assert str(raised.value) == message
+    message = project_error(cloud)
+    assert message is not None and "入れたデータセット" in message
+    with pytest.raises(ValueError) as raised:
+        make_project(cloud, tmp_path / "never")
+    assert str(raised.value) == message
     found = inspect_data(cloud)
     assert "error" in [item["level"] for item in found["findings"]]
+
+    # 列の予測はデータセットを見ない (読めない dataset.yaml でも今までどおり)
+    # ただし版 2 を入れると, 分析の確かめで使えないと知らせる
+    column = attach_data(example_problem("総菜の作る量"), str(paths["mask"]))
+    assert project_error(column) is None
+    found = inspect_data(column)
+    assert any(item["level"] == "error" and "列の予測" in item["message"]
+               for item in found["findings"])
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "dataset.yaml").write_text("[: 壊れた", encoding="utf-8")
+    assert project_error(answer(example_problem("総菜の作る量"),
+                                "data.source", str(broken))) is None
 
     # 版 1 のデータセットを入れたファイルの組の受け持ちも書き出せない
     old = tmp_path / "old"
@@ -297,3 +307,74 @@ def test_items_mismatch(tmp_path: Path) -> None:
     message = project_error(answer(kind_problem("mask"), "data.source",
                                    str(old)))
     assert message is not None and "版が 1" in message
+
+
+def test_experiment_name_quoted(tmp_path: Path) -> None:
+    """
+    実験の名前が YAML の他の型に読める文字でも, 文字のまま書くことを
+    確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 列の予測とファイルの組の両方
+    for problem, folder in ((example_problem("総菜の作る量"), "column"),
+                            (kind_problem("mask"), "mask")):
+        for name in ("null", "true", "123"):
+            project = tmp_path / folder / name
+            make_project(problem, project, name=name)
+            config = yaml.safe_load(
+                (project / "configs/default/train.yaml")
+                .read_text(encoding="utf-8")
+            )
+            assert config["experiment"]["name"] == name
+
+
+def test_mask_background(tmp_path: Path) -> None:
+    """
+    名前の無い値 0 を背景のクラスとして足し, 他の名前の無い値は除くことを,
+    書き出したスクリプトの関数で確かめる関数 (ML-Found と PyTorch が無けれ
+    ば飛ばす)
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 値 0 と 2 に名前を付けない書き出し
+    for name in TRAINING:
+        pytest.importorskip(name)
+    pytest.importorskip("PIL")
+    eda = pytest.importorskip("ml_eda")
+    synthetic = pytest.importorskip("ml_eda.synthetic")
+    synthetic.write_image_masks(tmp_path / "raw", count=6, size=(16, 16))
+    eda.export_image_masks(tmp_path / "raw" / "images",
+                           tmp_path / "raw" / "masks", tmp_path / "masks",
+                           classes={1: "circle"})
+    problem = attach_data(kind_problem("mask"), str(tmp_path / "masks"))
+    project = tmp_path / "project"
+    make_project(problem, project)
+
+    # 書き出したスクリプトを読み込んで, 値の番号の表
+    spec = importlib.util.spec_from_file_location(
+        "generated_train", project / "train.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    lookup, names, foreground, unnamed = module.class_table(
+        eda.load_items(project / "data" / "masks")
+    )
+    assert names == ["background", "circle"]
+    assert foreground == [1]
+    assert unnamed == [2]
+    assert lookup.tolist() == [0, 1]
