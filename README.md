@@ -34,7 +34,7 @@ for item in check(problem):
 
 # 課題から行動までの要約, 後ろの段階ごとの値
 print("\n".join(describe(problem)))
-stages = handoff(problem)   # data, model, training, inference
+stages = handoff(problem)   # data, model, training, inference と, 要る機能 (requires), 方策の守り (policy)
 
 # 保存と, ML-Found のプロジェクトの骨組みの書き出し
 save_problem(problem, "problem.yaml")
@@ -58,6 +58,14 @@ from ml_quest import apply_recipe, recipe_from
 
 start = recipe_from(problem)        # データの読み方と, ML-EDA のレシピの雛形 (目的の列, タスク, 除く列, 過去の値, 分割)
 result = apply_recipe(problem, recipe)   # 目的の列とタスクを書き戻し, 列の使い方の食い違いと選ぶ問いを返す
+```
+
+要る機能 (強化学習, MuJoCo, ROS2, CUDA) は答えの途中でも出せる. 名前は ML-Found の登録簿 (`describe_requirements`) と同じなので, 画面は入れ方のカードを早めに出せる.
+
+```python
+from ml_quest import FEATURES, required_features
+
+required_features(problem)   # 例: ["rl", "mujoco"]
 ```
 
 見本の問題の設定 (架空の課題) は `example_problem` で作れる. 量を決める予測 (総菜の作る量), 対象を選ぶ分類 (解約の引き止め), 機械学習を使わない出口 (問い合わせの振り分け) の 3 つ.
@@ -84,6 +92,7 @@ python -m venv .venv
 | `src/ml_quest/problem.py` | 問題の設定の作成, 答え, 読み書き, 列の名前の読み込み |
 | `src/ml_quest/check.py` | 確かめ |
 | `src/ml_quest/handoff.py` | 受け渡しの値と要約の文 |
+| `src/ml_quest/requirements.py` | 要る機能の名前 (ML-Found の登録簿の名前) と, 答えから要る機能 |
 | `src/ml_quest/skeleton.py` | ML-Found のプロジェクトの骨組み |
 | `src/ml_quest/examples.py` | 見本の問題の設定 |
 | `src/ml_quest/data.py` | 手元のデータの読み込みと写し, 答えの候補と確かめ, 今のやり方の損 (ML-EDA) |

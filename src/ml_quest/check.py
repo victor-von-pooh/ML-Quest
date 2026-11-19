@@ -7,8 +7,9 @@ from ml_quest.problem import (
     upgrade_problem, version_message
 )
 from ml_quest.questions import (
-    CONSUMERS, METHODS, METRICS, OUTPUTS, PART, QUESTIONS, ROLES,
-    TARGET_KINDS, TARGET_SOURCES, UNITS, V1_METRICS
+    COLLECTS, CONSUMERS, FALLBACKS, METHODS, METRICS, OUTPUTS, PART,
+    QUESTIONS, ROLES, SIMULATORS, TARGET_KINDS, TARGET_SOURCES, UNITS,
+    V1_METRICS
 )
 
 # その他の指標の名前 (学習の記録の名前と曲線のファイルの名前)
@@ -19,14 +20,24 @@ COLUMN_OUTPUTS = ["class", "value", "distribution"]
 
 # 受け持ちの中の, 辞書で書く項目
 PART_DICTS = [f"{PART}.target", f"{PART}.target.process",
-              f"{PART}.evaluation"]
+              f"{PART}.evaluation", f"{PART}.policy"]
 
 # 受け持ちの, 選んで書く項目と選択肢 (手で書いたファイルの確かめ)
 PART_CHOICES = {
     f"{PART}.role": ROLES, f"{PART}.unit": UNITS,
     f"{PART}.output": OUTPUTS, f"{PART}.target.source": TARGET_SOURCES,
     f"{PART}.target.kind": TARGET_KINDS, f"{PART}.method": METHODS,
+    f"{PART}.collect": COLLECTS, f"{PART}.simulator": SIMULATORS,
+    f"{PART}.policy.fallback": FALLBACKS,
 }
+
+# 方策の守りの, 文で書く項目
+POLICY_TEXTS = [f"{PART}.policy.{name}" for name in (
+    "action_limits", "stop", "safety_key", "approver"
+)]
+
+# はいかいいえで答える項目
+BOOLEANS = [f"{PART}.autonomous", f"{PART}.ros2", "ml.gpu"]
 
 # 行動の型ごとに合うタスク
 DECISION_TASKS = {
@@ -91,6 +102,30 @@ def is_names(value: Any) -> bool:
     return names
 
 
+def is_action(value: Any) -> bool:
+    """
+    決めた行動の答えの形 (文, 数, 数の並び) かを返す関数
+
+    Parameters
+    ----------
+    value: Any
+        値
+
+    Returns
+    ----------
+    fits: bool
+        文, 数 (真偽値を除く), 数の並びなら True
+    """
+    # 番号で選ぶ行動は番号, 量で決める行動は数の並び
+    items = value if isinstance(value, list) else [value]
+    fits = isinstance(value, str) or bool(items) and all(
+        isinstance(item, (int, float)) and not isinstance(item, bool)
+        for item in items
+    )
+
+    return fits
+
+
 def check_shape(problem: dict) -> list[dict]:
     """
     手で書いたファイルの, 値の形の崩れを一覧にする関数
@@ -120,7 +155,8 @@ def check_shape(problem: dict) -> list[dict]:
                 f"{PART}.consumer", f"{PART}.group_column",
                 f"{PART}.split_time_column", f"{PART}.downstream",
                 "issue.guard.name", f"{PART}.evaluation.name",
-                f"{PART}.target.process.name", *PART_CHOICES):
+                f"{PART}.target.process.name", *PART_CHOICES,
+                *POLICY_TEXTS):
         value = get_value(problem, key)
         if value is not None and not isinstance(value, str):
             found.append(finding("error", key,
@@ -166,6 +202,15 @@ def check_shape(problem: dict) -> list[dict]:
                              "action.decision の type は "
                              f"{', '.join(DECISION_FIELDS)} のどれかにして"
                              "ください"))
+    action = get_value(problem, f"{PART}.policy.fallback_action")
+    if action is not None and not is_action(action):
+        found.append(finding("error", f"{PART}.policy.fallback_action",
+                             "決めた行動は文, 数か数の並びにしてください"))
+    for key in BOOLEANS:
+        value = get_value(problem, key)
+        if value is not None and not isinstance(value, bool):
+            found.append(finding("error", key,
+                                 f"{key} は true か false にしてください"))
     for key in COLUMN_LISTS:
         if not is_names(get_value(problem, key)):
             found.append(finding("error", key,
