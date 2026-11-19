@@ -6,8 +6,8 @@ import yaml
 
 from ml_quest import (
     LEGACY_KEYS, answer, check, describe, example_problem, get_value,
-    handoff, is_ready, load_problem, make_project, new_problem, questions,
-    recipe_from, save_problem, upgrade_problem
+    handoff, is_ready, load_problem, make_project, new_problem,
+    project_error, questions, recipe_from, save_problem, upgrade_problem
 )
 from ml_quest.problem import active_value, set_value
 
@@ -567,3 +567,38 @@ def test_review_fixes() -> None:
     shaped = answer(example_problem("総菜の作る量"), "ml.parts.0.output",
                     "shape")
     assert "ml.parts.0.output" in errors_of(shaped)
+
+
+def test_project_error() -> None:
+    """
+    骨組みを書き出せない理由が, make_project の誤りの文と同じになることを
+    確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 列の予測は書き出せる (版 1 も)
+    assert project_error(example_problem("総菜の作る量")) is None
+    assert project_error(v1_problem()) is None
+
+    # 列の予測でない受け持ち, その他の指標, 渡せない問題の設定
+    other = answer(example_problem("解約の引き止め"),
+                   "ml.parts.0.evaluation.metric", "other")
+    other = answer(other, "ml.parts.0.evaluation.name", "f1")
+    other = answer(other, "ml.parts.0.evaluation.better", "higher")
+    plain = example_problem("総菜の作る量")
+    plain["ml"]["parts"][0]["role"] = "translate"
+    for problem, words in (
+        (role_problem("rank", ROLE_ANSWERS["rank"]), "表の列"),
+        (other, "その他"), (plain, "直すところ"),
+    ):
+        message = project_error(problem)
+        assert message is not None and words in message
+        with pytest.raises(ValueError) as raised:
+            make_project(problem, Path("/nonexistent-ml-quest-project"))
+        assert str(raised.value) == message

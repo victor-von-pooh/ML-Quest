@@ -11,7 +11,7 @@ from ml_quest.questions import (
     METHODS, METRICS, OUTPUTS, PART, QUESTIONS, ROLES, SECTIONS,
     TARGET_KINDS, TARGET_SOURCES, TASKS, UNITS
 )
-from ml_quest.skeleton import make_project
+from ml_quest.skeleton import make_project, project_error
 
 __all__ = [
     "EXAMPLES", "FORMAT_VERSION", "LEGACY_KEYS", "METHODS", "METRICS",
@@ -19,6 +19,7 @@ __all__ = [
     "TARGET_SOURCES", "TASKS", "UNITS", "answer", "apply_recipe",
     "attach_data", "check", "describe", "example_problem", "get_value",
     "handoff", "inspect_data", "is_ready", "load_problem", "make_project",
-    "new_problem", "prune_copies", "questions", "read_columns",
+    "new_problem", "project_error", "prune_copies", "questions",
+    "read_columns",
     "recipe_from", "resolve_choice", "save_problem", "upgrade_problem",
 ]
