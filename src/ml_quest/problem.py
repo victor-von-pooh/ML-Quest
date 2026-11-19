@@ -235,16 +235,28 @@ def child_of(node: Any, part: str, empty: Any) -> Any:
     ----------
     child: Any
         子
+
+    Raises
+    ----------
+    ValueError
+        並びの中で, 番号でない名前か, 辞書でない要素の場合
     """
-    # 並びは番号まで空の辞書で伸ばす
+    # 並びは番号まで空の辞書で伸長. 番号でない名前と, 手で書いた辞書で
+    # ない要素は誤り (黙って置き換えないため)
     if isinstance(node, list):
+        if not part.isdigit():
+            raise ValueError(f"並びの中の {part} は番号ではありません")
         index = int(part)
         while len(node) <= index:
             node.append({})
         if empty is not None and not isinstance(node[index], type(empty)):
-            node[index] = empty
+            raise ValueError(
+                f"並びの {index} 番目が辞書でないので, 答えを入れられません"
+            )
         child = node[index]
         return child
+    if isinstance(node.get(part), list) and isinstance(empty, dict):
+        raise ValueError(f"{part} は並びなので, 次は番号で書いてください")
     if not isinstance(node.get(part), type(empty)):
         node[part] = empty
     child = node[part]
@@ -377,7 +389,7 @@ def choice_fits(problem: dict, choice: dict) -> bool:
     fits: bool
         合うか (答えていない項目では絞らない)
     """
-    # 答えた項目だけで比べる
+    # 答えた項目だけでの比較
     answers = {"role": get_value(problem, f"{PART}.role"),
                "kinds": get_value(problem, f"{PART}.target.kind"),
                "tasks": get_value(problem, f"{PART}.task")}
@@ -411,7 +423,9 @@ def active_value(problem: dict, key: str) -> Any:
     value: Any
         答え (要らない問いの古い答えは None)
     """
-    # タスクを変えた後の時刻の列などの除外
+    # タスクを変えた後の時刻の列などの除外 (版 1 は先に版 2 へ移行)
+    if isinstance(problem, dict) and problem.get("format_version") == 1:
+        problem = upgrade_problem(problem)
     key = current_key(problem, key)
     question = BY_ID.get(key)
     value = get_value(problem, key)
@@ -942,14 +956,14 @@ def upgrade_problem(problem: dict, name: str = "問題の設定") -> dict:
     Raises
     ----------
     ValueError
-        知っている版より新しい場合
+        版が 1 以上の整数でない場合と, 知っている版より新しい場合
     """
-    # 版 2 はそのまま, 新しい版は読み込み無し (黙って読み違えないように)
-    version = problem.get("format_version")
-    numbered = isinstance(version, int) and not isinstance(version, bool)
-    if numbered and version > FORMAT_VERSION:
-        raise ValueError(newer_message(version, name))
-    if not numbered or version != 1:
+    # 版 2 はそのまま, 版でない値と新しい版は読み込み無し (黙って読み違え
+    # ないように)
+    message = version_message(problem, name)
+    if message:
+        raise ValueError(message)
+    if problem["format_version"] != 1:
         return problem
     upgraded = copy.deepcopy(problem)
     upgraded["format_version"] = FORMAT_VERSION
@@ -971,6 +985,16 @@ def upgrade_problem(problem: dict, name: str = "問題の設定") -> dict:
     if not moved and not (isinstance(ml, dict) and ml.get("use") is True):
         return upgraded
 
+    # 版 1 に手で書いた受け持ちの並びが崩れていれば, 移さずに元のまま
+    # (確かめで形の誤り)
+    parts = ml.get("parts") if isinstance(ml, dict) else None
+    if parts not in (None, []) and not (
+        isinstance(parts, list) and isinstance(parts[0], dict)
+    ):
+        upgraded = copy.deepcopy(problem)
+        upgraded["format_version"] = FORMAT_VERSION
+        return upgraded
+
     # 版 1 が前提にしていた答えと, 移した値
     task = moved.get(f"{PART}.task")
     defaults = {
@@ -982,14 +1006,46 @@ def upgrade_problem(problem: dict, name: str = "問題の設定") -> dict:
     }
     if not isinstance(upgraded.get("ml"), dict):
         upgraded["ml"] = {}
-    parts = upgraded["ml"].get("parts")
-    if not (isinstance(parts, list) and parts and isinstance(parts[0],
-                                                             dict)):
+    if not upgraded["ml"].get("parts"):
         upgraded["ml"]["parts"] = [{}]
     for key, value in {**defaults, **moved}.items():
-        set_value(upgraded, key, value)
+        if get_value(upgraded, key) is None:
+            set_value(upgraded, key, value)
 
     return upgraded
+
+
+def version_message(problem: Any, name: str) -> Optional[str]:
+    """
+    問題の設定の版が読めないときの誤りの文を作る関数
+
+    Parameters
+    ----------
+    problem: Any
+        問題の設定
+    name: str
+        誤りの文に使う名前
+
+    Returns
+    ----------
+    message: Optional[str]
+        版が 1 以上の整数でないか, 知っている版より新しい場合の文 (読める
+        なら None)
+    """
+    # 真偽値と小数と文字列は版ではない
+    version = problem.get("format_version") if isinstance(
+        problem, dict
+    ) else None
+    message: Optional[str] = None
+    if not isinstance(version, int) or isinstance(version, bool) or (
+        version < 1
+    ):
+        message = (f"問題の設定ではありません ({name}. format_version が"
+                   " 1 以上の整数でありません)")
+    elif version > FORMAT_VERSION:
+        message = newer_message(version, name)
+
+    return message
 
 
 def newer_message(version: int, name: str) -> str:

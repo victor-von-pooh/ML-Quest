@@ -9,6 +9,7 @@ from ml_quest import (
     handoff, is_ready, load_problem, make_project, new_problem, questions,
     recipe_from, save_problem, upgrade_problem
 )
+from ml_quest.problem import active_value, set_value
 
 # 版 1 の問題の設定 (版 1 の全ての項目と, 知らない項目)
 V1_TEXT = """
@@ -497,3 +498,72 @@ def test_newer_version_stops(tmp_path: Path) -> None:
         handoff(newer)
     with pytest.raises(ValueError, match="新しい版"):
         answer(newer, "issue.owner", "誰か")
+
+
+def test_review_fixes() -> None:
+    """
+    版 1 の dict の古い答え, その他の名前, 並びの書き込み, 版の値, 列の
+    予測の出力の形の確かめを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 版 1 の dict でも, 要らない問いの古い答えは active_value で除外
+    old = v1_problem()
+    old["ml"].update(task="classification", positive="yes")
+    assert active_value(old, "ml.time_column") is None
+    assert active_value(old, "ml.horizon") is None
+    assert active_value(old, "ml.positive") == "yes"
+    old["ml"]["use"] = False
+    assert active_value(old, "ml.target") is None
+
+    # その他の名前は英数字と _ . @ - だけ. 古い名前と向きは使わない
+    problem = answer(example_problem("解約の引き止め"),
+                     "ml.parts.0.evaluation.metric", "other")
+    problem = answer(problem, "ml.parts.0.evaluation.better", "higher")
+    for name, bad in (("recall@10", False), ("f1.macro", False),
+                      ("a/b", True), ("..", True), ("名前", True)):
+        named = answer(problem, "ml.parts.0.evaluation.name", name)
+        assert ("ml.parts.0.evaluation.name" in errors_of(named)) is bad
+    back = answer(named, "ml.parts.0.evaluation.metric", "loss")
+    assert handoff(back)["training"]["monitor"] == "valid/loss"
+
+    # 並びの番号でない名前と, 辞書でない受け持ちは誤り (黙って置き換えない)
+    with pytest.raises(ValueError, match="番号で"):
+        set_value(copy.deepcopy(problem), "ml.parts.x", 1)
+    hand = copy.deepcopy(problem)
+    hand["ml"]["parts"] = ["手書き"]
+    with pytest.raises(ValueError, match="辞書でない"):
+        answer(hand, "ml.parts.0.role", "rank")
+    assert errors_of(hand) == ["ml.parts"]
+
+    # 版 1 に手で書いた受け持ちの答えは上書きしない
+    mixed = v1_problem()
+    mixed["ml"]["parts"] = [{"unit": "window"}]
+    assert get_value(upgrade_problem(mixed), "ml.parts.0.unit") == "window"
+
+    # 版 2 の版 1 の場所の指標は, 書く場所の知らせ
+    misplaced = example_problem("総菜の作る量")
+    misplaced["evaluation"] = {"metric": "mae"}
+    message = check(misplaced)[0]["message"]
+    assert "版 2 では" in message and "知らない" not in message
+
+    # 1 以上の整数でない版は誤り
+    for version in ("2", 2.0, True, 0, None):
+        bad_version = example_problem("総菜の作る量")
+        bad_version["format_version"] = version
+        assert [item["id"] for item in check(bad_version)] == [
+            "format_version"
+        ]
+        with pytest.raises(ValueError, match="format_version"):
+            upgrade_problem(bad_version)
+
+    # 列の予測の出力の形はクラスか値か分布
+    shaped = answer(example_problem("総菜の作る量"), "ml.parts.0.output",
+                    "shape")
+    assert "ml.parts.0.output" in errors_of(shaped)

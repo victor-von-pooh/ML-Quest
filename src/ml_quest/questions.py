@@ -187,7 +187,10 @@ TASKS = [
 
 # 最良のモデルを選ぶ指標. fits は合う受け持ち, 正解の種類, タスクの組の
 # 並び (kinds と tasks が無ければ問わない). better は大きいほど良いか小さい
-# ほど良いか. tasks は版 1 の形 (列の予測のタスク)
+# ほど良いか. tasks は版 1 の形 (列の予測のタスク). loss は 2 つ (分類の
+# 交差エントロピーと, 他の受け持ちの損失. 監視する名前は同じ valid/loss
+# なので値も同じ). 選択肢は questions の choices (今の答えで絞り, 同じ値は
+# 1 つ) の利用
 METRICS = [
     {"value": "accuracy", "label": "当たった割合 (正解率. 大きいほど良い)",
      "tasks": ["classification"], "better": "higher",

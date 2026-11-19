@@ -53,8 +53,8 @@ EXAMPLES: dict[str, list[tuple[str, Any]]] = {
                              "over_cost": 150}),
         ("action.basis", "欠品は粗利 200 円, 廃棄は原価 150 円"),
         (f"{PART}.evaluation.metric", "mae"),
-        (f"{PART}.evaluation.link", "誤差が小さいほど作る量の外れが減り, 廃棄と欠品"
-                            "の損が減る"),
+        (f"{PART}.evaluation.link", "誤差が小さいほど作る量の外れが減り, "
+                                    "廃棄と欠品の損が減る"),
         ("verification.method", "both"),
         ("verification.backtest", "過去 3 か月で, 今のやり方と損を比べる"),
         ("verification.trial", "1 店で 4 週間"),
@@ -115,8 +115,8 @@ EXAMPLES: dict[str, list[tuple[str, Any]]] = {
         ("action.basis", "1 人の 1 年分の料金 24,000 円. 連絡 1 件の人件費"
                          " 1,500 円. 防げる割合は前の年の試しから 2 割"),
         (f"{PART}.evaluation.metric", "loss"),
-        (f"{PART}.evaluation.link", "確率が当たるほど, 連絡する会員を損得で正しく"
-                            "選べる"),
+        (f"{PART}.evaluation.link", "確率が当たるほど, 連絡する会員を損得で"
+                                    "正しく選べる"),
         ("verification.method", "trial"),
         ("verification.trial", "会員を 2 つに分け, 片方だけに 2 か月連絡する"),
         ("verification.success", "連絡した側の解約が 15 % 少ない"),

@@ -1,14 +1,21 @@
+import re
 from typing import Any
 
 from ml_quest.problem import (
-    DECISION_FIELDS, DECISION_NAMES, DECISION_OPTIONS, FORMAT_VERSION,
+    DECISION_FIELDS, DECISION_NAMES, DECISION_OPTIONS,
     active_value, applies, choice_fits, get_value, is_answered,
-    newer_message, upgrade_problem
+    upgrade_problem, version_message
 )
 from ml_quest.questions import (
     CONSUMERS, METHODS, METRICS, OUTPUTS, PART, QUESTIONS, ROLES,
     TARGET_KINDS, TARGET_SOURCES, UNITS, V1_METRICS
 )
+
+# その他の指標の名前 (学習の記録の名前と曲線のファイルの名前)
+METRIC_NAME = re.compile(r"[A-Za-z0-9_.@-]+")
+
+# 列の予測の出力の形
+COLUMN_OUTPUTS = ["class", "value", "distribution"]
 
 # 受け持ちの中の, 辞書で書く項目
 PART_DICTS = [f"{PART}.target", f"{PART}.target.process",
@@ -697,12 +704,13 @@ def check_evaluation(problem: dict) -> list[dict]:
         ))
     name = active_value(problem, f"{PART}.evaluation.name")
     if isinstance(name, str) and (
-        not name.strip() or any(c.isspace() or c == "/" for c in name)
+        not METRIC_NAME.fullmatch(name) or name in (".", "..")
     ):
         found.append(finding(
             "error", f"{PART}.evaluation.name",
-            f"指標の名前 {name} に空白か / があります (学習の記録の名前 "
-            "valid/<名前> にするため)"
+            f"指標の名前 {name} は英数字と _ . @ - だけで書いてください "
+            "(学習の記録の名前 valid/<名前> と, 曲線のファイルの名前にする"
+            "ため)"
         ))
     if metric and not get_value(problem, f"{PART}.evaluation.link"):
         found.append(finding(
@@ -744,13 +752,11 @@ def check(problem: dict) -> list[dict]:
     found: list[dict]
         確かめ (level, id, message) の並び. error, warning, info の順
     """
-    # 新しい版は読み込み無し (読める項目だけを使うと黙って読み違えるため)
-    version = problem.get("format_version")
-    if isinstance(version, int) and not isinstance(version, bool) and (
-        version > FORMAT_VERSION
-    ):
-        found = [finding("error", "format_version",
-                         newer_message(version, "この問題の設定"))]
+    # 版でない値と新しい版は読み込み無し (読める項目だけを使うと黙って
+    # 読み違えるため)
+    message = version_message(problem, "この問題の設定")
+    if message:
+        found = [finding("error", "format_version", message)]
         return found
 
     # 版 2 への移行の後, 版 1 の場所に残した知らない指標, 形の崩れと受け
@@ -794,10 +800,10 @@ def is_column_part(problem: dict) -> bool:
     column: bool
         列の予測か
     """
-    # 受け持ちと正解の種類の答え
-    column = get_value(problem, f"{PART}.role") == "predict" and get_value(
-        problem, f"{PART}.target.kind"
-    ) == "column"
+    # 受け持ちと正解の種類の答え (要らない問いの古い答えは除外)
+    column = active_value(problem, f"{PART}.role") == "predict" and (
+        active_value(problem, f"{PART}.target.kind") == "column"
+    )
 
     return column
 
@@ -822,11 +828,18 @@ def check_v1(problem: dict) -> list[dict]:
     found = []
     stale = problem.get("evaluation")
     metric = stale.get("metric") if isinstance(stale, dict) else None
-    if metric is not None:
+    if metric in V1_METRICS:
+        found.append(finding(
+            "error", f"{PART}.evaluation.metric",
+            f"evaluation.metric の {metric} は版 1 の場所です. 版 2 では最良"
+            "を選ぶ指標を ml.parts.0.evaluation に書いてください"
+        ))
+    elif metric is not None:
         found.append(finding(
             "error", f"{PART}.evaluation.metric",
             f"evaluation.metric の {metric} は知らない指標です (版 1 のファ"
-            f"イルで書けるのは {', '.join(V1_METRICS)})"
+            f"イルで書けるのは {', '.join(V1_METRICS)}. 版 2 では "
+            "ml.parts.0.evaluation に書く)"
         ))
 
     return found
@@ -901,9 +914,19 @@ def check_part(problem: dict) -> list[dict]:
                 "に合いません"
             ))
 
-    # 列の予測のタスクと出力の形
+    # 列の予測の正解の種類と出力の形 (表の列はクラスか値か分布)
     task = active_value(problem, f"{PART}.task")
     output = active_value(problem, f"{PART}.output")
+    if is_column_part(problem) and output not in (
+        None, *COLUMN_OUTPUTS
+    ):
+        found.append(finding(
+            "error", f"{PART}.output",
+            f"正解の種類が表の列なので, 出力の形は {', '.join(COLUMN_OUTPUTS)}"
+            f" のどれかにしてください (今は {output})"
+        ))
+
+    # 列の予測のタスクと出力の形
     if task == "classification" and output not in (None, "class"):
         found.append(finding("warning", f"{PART}.output",
                              "分類なのに, 出力の形がクラスではありません"))

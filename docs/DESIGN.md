@@ -180,16 +180,20 @@ operation:                        # 10. 運用
 | 効果を見積もる | `qini` (大きい), `loss` (小さい) |
 | 全て | `other` その他 (名前 `evaluation.name` と向き `evaluation.better` を書く) |
 
-- 監視する指標は `valid/<指標>` (RMSE は並びの同じ `valid/mse`). その他は `valid/<名前>`. 名前は空白と `/` を持てない
+- 監視する指標は `valid/<指標>` (RMSE は並びの同じ `valid/mse`). その他は `valid/<名前>`. 名前は英数字と `_`, `.`, `@`, `-` だけ (`.` と `..` は除く. 学習の記録の名前と曲線のファイルの名前になるため)
+- `loss` は `METRICS` に 2 つある (分類の交差エントロピーと, 他の受け持ちの損失. 監視する名前が同じ `valid/loss` なので値も同じ). 画面は `METRICS` を直接使わず, `questions` の `choices` (今の答えで絞り, 同じ値は 1 つ) を使う
+- 指標をその他から変えた後の名前と向きは, 他の要らなくなった問いの古い答えと同じく, ファイルに残すが使わない (受け渡しは要る問いの答えだけを読む)
+- 列の予測の出力の形は `class`, `value`, `distribution` のどれか (他は `error`)
 - 版 1 のファイルの指標は 4 つ (`accuracy`, `loss`, `mae`, `rmse`) のまま読め, 版 1 のファイルにそれ以外 (`other` も) を書くと「知らない指標」の誤り. 版 2 から候補と `other` を書ける. 版 1 の 4 つの他の指標は移さず, 版 1 の場所 (`evaluation.metric`) に残す (確かめで「知らない指標」. 最良を選ぶ指標に答えると消える)
 
 ### 版と, 版 1 から移す
 
 - 版 1 は「1 件の値を表の列から予測する」課題だけを書けた (`ml` の直下にタスクや目的の列, 学習の指標は `evaluation`). 版 2 で受け持ちごとの項目を `ml.parts` に移した
-- `upgrade_problem(problem)` は版 1 を版 2 に移す (元は変えない). 版 1 の値は全て移る: `ml.predict` → `what`, `ml.row` → `item`, `ml.target` → `target.column`, `ml.task`, `ml.positive`, `ml.group_column`, `ml.split_time_column`, `ml.time_column`, `ml.series_by`, `ml.available_lag`, `ml.horizon`, `ml.baseline`, `ml.consumer`, `ml.downstream` は同じ名前で受け持ちの中へ, `evaluation.metric` と `evaluation.link` は受け持ちの `evaluation` へ. `ml.use`, `ml.reason`, `ml.constraints` と他の節はそのまま. 知らない項目もそのまま残す
+- `upgrade_problem(problem)` は版 1 を版 2 に移す (元は変えない. 版 1 に手で書いた受け持ちがあれば, その答えは上書きしない. 受け持ちの並びが崩れていれば移さず, 確かめで形の誤り). 版 1 の値は全て移る: `ml.predict` → `what`, `ml.row` → `item`, `ml.target` → `target.column`, `ml.task`, `ml.positive`, `ml.group_column`, `ml.split_time_column`, `ml.time_column`, `ml.series_by`, `ml.available_lag`, `ml.horizon`, `ml.baseline`, `ml.consumer`, `ml.downstream` は同じ名前で受け持ちの中へ, `evaluation.metric` と `evaluation.link` は受け持ちの `evaluation` へ. `ml.use`, `ml.reason`, `ml.constraints` と他の節はそのまま. 知らない項目もそのまま残す
 - 版 1 が前提にしていた答えは, 移すときに埋める: 受け持ちは `predict`, 1 件の単位は `row`, 正解の出どころと種類は `column`, 作り方は `scratch` (版 1 の通り道は, 表の列を一から学習する骨組みだけだったため), 出力の形はタスクから (分類は `class`, 他は `value`). 受け持ちを作るのは, 機械学習を使うか, 受け持ちの項目が 1 つでもある場合だけ
 - **先に移す**: 問い, 答え, 確かめ, 受け渡し, 要約, 書き戻し, データの候補, 骨組みは, 版 1 の問題の設定を受け取ると先に版 2 に移して扱う (返す問題の設定は版 2). 版ごとに 2 通りの確かめを持たないため. `load_problem` も読んだ後に移す (ファイルは書くまで版 1 のまま)
 - 版 1 の場所の名前 (`ml.target`, `ml.task`, `evaluation.metric` など) は, 版 2 の問題の設定でも `get_value`, `active_value`, `answer` で使える (移した先を読み書きする). 後ろの段階が版 1 の名前で読んでいても壊れないように
+- 版が 1 以上の整数でない問題の設定 (文字列, 小数, 真偽値, 0) も, 読み込みと同じく誤り
 - 知っている版より新しい版は読まない. `load_problem` と, 問題の設定を受け取る関数は誤り (`ValueError`) で止まり, `check` は版の誤りだけを返す (読める項目だけを使うと, 黙って読み違えるため)
 
 ## 問い
@@ -258,7 +262,7 @@ operation:                        # 10. 運用
 
 - **形**: 手で書いたファイルで, 値の形が崩れている (並びでない受け持ち, 辞書でない受け持ち, 知らない受け持ち, 1 件の単位, 出力の形, 正解の出どころ, 正解の種類, 作り方, その他の指標の向き, 版 1 のファイルの 4 つ以外の指標, 知らない意思決定の型やタスクや指標, 文字列でないタスク, 目的の列, 時刻の列, 当たりのクラス, 指標, 列の名前の並びでない値, 辞書でない分解の行, 文字列でない使い道と後段と守る指標の名前, 知らない使い道, 文の並びでない制約) (`error`. この場合は他の確かめをしない)
 - **受け持ちの数**: 受け持ちが 2 つ以上 (`error`. 今は 1 つだけ書ける. 形の誤りと同じく他の確かめをしない)
-- **知らない版**: 知っている版より新しい (`error`. 他の確かめをしない)
+- **知らない版**: 版が 1 以上の整数でないか, 知っている版より新しい (`error`. 他の確かめをしない)
 - **足りない答え**: 今の答えのもとで要る問いの空 (`error`). 機械学習を使わない場合は, 1 から 4 と, 使うかとその理由だけを要る
 - **筋道**: 機械学習で手伝う手 (`decomposition` の `ml: true`) が無いのに `ml.use` が `true` (`warning`. 何を手伝うのかが分からない). 指標の今の値と目指す値の向きが `better` と逆 (`error`)
 - **タスクと行動**: `quantity` は回帰か予測, `select` と `triage` は分類で `positive` が要る (`error`). 分類で `positive` が無く, 行動が `none` 以外 (`error`)
