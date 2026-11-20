@@ -1,10 +1,14 @@
 # ML-Quest
 
-機械学習をもとにした課題解決のために, 問題を設定するライブラリ.
+「機械学習を全て GUI 上で行う」うちの「問題の設定」の段階のライブラリ. 画面のアプリ [ML-Pathfinder](https://github.com/victor-von-pooh/ML-Pathfinder) が使う.
 
-機械学習は課題を解く手段の 1 つにすぎない. 課題から始めて, 課題を分解し, どの部分を機械学習に任せると課題の解決につながるかを, 決まった順の問いで埋めて 1 つのファイル (`problem.yaml`) に残す. 答えどうしの食い違いを確かめ, 後ろの段階 (データの分析, モデルの作成, 学習・評価, 推論) が要る値をまとめ, [ML-Found](https://github.com/victor-von-pooh/ML-Found) のプロジェクトの骨組み (config と学習のスクリプト) を書き出す. 機械学習が要らないと分かれば, そこで終える.
+## できること
 
-画面は [ML-Pathfinder](https://github.com/victor-von-pooh/ML-Pathfinder). 設計の方針は [docs/DESIGN.md](docs/DESIGN.md) を参照.
+- 課題から始めて, 課題を分解し, どの部分を機械学習に任せると課題の解決につながるかを, 決まった順の問いで埋めて 1 つのファイル (`problem.yaml`) に残す. 機械学習が要らないと分かれば, そこで終える
+- 答えどうしの食い違いと足りない答えを確かめる
+- 後ろの段階 (データの分析, モデルの作成, 学習・評価, 推論) が要る値をまとめて返す
+- 手元のデータから答えの候補と今のやり方の損を出す (ML-EDA を使う)
+- [ML-Found](https://github.com/victor-von-pooh/ML-Found) のプロジェクトの骨組み (config と学習のスクリプト) を書き出す
 
 ## 導入
 
@@ -80,27 +84,12 @@ problem = example_problem("総菜の作る量")
 
 骨組みを書き出せるのは, 列の予測 (分類, 回帰, 時系列の予測) と, 予測するで正解の種類が画像の領域か点群の受け持ち. 後の 2 つは ML-EDA の版 2 のデータセット (`export_image_masks`, `export_capture_clouds`) で学習する骨組みで, 入れた版 2 のデータセットをプロジェクトに写し, 仮のモデル (印 TODO) と, 損失と指標 (領域は交差エントロピーと IoU, 点群は Chamfer) を書く. 書き出せない理由は `project_error(problem)` で分かる.
 
-## 開発
+## 文書
 
-```bash
-python -m venv .venv
-.venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest
-```
-
-| ディレクトリ | 内容 |
-| --- | --- |
-| `src/ml_quest/questions.py` | 問いの並び, タスクと指標の選択肢 |
-| `src/ml_quest/problem.py` | 問題の設定の作成, 答え, 読み書き, 列の名前の読み込み |
-| `src/ml_quest/check.py` | 確かめ |
-| `src/ml_quest/handoff.py` | 受け渡しの値と要約の文 |
-| `src/ml_quest/requirements.py` | 要る機能の名前 (ML-Found の登録簿の名前) と, 答えから要る機能 |
-| `src/ml_quest/skeleton.py` | ML-Found のプロジェクトの骨組み |
-| `src/ml_quest/items_skeleton.py` | ML-EDA の版 2 のデータセット (画像と領域, 撮影と点群) で学習する骨組み |
-| `src/ml_quest/examples.py` | 見本の問題の設定 |
-| `src/ml_quest/data.py` | 手元のデータの読み込みと写し, 答えの候補と確かめ, 今のやり方の損 (ML-EDA) |
-| `src/ml_quest/bridge.py` | データの分析の段階とつなぐ部品 (レシピの雛形と書き戻し) |
-| `docs/DESIGN.md` | 設計の方針と段階 |
+- [docs/DESIGN.md](docs/DESIGN.md): 今の設計と決まり, 他のリポジトリとの約束 (問題の設定の形と版)
+- [TODO.md](TODO.md): まだやっていないこと (優先度の順)
+- [CODING_STYLE.md](CODING_STYLE.md): コードの書き方
+- [CLAUDE.md](CLAUDE.md): このリポジトリで作業するときの方針
 
 ## ライセンス
 
