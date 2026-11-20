@@ -1,10 +1,13 @@
 import copy
-from typing import Any
+from pathlib import Path
+from typing import Any, Optional
 
-from ml_quest.check import finding, is_column_part
-from ml_quest.handoff import handoff
+from ml_quest.check import finding, is_column_part, is_items_part
+from ml_quest.data import ITEMS_LOADER
+from ml_quest.handoff import export_split, handoff
 from ml_quest.problem import (
-    active_value, answer, get_value, set_value, upgrade_problem
+    active_value, answer, data_location, get_value, set_value,
+    upgrade_problem
 )
 from ml_quest.questions import PART
 
@@ -12,10 +15,25 @@ from ml_quest.questions import PART
 VALID_RATIO = 0.15
 TEST_RATIO = 0.15
 
+# 正解の種類から, ML-EDA の版 2 の書き出しと, 入力と正解のディレクトリの
+# 名前 (ML-EDA の合成の見本と同じ)
+EXPORTS = {
+    "mask": ("export_image_masks", "images", "masks"),
+    "point_cloud": ("export_capture_clouds", "captures", "clouds"),
+}
+
+# 書き出しの設定の鍵と, 書き出しごとの他の引数
+EXPORT_KEYS = ("function", "inputs", "targets", "split", "groups", "origin",
+               "options")
+EXPORT_OPTIONS = {
+    "export_image_masks": ("classes", "mask_suffix"),
+    "export_capture_clouds": ("cloud_units",),
+}
+
 
 def require_column_part(problem: dict, purpose: str) -> None:
     """
-    列の予測 (予測するで, 正解の種類が表の列) でなければ止める関数
+    列の予測かファイルの組の受け持ちでなければ止める関数
 
     Parameters
     ----------
@@ -31,13 +49,13 @@ def require_column_part(problem: dict, purpose: str) -> None:
     Raises
     ----------
     ValueError
-        列の予測でない場合
+        列の予測でもファイルの組の受け持ちでもない場合
     """
     # 他の受け持ちのデータの約束は, データの分析の段階の版の上げの後
-    if not is_column_part(problem):
+    if not is_column_part(problem) and not is_items_part(problem):
         raise ValueError(
-            f"{purpose}は, 予測するで正解の種類が表の列の場合だけです (他の"
-            "受け持ちと正解の種類はまだ扱えません)"
+            f"{purpose}は, 予測するで正解の種類が表の列, 画像の領域, 点群の"
+            "場合だけです (他の受け持ちと正解の種類はまだ扱えません)"
         )
 
 
@@ -56,18 +74,26 @@ def recipe_from(problem: dict) -> dict:
     ----------
     start: dict
         load (場所, 読み込みの種類と設定. データを入れていなければ None),
-        recipe (ML-EDA のレシピの形), notes (知らせの文の並び)
+        recipe (ML-EDA のレシピの形. ファイルの組の受け持ちでは None),
+        export (ファイルの組の書き出しの設定. 列の予測では None),
+        notes (知らせの文の並び)
 
     Raises
     ----------
     ValueError
-        受け渡せない問題の設定の場合と, 列の予測でない場合
+        受け渡せない問題の設定の場合と, 列の予測でもファイルの組の受け持ち
+        でもない場合
     """
-    # 受け渡しの値 (渡せなければ誤り. 版 1 は先に版 2 へ移行). 列の予測だけ
+    # 受け渡しの値 (渡せなければ誤り. 版 1 は先に版 2 へ移行)
     problem = upgrade_problem(problem)
     stages = handoff(problem)
     require_column_part(problem, "レシピの下書き")
     data = stages["data"]
+    if is_items_part(problem):
+        start = {"load": load_of(data), "recipe": None,
+                 "export": export_from(problem, data), "notes": []}
+        start["notes"] = start["export"].pop("notes")
+        return start
     notes = []
 
     # 書き戻したレシピがあればそれ. 無ければ雛形 (除く列, 系列ごとの決める
@@ -82,6 +108,28 @@ def recipe_from(problem: dict) -> dict:
         recipe = skeleton_recipe(problem, data, notes)
 
     # データの読み方 (時刻の列は答えから)
+    start = {"load": load_of(data), "recipe": recipe, "export": None,
+             "notes": notes}
+
+    return start
+
+
+def load_of(data: dict) -> Optional[dict]:
+    """
+    受け渡しのデータの分析の値から, データの読み方を作る関数
+
+    Parameters
+    ----------
+    data: dict
+        受け渡しのデータの分析の値
+
+    Returns
+    ----------
+    load: Optional[dict]
+        path, loader, options (時刻の列は答えから. データを入れていなければ
+        None)
+    """
+    # 場所, 読み込みの種類と設定
     source = data.get("source")
     load = None
     if source:
@@ -90,9 +138,132 @@ def recipe_from(problem: dict) -> dict:
             options["time_column"] = data["time_column"]
         load = {"path": source["source"], "loader": source.get("loader"),
                 "options": options}
-    start = {"load": load, "recipe": recipe, "notes": notes}
 
-    return start
+    return load
+
+
+def export_from(problem: dict, data: dict) -> dict:
+    """
+    ファイルの組の受け持ちの, 版 2 の書き出しの設定を返す関数
+
+    書き戻した設定があり, 書き出しが正解の種類に合えばそれを返す
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. ファイルの組の受け持ち)
+    data: dict
+        受け渡しのデータの分析の値
+
+    Returns
+    ----------
+    export: dict
+        書き出しの設定 (function, inputs, targets, split, groups, origin,
+        options) と, 知らせの文の並び (notes)
+    """
+    # 書き戻した設定 (書き出しが今の正解の種類に合う場合だけ)
+    kind = active_value(problem, f"{PART}.target.kind")
+    function, _, _ = EXPORTS[kind]
+    saved = get_value(problem, "data.export")
+    notes = []
+    if isinstance(saved, dict) and saved.get("function") == function:
+        export = {**copy.deepcopy(saved), "notes": notes}
+        return export
+    if isinstance(saved, dict):
+        notes.append(f"書き戻した書き出しの設定 ({saved.get('function')}) は"
+                     f"正解の種類 {kind} に合わないので, 下書きから始めます")
+
+    # 下書き (ディレクトリ, 受け渡しの分割, 正解の出どころ)
+    inputs, targets = pair_dirs(problem, kind, data, notes)
+    export = {
+        "function": function, "inputs": inputs, "targets": targets,
+        "split": {"method": data["split"], "valid": VALID_RATIO,
+                  "test": TEST_RATIO, "seed": 0},
+        "groups": None, "origin": origin_of(problem), "options": {},
+        "notes": notes,
+    }
+
+    return export
+
+
+def pair_dirs(
+    problem: dict, kind: str, data: dict, notes: list
+) -> tuple[Optional[str], Optional[str]]:
+    """
+    入れたデータの場所から, 入力と正解のディレクトリを埋める関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+    kind: str
+        正解の種類 (mask か point_cloud)
+    data: dict
+        受け渡しのデータの分析の値
+    notes: list
+        知らせの文の並び (書き足す)
+
+    Returns
+    ----------
+    dirs: tuple[Optional[str], Optional[str]]
+        入力と正解のディレクトリ (分からなければ None)
+    """
+    # データを入れていないか, 版 2 のデータセットを入れた場合は埋めない
+    source = data.get("source") or {}
+    location = data_location(problem)
+    _, inputs, targets = EXPORTS[kind]
+    dirs: tuple[Optional[str], Optional[str]] = (None, None)
+    if not location:
+        notes.append("データが入っていないので, 入力と正解のディレクトリを"
+                     "選んでください")
+        return dirs
+    if source.get("loader") == ITEMS_LOADER:
+        notes.append("入れたデータは書き出した版 2 のデータセットです. 書き"
+                     "出し直すなら, 元の入力と正解のディレクトリを選んで"
+                     "ください")
+        return dirs
+
+    # 場所が 2 つのディレクトリを持つか, 入力のディレクトリで隣に正解が
+    # あればその 2 つ. 他は場所を入力に
+    place = Path(location)
+    if (place / inputs).is_dir() and (place / targets).is_dir():
+        dirs = (str(place / inputs), str(place / targets))
+    elif place.name == inputs and (place.parent / targets).is_dir():
+        dirs = (str(place), str(place.parent / targets))
+    else:
+        dirs = (str(place), None)
+        notes.append("正解のディレクトリが分からないので選んでください (入力"
+                     "は入れたデータの場所にしました)")
+
+    return dirs
+
+
+def origin_of(problem: dict) -> dict:
+    """
+    問題の設定の正解の出どころから, ML-EDA の origin を作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+
+    Returns
+    ----------
+    origin: dict
+        type, name, settings (今の処理なら process と処理の名前と設定,
+        他は unknown)
+    """
+    # 今の処理だけ ML-EDA の種類と 1 対 1 に当たる
+    origin: dict[str, Any] = {"type": "unknown", "name": None, "settings": {}}
+    if active_value(problem, f"{PART}.target.source") == "process":
+        settings = active_value(problem, f"{PART}.target.process.settings")
+        origin = {
+            "type": "process",
+            "name": active_value(problem, f"{PART}.target.process.name"),
+            "settings": {"note": settings} if settings else {},
+        }
+
+    return origin
 
 
 def skeleton_recipe(problem: dict, data: dict, notes: list) -> dict:
@@ -194,19 +365,23 @@ def apply_recipe(problem: dict, recipe: dict) -> dict:
     problem: dict
         問題の設定
     recipe: dict
-        ML-EDA のレシピ
+        ML-EDA のレシピ (ファイルの組の受け持ちでは書き出しの設定)
 
     Returns
     ----------
     result: dict
-        problem (書き戻した問題の設定 (版 2). レシピも data.recipe に持つ),
+        problem (書き戻した問題の設定 (版 2). レシピも data.recipe に持つ.
+        書き出しの設定は data.export),
         changes (変えた点の文), conflicts (確かめの形の食い違い),
         choices (列ごとの選ぶ問い. 分からない列をレシピで使った場合)
     """
     # 目的の列とタスク (新しい目的の列は列の使い方から外す. 版 1 は先に
-    # 移す). 列の予測だけ
+    # 移す). ファイルの組の受け持ちは書き出しの設定
     updated = copy.deepcopy(upgrade_problem(problem))
     require_column_part(updated, "レシピの書き戻し")
+    if is_items_part(updated):
+        result = apply_export(updated, recipe)
+        return result
     changes = []
     old_target = get_value(updated, f"{PART}.target.column")
     task = recipe.get("task")
@@ -244,6 +419,147 @@ def apply_recipe(problem: dict, recipe: dict) -> dict:
               "conflicts": conflicts, "choices": choices}
 
     return result
+
+
+def apply_export(problem: dict, export: dict) -> dict:
+    """
+    ファイルの組の書き出しの設定を問題の設定に書き戻す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 写した後のもの. ファイルの組の受け持ち)
+    export: dict
+        書き出しの設定
+
+    Returns
+    ----------
+    result: dict
+        problem (data.export に設定を持つ問題の設定), changes, conflicts,
+        choices (いつも空)
+
+    Raises
+    ----------
+    ValueError
+        設定の形の誤り
+    """
+    # 形を確かめ, 書き出しと分割の食い違いを集めて持つ
+    settings = checked_export(export)
+    conflicts = export_conflicts(problem, settings)
+    set_value(problem, "data.export", settings)
+    result = {
+        "problem": problem,
+        "changes": [f"ファイルの組の書き出しの設定 ({settings['function']})"
+                    "を書き戻した"],
+        "conflicts": conflicts, "choices": [],
+    }
+
+    return result
+
+
+def checked_export(export: Any) -> dict:
+    """
+    書き出しの設定の形を確かめ, 決まった形にする関数
+
+    Parameters
+    ----------
+    export: Any
+        書き出しの設定
+
+    Returns
+    ----------
+    settings: dict
+        全ての鍵を持つ設定 (無い鍵は空)
+
+    Raises
+    ----------
+    ValueError
+        辞書でない, 知らない鍵か書き出し, 辞書でない分割, グループ,
+        正解の出どころ, 他の引数, 文字でないディレクトリの場合
+    """
+    # 鍵と書き出し
+    if not isinstance(export, dict):
+        raise ValueError("書き出しの設定は辞書にしてください")
+    unknown = sorted(str(key) for key in export if key not in EXPORT_KEYS)
+    if unknown:
+        raise ValueError(f"書き出しの設定の {', '.join(unknown)} は知らない"
+                         "鍵です")
+    function = export.get("function")
+    if function not in EXPORT_OPTIONS:
+        raise ValueError("書き出しの設定の function は "
+                         f"{', '.join(EXPORT_OPTIONS)} のどれかにしてください")
+
+    # ディレクトリ, 分割, グループ, 正解の出どころ, 他の引数
+    for key in ("inputs", "targets"):
+        if export.get(key) is not None and not isinstance(export[key], str):
+            raise ValueError(f"書き出しの設定の {key} は文字にしてください")
+    for key in ("split", "groups", "origin", "options"):
+        if export.get(key) is not None and not isinstance(export[key], dict):
+            raise ValueError(f"書き出しの設定の {key} は辞書にしてください")
+    options = dict(export.get("options") or {})
+    extra = sorted(str(key) for key in options
+                   if key not in EXPORT_OPTIONS[function])
+    if extra:
+        raise ValueError(f"{function} の引数に {', '.join(extra)} はあり"
+                         "ません")
+    settings = {
+        "function": function,
+        "inputs": export.get("inputs") or None,
+        "targets": export.get("targets") or None,
+        "split": copy.deepcopy(dict(export.get("split") or {})),
+        "groups": {str(key): str(value) for key, value in
+                   (export.get("groups") or {}).items()} or None,
+        "origin": copy.deepcopy(dict(export.get("origin") or {})),
+        "options": copy.deepcopy(options),
+    }
+
+    return settings
+
+
+def export_conflicts(problem: dict, settings: dict) -> list[dict]:
+    """
+    書き出しの設定と問題の設定の食い違いを返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (ファイルの組の受け持ち)
+    settings: dict
+        書き出しの設定 (決まった形)
+
+    Returns
+    ----------
+    conflicts: list[dict]
+        確かめの形の食い違い
+    """
+    # 書き出しと正解の種類
+    kind = active_value(problem, f"{PART}.target.kind")
+    function = EXPORTS[kind][0]
+    conflicts = []
+    if settings["function"] != function:
+        conflicts.append(finding(
+            "error", f"{PART}.target.kind",
+            f"書き出しが {settings['function']} ですが, 正解の種類 {kind} "
+            f"は {function} で書き出します"
+        ))
+
+    # 検証用の分割と, グループごとの分割のグループ (ML-EDA の既定の割合は
+    # 検証用 2 割)
+    split = settings["split"]
+    method = export_split(settings)
+    if method == "none" or split.get("valid", 1) == 0:
+        conflicts.append(finding(
+            "warning", "data.export",
+            "検証用の分割がありません. 骨組みの学習は検証用の分割が無いと"
+            "止まります"
+        ))
+    if method == "group" and not settings["groups"]:
+        conflicts.append(finding(
+            "error", "data.export",
+            "グループごとに分けるのに, グループがありません"
+        ))
+
+    return conflicts
 
 
 def recipe_conflicts(problem: dict, recipe: dict) -> tuple[list, list]:

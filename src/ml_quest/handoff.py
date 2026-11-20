@@ -1,7 +1,7 @@
 from pathlib import PurePath
 from typing import Any, Optional
 
-from ml_quest.check import check, is_column_part
+from ml_quest.check import check, is_column_part, is_items_part
 from ml_quest.problem import (
     DECISION_NAMES, DECISION_OPTIONS, FIELD_NAMES, OPTION_NAMES,
     active_value, data_location, get_value, upgrade_problem
@@ -125,6 +125,7 @@ def handoff(problem: dict) -> dict:
         stages = {
             "part": part,
             "data": {**column_data(problem, None),
+                     **items_data(problem),
                      "project_dataset": project["dataset"]},
             "model": {"task": None, "outputs": None, "role": part["role"],
                       "target_kind": part["target_kind"],
@@ -346,6 +347,60 @@ def column_data(problem: dict, task: Optional[str]) -> dict:
     }
 
     return data
+
+
+def items_data(problem: dict) -> dict:
+    """
+    ファイルの組の受け持ちの, データの分析の段階に渡す分割とグループを作る
+    関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    data: dict
+        split と groups (書き戻した書き出しの設定から. ファイルの組の受け
+        持ちでなければ空)
+    """
+    # 書き戻した設定が無ければ無作為 (辞書でない値は無いものとして)
+    data: dict = {}
+    if not is_items_part(problem):
+        return data
+    saved = get_value(problem, "data.export")
+    saved = saved if isinstance(saved, dict) else {}
+    groups = saved.get("groups")
+    data = {"split": export_split(saved),
+            "groups": dict(groups) if isinstance(groups, dict) and groups
+            else None}
+
+    return data
+
+
+def export_split(export: dict) -> str:
+    """
+    書き出しの設定の分割のしかたを返す関数
+
+    Parameters
+    ----------
+    export: dict
+        書き出しの設定 (split, groups)
+
+    Returns
+    ----------
+    method: str
+        split の method. 無ければ ML-EDA の既定 (グループがあれば group,
+        無ければ random)
+    """
+    # 選んでいなければ ML-EDA と同じ既定
+    split = export.get("split")
+    method = split.get("method") if isinstance(split, dict) else None
+    if not isinstance(method, str) or not method:
+        method = "group" if export.get("groups") else "random"
+
+    return method
 
 
 def drop_columns(problem: dict) -> list[str]:
