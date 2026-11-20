@@ -182,7 +182,7 @@ def items_message(problem: dict) -> Optional[str]:
 
     ファイルの組の受け持ち (予測するの mask と point_cloud) には, 受け持ち
     と正解の種類が同じ版 2 のデータセットだけが使える. 他の受け持ちでは
-    データセットを見ない (列の予測が dataset.yaml で新しく止まらないように)
+    データセットを見ない (列の予測が dataset.yaml で止まらないように)
 
     Parameters
     ----------
@@ -520,7 +520,7 @@ def is_items(location: Path) -> bool:
         dataset.yaml の版が 2 のディレクトリか (読めない説明は False. 読む
         ときに ML-EDA が誤りを出す)
     """
-    # 版 1 は今までどおり ML-EDA の読み込みへ
+    # 版 1 は ML-EDA の読み込みへ
     try:
         info = dataset_info(location)
     except ValueError:

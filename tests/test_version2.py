@@ -445,7 +445,7 @@ def test_other_metric(tmp_path: Path) -> None:
     spaced = answer(problem, "ml.parts.0.evaluation.name", "f 1")
     assert "ml.parts.0.evaluation.name" in errors_of(spaced)
 
-    # 版 1 のファイルでは 4 つの他は知らない指標 (今までと同じ)
+    # 版 1 のファイルでは 4 つの他は知らない指標
     for metric in ("other", "chamfer"):
         old = v1_problem()
         old["evaluation"]["metric"] = metric

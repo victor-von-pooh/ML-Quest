@@ -286,7 +286,7 @@ def test_items_mismatch(tmp_path: Path) -> None:
     found = inspect_data(cloud)
     assert "error" in [item["level"] for item in found["findings"]]
 
-    # 列の予測はデータセットを見ない (読めない dataset.yaml でも今までどおり)
+    # 列の予測はデータセットを見ない (読めない dataset.yaml でも止まらない)
     # ただし版 2 を入れると, 分析の確かめで使えないと知らせる
     column = attach_data(example_problem("総菜の作る量"), str(paths["mask"]))
     assert project_error(column) is None
