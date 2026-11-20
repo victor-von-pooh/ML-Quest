@@ -8,8 +8,9 @@ from ml_quest.problem import active_value
 from ml_quest.questions import PART
 
 # 学習のスクリプトが読み込むライブラリの, ML-Found の登録簿の機能の名前
-# (ml_eda. ml_modelcontrol は config に定義を書いたときだけ読む)
-ITEMS_LIBRARIES = ["eda"]
+# (ml_eda と ml_inference. ml_modelcontrol は config に定義を書いたとき
+# だけ読む)
+ITEMS_LIBRARIES = ["eda", "inference"]
 
 # 学習のスクリプトの頭 (読み込みと, 問題の設定から決まる既定値). 答えの
 # 文字は JSON の文字列で埋め込み
@@ -434,6 +435,32 @@ def make_trainer(
     return trainer
 
 
+def bundle_items(dataset: ItemDataset, cfg: object) -> dict:
+    """
+    推論の一式に書く, 学習と同じ 1 件の扱いを返す関数
+
+    Parameters
+    ----------
+    dataset: ItemDataset
+        ML-EDA の版 2 のデータセット
+    cfg: object
+        config (使わない. 点群とそろえるための引数)
+
+    Returns
+    ----------
+    items: dict
+        入力と正解の項目の名前と, クラスの番号ごとの領域の値 (値の番号の
+        表の順)
+    """
+    # 番号の表の, 名前のある値の小さい順 (番号 0 から)
+    lookup = class_table(dataset)[0]
+    names = entry_names(dataset)
+    items = {"input": names[0], "target": names[1], "prepare": "image",
+             "values": [int(v) for v in np.flatnonzero(lookup >= 0)]}
+
+    return items
+
+
 def evaluate_test(
     trainer: Trainer, loader: DataLoader, experiment: Experiment
 ) -> list[dict]:
@@ -819,6 +846,37 @@ def make_trainer(
     return trainer
 
 
+def bundle_items(dataset: ItemDataset, cfg: object) -> dict:
+    """
+    推論の一式に書く, 学習と同じ 1 件の扱いを返す関数
+
+    Parameters
+    ----------
+    dataset: ItemDataset
+        ML-EDA の版 2 のデータセット
+    cfg: object
+        config (入力と正解の点の数と乱数の種)
+
+    Returns
+    ----------
+    items: dict
+        入力と正解の項目の名前, 扱い方 (撮影は深度から点に), 点の数と,
+        検証用の分割と同じ乱数の種 (一式の確かめが学習の記録と合うように)
+    """
+    # 検証用の分割の種は make_datasets と同じ (分割の順の番号を足す)
+    names = entry_names(dataset)
+    kind = dataset.entries[names[0]]["kind"]
+    items = {
+        "input": names[0], "target": names[1],
+        "prepare": "capture_points" if kind == "capture" else "points",
+        "options": {"points": cfg.data.input_points,
+                    "target_points": cfg.data.target_points,
+                    "seed": cfg.data.seed + SPLITS.index("valid")},
+    }
+
+    return items
+
+
 def evaluate_test(
     trainer: Trainer, loader: DataLoader, experiment: Experiment
 ) -> list[dict]:
@@ -907,9 +965,66 @@ def make_model(dataset: ItemDataset, cfg: object) -> nn.Module:
     return model
 
 
+def make_inference(
+    cfg: object, path: Path, dataset: ItemDataset, run_dir: Path,
+    experiment: Experiment
+) -> None:
+    """
+    学習した重みから, 実験の中に ML-Inference の推論の一式を作る関数
+
+    Parameters
+    ----------
+    cfg: object
+        config (model.spec に ML-ModelControl の定義の場所)
+    path: Path
+        ML-EDA の版 2 のデータセットの場所
+    dataset: ItemDataset
+        ML-EDA の版 2 のデータセット
+    run_dir: Path
+        実験のディレクトリ
+    experiment: Experiment
+        実験 (train.log に記録する)
+
+    Returns
+    ----------
+    None
+    """
+    # 仮のモデルは ML-ModelControl の定義が無いので一式にできない
+    if not cfg.model.spec:
+        experiment.logger.info(
+            "仮のモデル (PlaceholderModel) は ML-ModelControl の定義が無い"
+            "ので, 推論の一式を作りません. config の model.spec に定義を"
+            "書くと, 学習の後に作ります"
+        )
+        return
+
+    # 学習と同じ 1 件の扱いで一式を作り, 検証用の分割の評価を記録と比べる
+    from ml_inference import make_bundle
+    info = make_bundle(
+        run_dir / "inference", PROJECT_DIR / cfg.model.spec, path, run_dir,
+        items=bundle_items(dataset, cfg), name=cfg.experiment.name
+    )
+    check = info["check"]
+    if check and check["recorded"] is None:
+        experiment.logger.info(
+            f"推論の一式: {check['split']} の {check['metric']} "
+            f"{check['value']:,.4f} (学習の記録とは比べない. 監視した指標"
+            "か最後の重みが違うため)"
+        )
+    elif check:
+        experiment.logger.info(
+            f"推論の一式: {check['split']} の {check['metric']} "
+            f"{check['value']:,.4f} (記録 {check['recorded']}, 合う: "
+            f"{check['matches']})"
+        )
+    for note in info["notes"]:
+        experiment.logger.warning(f"推論の一式の注意: {note}")
+
+
 def main() -> None:
     """
-    ML-EDA の版 2 のデータセットで学習し, テスト用の評価を残す関数
+    ML-EDA の版 2 のデータセットで学習し, テスト用の評価と推論の一式を
+    残す関数
 
     Parameters
     ----------
@@ -984,13 +1099,16 @@ def main() -> None:
     print(describe_origin(task["target"]["origin"]))
 
     # テスト用の分割があれば, 学習した後の重みの評価を evaluations/ へ保存
-    if "test" not in loaders:
+    if "test" in loaders:
+        rows = evaluate_test(trainer, loaders["test"], experiment)
+        save_evaluation(experiment, EVALUATION, rows, "test",
+                        description=EVALUATION_TEXT.format(weights=weights),
+                        epoch=epoch)
+    else:
         experiment.logger.info("テスト用の分割が無いので, 評価しません")
-        return
-    rows = evaluate_test(trainer, loaders["test"], experiment)
-    save_evaluation(experiment, EVALUATION, rows, "test",
-                    description=EVALUATION_TEXT.format(weights=weights),
-                    epoch=epoch)
+
+    # 実験の中に推論の一式 (ML-ModelControl の定義を書いた場合だけ)
+    make_inference(cfg, path, dataset, run_dir, experiment)
 
 
 if __name__ == "__main__":
@@ -1267,12 +1385,18 @@ def items_readme(
         "`outputs/<実験の名前>/<日付>/<時刻>/` に残る (`task.yaml`, テスト用の"
         f"分割があれば `evaluations/`). {every}検証用の "
         f"`{stages['training']['monitor']}` が最も良いモデルを選ぶ",
-        "4. **推論** (ML-Inference): 推論の一式は出力の形 "
-        f"`{kind}` を持つ (`make_bundle(..., form=\"{kind}\")`. 重みは"
-        "学習した実験のディレクトリ, モデルは ML-ModelControl の定義). "
-        "ただし `make_bundle` は版 2 のデータセットからはまだ一式を作れ"
-        "ない (ML-Inference の残り). それまでは `final_model.pt` を "
-        "`train.py` と同じモデルに読んで推論する",
+        "4. **推論** (ML-Inference, ML-Provide): config の `model.spec` に"
+        "定義を書いて学習すると, `train.py` が学習の後に実験の中の "
+        "`inference/` に推論の一式 (出力の形 `" + kind + "`) を作る. 1 件"
+        "の扱いは学習と同じもの "
+        + ("(選ぶ点の数と検証用の分割と同じ乱数の種)" if kind ==
+           "point_cloud" else "(クラスの番号ごとの領域の値)")
+        + "を一式に書くので, 一式の確かめ (`train.log` の「推論の一式」) が"
+        "学習の記録と合う. ML-Provide でその `inference/` を登録し, 新しい"
+        + ("撮影を推論すると, 元の撮影の座標の点群が返る (学習と同じ正規化"
+           "を推論でかけて戻す)" if kind == "point_cloud" else
+           "画像を推論すると, データセットと同じ領域の値の画像が返る")
+        + ". 仮のモデル (`PlaceholderModel`) は定義が無いので一式を作らない",
         "", "`train.py` の印 (TODO) の所 (モデルなど) は書き足す. 問題の"
         "設定を変えたら, 書き出し直すか手で直す.", "",
     ]

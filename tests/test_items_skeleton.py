@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -25,8 +26,45 @@ KIND_ANSWERS = {
                     ("evaluation.metric", "chamfer")],
 }
 
-# 学習まで通すのに要るもの (無ければ学習は飛ばす)
+# 学習まで通すのに要るもの (無ければ学習は飛ばす) と, 推論の一式まで通す
+# のに要るもの
 TRAINING = ("ml_found", "torch")
+BUNDLING = ("ml_inference", "ml_modelcontrol")
+
+# 正解の種類ごとの, 骨組みの仮のモデルと同じ形の ML-ModelControl の定義
+# (領域は 3 チャンネルの画像から 3 クラス, 点群は 512 点から 256 点)
+SPECS = {
+    "mask": {
+        "format_version": 1, "name": "segment",
+        "inputs": {"image": {"shape": [2, 3, 16, 16]}},
+        "nodes": {
+            "conv1": {"unit": "nn.Conv2d", "inputs": "image",
+                      "params": {"in_channels": 3, "out_channels": 16,
+                                 "kernel_size": 3, "padding": 1}},
+            "act": {"unit": "nn.ReLU", "inputs": "conv1"},
+            "conv2": {"unit": "nn.Conv2d", "inputs": "act",
+                      "params": {"in_channels": 16, "out_channels": 3,
+                                 "kernel_size": 3, "padding": 1}},
+        },
+        "outputs": {"logits": "conv2"},
+    },
+    "point_cloud": {
+        "format_version": 1, "name": "points",
+        "inputs": {"x": {"shape": [2, 512, 3]}},
+        "nodes": {
+            "encode": {"unit": "nn.Linear", "inputs": "x",
+                       "params": {"in_features": 3, "out_features": 64}},
+            "act": {"unit": "nn.ReLU", "inputs": "encode"},
+            "pool": {"unit": "op.Mean", "inputs": "act",
+                     "params": {"dim": 1}},
+            "decode": {"unit": "nn.Linear", "inputs": "pool",
+                       "params": {"in_features": 64, "out_features": 768}},
+            "shape": {"unit": "op.Reshape", "inputs": "decode",
+                      "params": {"shape": [256, 3]}},
+        },
+        "outputs": {"points": "shape"},
+    },
+}
 
 
 def kind_problem(kind: str) -> dict:
@@ -97,7 +135,7 @@ def write_datasets(root: Path) -> dict:
     return paths
 
 
-def train(project: Path) -> None:
+def train(project: Path, *overrides: str) -> None:
     """
     書き出した学習のスクリプトを 2 エポックだけ動かす関数
 
@@ -105,6 +143,8 @@ def train(project: Path) -> None:
     ----------
     project: Path
         プロジェクトのディレクトリ
+    *overrides: str
+        足す「項目=値」の上書き
 
     Returns
     ----------
@@ -113,7 +153,7 @@ def train(project: Path) -> None:
     # 別のプロセスで, 項目=値の上書き
     done = subprocess.run(
         [sys.executable, "train.py", "trainer.epochs=2",
-         "experiment.device=cpu"],
+         "experiment.device=cpu", *overrides],
         cwd=project, capture_output=True, text=True, timeout=600
     )
     assert done.returncode == 0, done.stderr[-2000:]
@@ -157,7 +197,7 @@ def test_items_project(tmp_path: Path, kind: str) -> None:
     assert (config["trainer"]["monitor"], config["trainer"]["mode"]) == (
         monitor
     )
-    assert config["requires"] == ["eda"]
+    assert config["requires"] == ["eda", "inference"]
     assert "比べる相手" in script and "TODO: 比べる相手" not in script
     assert record_project(problem, project)["project"]["model_spec"] is None
     assert config["trainer"].get("valid_every_n_epochs") == (
@@ -174,9 +214,10 @@ def test_items_project(tmp_path: Path, kind: str) -> None:
     assert function in readme
     assert ("超えられない" in readme) == (kind == "mask")
 
-    # 推論: ML-Inference の出力の形と, 版 2 のデータセットの残り
-    assert f'form="{kind}"' in readme
-    assert "まだ一式を作れない" in readme
+    # 推論: 定義を書けば学習の後に一式, 仮のモデルは作らない
+    assert f"出力の形 `{kind}`" in readme and "`inference/`" in readme
+    assert "一式を作らない" in readme
+    assert "make_inference" in script and "bundle_items" in script
 
 
 def test_items_refused() -> None:
@@ -266,6 +307,54 @@ def test_items_with_data(tmp_path: Path) -> None:
                                   "point_cloud": "shape"}[kind]
         evaluations = list(runs[0].parent.glob("evaluations/*.json"))
         assert len(evaluations) == 1
+        assert not (runs[0].parent / "inference").exists()
+        check_bundle(project, kind)
+
+
+def check_bundle(project: Path, kind: str) -> None:
+    """
+    モデルの定義を書いて学習し, 推論の一式の確かめが学習の記録と合うことを
+    確かめる関数 (ML-Inference が無ければ飛ばす)
+
+    Parameters
+    ----------
+    project: Path
+        学習できるプロジェクトのディレクトリ
+    kind: str
+        正解の種類
+
+    Returns
+    ----------
+    None
+    """
+    # 定義を置いて, 上書きで model.spec に
+    if not all(importlib.util.find_spec(name) for name in BUNDLING):
+        return
+    from ml_inference import predict
+
+    models = project / "models"
+    models.mkdir(exist_ok=True)
+    (models / "model.yaml").write_text(
+        yaml.safe_dump(SPECS[kind], allow_unicode=True), encoding="utf-8"
+    )
+    for run in (project / "outputs").glob("*/*/*"):
+        shutil.rmtree(run)
+    train(project, "model.spec=models/model.yaml")
+
+    # 実験の中の一式と, 記録との比べ (検証用の分割と同じ扱い)
+    runs = sorted((project / "outputs").glob("*/*/*/inference"))
+    assert len(runs) == 1
+    info = yaml.safe_load((runs[0] / "inference.yaml")
+                          .read_text(encoding="utf-8"))
+    assert info["format_version"] == 4
+    assert info["output"]["form"] == kind
+    assert info["check"]["metric"] == {"mask": "iou",
+                                       "point_cloud": "chamfer"}[kind]
+    assert info["check"]["matches"] is True, info
+    frame = predict(runs[0], project / "data" / (
+        "masks" if kind == "mask" else "clouds"
+    ))
+    assert (frame["status"] == "ok").all()
 
 
 def test_items_mismatch(tmp_path: Path) -> None:
