@@ -34,7 +34,7 @@ for item in check(problem):
 
 # 課題から行動までの要約, 後ろの段階ごとの値
 print("\n".join(describe(problem)))
-stages = handoff(problem)   # data, model, training, inference と, 要る機能 (requires), 方策の守り (policy)
+stages = handoff(problem)   # part, data, model, training, inference と, 要る機能 (requires), 方策の守り (policy)
 
 # 保存と, ML-Found のプロジェクトの骨組みの書き出し
 save_problem(problem, "problem.yaml")
