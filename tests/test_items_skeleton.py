@@ -222,11 +222,14 @@ def test_items_project(tmp_path: Path, kind: str) -> None:
     )
     assert config["data"]["dataset"] == "outputs/dataset"
     assert config["model"]["spec"] == "models/model.yaml"
+    # 定義が無いうちは仮のモデルで学習することの目印 (ML-Dashboard が読む)
+    assert config["model"]["placeholder"] is True
     assert (project / "models").is_dir()
     assert config["experiment"]["name"] == f"{kind}_predict"
 
     # README: 書き出しの関数と, 今の処理の正解は超えられないこと
     readme = (project / "README.md").read_text(encoding="utf-8")
+    assert "model.placeholder" in readme
     function = {"mask": "export_image_masks",
                 "point_cloud": "export_capture_clouds"}[kind]
     assert function in readme

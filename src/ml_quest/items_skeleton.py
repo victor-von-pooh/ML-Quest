@@ -1319,8 +1319,11 @@ data:
 
 model:
   # ML-ModelControl の形のモデルの定義 (ML-CreateArchitecture で組んで, この
-  # 場所に保存する). ファイルが無いうちは train.py の仮のモデルで学習する
-  spec: models/model.yaml$cloud_model
+  # 場所に保存する)
+  spec: models/model.yaml
+  # spec のファイルが無いうちは train.py の仮のモデルで学習することの目印
+  # (ML-Dashboard の学習の準備が読む)
+  placeholder: true$cloud_model
 ''')
 
 # 点群の検証の間隔と, 点の数
@@ -1549,7 +1552,8 @@ def items_readme(
         "ML-CreateArchitecture で組んだ定義を, config の `model.spec` の場所"
         " (`models/model.yaml`) に保存する. 定義が無いうちは, `train.py` の "
         "`PlaceholderModel` (印 TODO. 動くことを確かめるだけの小さなモデル)"
-        " で学習する"
+        " で学習する (config の `model.placeholder: true` がその目印で, "
+        "ML-Dashboard の学習の準備は定義が無いことを知らせるだけにする)"
         + (". 入力は (バッチ, チャンネル, 高さ, 幅) の 0 から 1 の画像, 出力は"
            " (バッチ, クラス数, 高さ, 幅) のスコア. クラスは `dataset.yaml` の"
            " `classes` (無ければ `values`). 名前の無い値 0 は背景 "
