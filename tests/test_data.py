@@ -245,7 +245,7 @@ def test_classification_values(tmp_path: Path) -> None:
     found = inspect_data(problem)
     suggested = ids_of(found["suggestions"])
     assert sorted(suggested["ml.parts.0.positive"]) == ["0", "1"]
-    assert any("少なく" in f["message"] for f in found["findings"])
+    assert any("30 行と少なく" in f["message"] for f in found["findings"])
     right = answer(problem, "ml.parts.0.positive", "1")
     assert not any(f["id"] == "ml.parts.0.positive"
                    for f in inspect_data(right)["findings"])
@@ -255,6 +255,30 @@ def test_classification_values(tmp_path: Path) -> None:
 
     # データの問いは確かめ (check) の足りない答えにはならない (任意)
     assert not any(f["id"] == "data.source" for f in check(problem))
+
+
+def test_few_items_counted(tmp_path: Path) -> None:
+    """
+    表でないデータ (画像の並び) の少なさを, 行でなく件で数えることを
+    確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 8 枚の画像のディレクトリ (ファイルの組の書き出しの前の元のデータ)
+    pytest.importorskip("PIL")
+    synthetic = pytest.importorskip("ml_eda.synthetic")
+    synthetic.write_image_masks(tmp_path / "raw", count=8, size=(16, 16))
+    problem = attach_data(column_problem("画像"), tmp_path / "raw" / "images")
+    messages = [f["message"] for f in inspect_data(problem)["findings"]]
+    assert any("8 件と少なく" in message for message in messages), messages
+    assert not any("行と少なく" in message for message in messages)
 
 
 def test_unreadable_and_missing_eda(

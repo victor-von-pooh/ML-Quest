@@ -19,6 +19,10 @@ from ml_quest.questions import PART
 # 行が少ないとみなす行の数
 FEW_ROWS = 100
 
+# 1 行を表の行として数える ML-EDA の種類 (他の種類は 1 行が画像や撮影の
+# 1 件なので件で数える)
+ROW_KINDS = ("table", "timeseries")
+
 # 系列を分ける列の候補とする, 値の種類の上限
 SERIES_UNIQUE = 50
 
@@ -1113,11 +1117,12 @@ def data_findings(
     if note:
         found.append(finding("warning", f"{PART}.time_column", note))
     rows = len(data.frame)
+    unit = "行" if data.kind in ROW_KINDS else "件"
     if rows < FEW_ROWS:
         found.append(finding(
             "warning", "data.source",
-            f"データが {rows} 行と少なく, 機械学習で学べることは限られます. "
-            "今のやり方やルールで足りないかも考えてください"
+            f"データが {rows} {unit}と少なく, 機械学習で学べることは限られ"
+            "ます. 今のやり方やルールで足りないかも考えてください"
         ))
     raw = data.source or {}
     if get_value(problem, "data.modified") not in (None, raw.get(
