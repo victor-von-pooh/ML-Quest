@@ -8,7 +8,7 @@ import yaml
 
 from ml_quest import (
     answer, attach_data, example_problem, inspect_data, make_project,
-    project_error
+    project_error, record_project
 )
 
 # 正解の種類ごとの, 型に依らない答えと最小の続く答え
@@ -157,6 +157,9 @@ def test_items_project(tmp_path: Path, kind: str) -> None:
     assert (config["trainer"]["monitor"], config["trainer"]["mode"]) == (
         monitor
     )
+    assert config["requires"] == ["eda"]
+    assert "比べる相手" in script and "TODO: 比べる相手" not in script
+    assert record_project(problem, project)["project"]["model_spec"] is None
     assert config["trainer"].get("valid_every_n_epochs") == (
         2 if kind == "point_cloud" else None
     )

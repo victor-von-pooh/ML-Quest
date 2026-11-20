@@ -1,3 +1,4 @@
+from pathlib import PurePath
 from typing import Any, Optional
 
 from ml_quest.check import check, is_column_part
@@ -92,7 +93,10 @@ def handoff(problem: dict) -> dict:
     stages: dict
         data (データの分析), model (モデルの作成), training (学習・評価),
         inference (推論) ごとの値と, part (受け持ちの答え), requires (要る
-        機能の名前), policy (方策の守り. 方策でなければ None)
+        機能の名前), policy (方策の守り. 方策でなければ None), project
+        (書き出したプロジェクトの path. データセットとモデルの定義の場所は
+        data の project_dataset と model の project_model_spec. 記録が無け
+        れば None)
 
     Raises
     ----------
@@ -116,16 +120,21 @@ def handoff(problem: dict) -> dict:
     part = part_of(problem)
     training = training_of(problem)
     training.update(role=part["role"], target_kind=part["target_kind"])
+    project = project_of(problem)
     if not is_column_part(problem):
         stages = {
-            "part": part, "data": column_data(problem, None),
+            "part": part,
+            "data": {**column_data(problem, None),
+                     "project_dataset": project["dataset"]},
             "model": {"task": None, "outputs": None, "role": part["role"],
-                      "target_kind": part["target_kind"]},
+                      "target_kind": part["target_kind"],
+                      "project_model_spec": project["model_spec"]},
             "training": training,
             "inference": {"decision": None, "conclusion": {},
                           "horizon": None},
             "requires": required_features(problem),
             "policy": policy_of(problem),
+            "project": {"path": project["path"]},
         }
         return stages
 
@@ -133,19 +142,49 @@ def handoff(problem: dict) -> dict:
     task = value(problem, f"{PART}.task")
     stages = {
         "part": part,
-        "data": column_data(problem, task),
+        "data": {**column_data(problem, task),
+                 "project_dataset": project["dataset"]},
         "model": {"task": task,
                   "outputs": None if task == "classification" else 1,
-                  "role": part["role"], "target_kind": part["target_kind"]},
+                  "role": part["role"], "target_kind": part["target_kind"],
+                  "project_model_spec": project["model_spec"]},
         "training": training,
         "inference": {"decision": decision_of(problem),
                       "conclusion": conclusion_of(problem),
                       "horizon": value(problem, f"{PART}.horizon")},
         "requires": required_features(problem),
         "policy": policy_of(problem),
+        "project": {"path": project["path"]},
     }
 
     return stages
+
+
+def project_of(problem: dict) -> dict:
+    """
+    書き出したプロジェクトの記録 (record_project) を読む関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    project: dict
+        path, dataset, model_spec (記録が無いか, 文字の絶対パスでない値は
+        None)
+    """
+    # 手で崩した値は使わない (絶対パスの文字だけ)
+    record = problem.get("project")
+    record = record if isinstance(record, dict) else {}
+    project = {
+        key: record.get(key) if isinstance(record.get(key), str)
+        and PurePath(record[key]).is_absolute() else None
+        for key in ("path", "dataset", "model_spec")
+    }
+
+    return project
 
 
 def part_of(problem: dict) -> dict:

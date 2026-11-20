@@ -1,13 +1,15 @@
+import ast
 import os
 from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
 from ml_quest import (
     answer, apply_recipe, attach_data, check, example_problem, get_value,
     handoff, inspect_data, load_problem, make_project, prune_copies,
-    recipe_from, resolve_choice
+    recipe_from, record_project, resolve_choice, save_problem
 )
 
 
@@ -502,3 +504,182 @@ def test_recipe_target_dropped() -> None:
         {"op": "one_hot", "columns": ["store"]},
         {"op": "drop_columns", "columns": ["sales"]},
     ]
+
+
+def test_record_project(tmp_path: Path) -> None:
+    """
+    書き出したプロジェクトの記録が config の場所の絶対パスになり, 受け渡し
+    に出て, プロジェクトの写しには入らないことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 記録は config の data.dataset と model.spec から (元は変えない)
+    problem = example_problem("総菜の作る量")
+    project = tmp_path / "project"
+    make_project(problem, project)
+    recorded = record_project(problem, project)
+    assert "project" not in problem
+    place = project.resolve()
+    assert recorded["project"] == {
+        "path": str(place), "dataset": str(place / "outputs" / "dataset"),
+        "model_spec": str(place / "models" / "model.yaml"),
+    }
+
+    # 受け渡しの段階ごとの値と, 保存して読み直しても同じ
+    stages = handoff(recorded)
+    assert stages["project"] == {"path": str(place)}
+    assert stages["data"]["project_dataset"] == recorded["project"][
+        "dataset"
+    ]
+    assert stages["model"]["project_model_spec"] == recorded["project"][
+        "model_spec"
+    ]
+    save_problem(recorded, tmp_path / "problem.yaml")
+    assert handoff(load_problem(tmp_path / "problem.yaml")) == stages
+
+    # 書き出し直すと, プロジェクトの写しには記録を入れず, 記録は置き換え
+    other = tmp_path / "other"
+    make_project(recorded, other)
+    assert "project" not in load_problem(other)
+    again = record_project(recorded, other)
+    assert again["project"]["path"] == str(other.resolve())
+
+    # 崩した記録と相対パスは「記録が無い」. config が無ければ誤り
+    broken = dict(recorded, project={"path": "rel", "dataset": 3})
+    assert handoff(broken)["project"] == {"path": None}
+    assert handoff(broken)["data"]["project_dataset"] is None
+    assert handoff(dict(recorded, project="x"))["project"]["path"] is None
+    with pytest.raises(ValueError, match="make_project"):
+        record_project(problem, tmp_path / "none")
+
+
+def test_config_requires(tmp_path: Path) -> None:
+    """
+    骨組みの config の requires に, 学習のスクリプトが読み込むライブラリと
+    問題の設定から要る機能が入ることを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 列の予測は 3 つのライブラリ. GPU が要れば cuda も
+    make_project(example_problem("総菜の作る量"), tmp_path / "a")
+    config = yaml.safe_load(
+        (tmp_path / "a/configs/default/train.yaml").read_text("utf-8")
+    )
+    assert config["requires"] == ["eda", "modelcontrol", "inference"]
+    gpu = answer(example_problem("総菜の作る量"), "ml.gpu", True)
+    make_project(gpu, tmp_path / "b")
+    config = yaml.safe_load(
+        (tmp_path / "b/configs/default/train.yaml").read_text("utf-8")
+    )
+    assert config["requires"] == ["eda", "modelcontrol", "inference",
+                                  "cuda"]
+
+
+def test_requires_in_ml_found(tmp_path: Path) -> None:
+    """
+    骨組みの requires の名前が ML-Found の登録簿にあり, 足りない機能が
+    あれば学習の前に入れ方を示して止まることを確かめる関数
+
+    ML-Found が入っていなければ飛ばす
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 登録簿の名前 (確かめずに一覧だけ)
+    ml_found = pytest.importorskip("ml_found")
+    entries = ml_found.describe_requirements(check=False)
+    registered = {entry["name"] for entry in entries}
+    missing = [name for name in ("eda", "modelcontrol", "inference")
+               if name not in registered]
+    assert not missing, f"ML-Found の登録簿に無い機能: {missing}"
+
+    # 入っていない機能 (ROS2) を足した骨組みは学習の前に止まる
+    problem = answer(example_problem("総菜の作る量"), "ml.gpu", None)
+    project = tmp_path / "project"
+    make_project(problem, project)
+    path = project / "configs" / "default" / "train.yaml"
+    config = yaml.safe_load(path.read_text("utf-8"))
+    config["requires"].append("ros2")
+    path.write_text(yaml.safe_dump(config, allow_unicode=True), "utf-8")
+    cfg, diff = ml_found.load_project_config(str(project), argv=[])
+    with pytest.raises(Exception, match="ros2"):
+        ml_found.start_experiment(cfg, diff, str(project))
+
+
+def test_baseline_in_skeleton(tmp_path: Path) -> None:
+    """
+    今のやり方をデータで書いた問題の設定では, 学習のスクリプトが今のやり方
+    と比べ, 書いていなければ理由の注記だけになることを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 書いていない: 印 (TODO) でなく理由の注記
+    project = tmp_path / "plain"
+    make_project(example_problem("総菜の作る量"), project)
+    script = (project / "train.py").read_text("utf-8")
+    assert "TODO" not in script and "compare_baseline" not in script
+    assert "今のやり方をデータで書いていない" in script
+    readme = (project / "README.md").read_text("utf-8")
+    assert "今のやり方とは比べない" in readme and "TODO" not in readme
+    assert "model_inputs" in readme
+
+    # 書いてデータを入れた: 予測は k 期前, 回帰は列
+    pytest.importorskip("ml_eda")
+    path = daily_csv(tmp_path)
+    lag = attach_data(example_problem("総菜の作る量"), path)
+    lag = answer(lag, "action.current", {"type": "lag", "periods": 7})
+    column = answer(lag, "information.unknown", ["customers"])
+    column = answer(column, "ml.parts.0.task", "regression")
+    column = answer(column, "action.current", {"type": "column",
+                                               "column": "customers"})
+    for name, problem in (("lag", lag), ("column", column)):
+        make_project(problem, tmp_path / name)
+        script = (tmp_path / name / "train.py").read_text("utf-8")
+        tree = ast.parse(script)
+        assert max(len(line) for line in script.splitlines()) <= 79
+        names = {node.name for node in tree.body
+                 if isinstance(node, ast.FunctionDef)}
+        assert {"current_values", "matched_current",
+                "compare_baseline"} <= names
+        assert "compare_baseline(trainer.model" in script
+        assert 'DATA_FILE = PROJECT_DIR / "data/sozai.csv"' in script
+        readme = (tmp_path / name / "README.md").read_text("utf-8")
+        assert "evaluations/baseline_valid.json" in readme
+    assert "CURRENT = {'type': 'lag', 'periods': 7}" in (
+        tmp_path / "lag" / "train.py"
+    ).read_text("utf-8")
+
+    # 分類で, 今のやり方を列で書いてもデータが無ければ比べない
+    churn = answer(example_problem("解約の引き止め"), "action.current",
+                   {"type": "column", "column": "inquiries"})
+    make_project(churn, tmp_path / "churn")
+    script = (tmp_path / "churn" / "train.py").read_text("utf-8")
+    assert "手元のデータを入れていない" in script
+    assert "compare_baseline" not in script

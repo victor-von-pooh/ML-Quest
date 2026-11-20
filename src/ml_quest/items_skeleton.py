@@ -7,6 +7,10 @@ from ml_quest.handoff import describe
 from ml_quest.problem import active_value
 from ml_quest.questions import PART
 
+# 学習のスクリプトが読み込むライブラリの, ML-Found の登録簿の機能の名前
+# (ml_eda. ml_modelcontrol は config に定義を書いたときだけ読む)
+ITEMS_LIBRARIES = ["eda"]
+
 # 学習のスクリプトの頭 (読み込みと, 問題の設定から決まる既定値). 答えの
 # 文字は JSON の文字列で埋め込み
 ITEMS_HEAD = '''"""
@@ -1004,6 +1008,7 @@ EXPORTERS = {
 
 # config の基準 (ML-Found のプロジェクトの形)
 ITEMS_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題の設定から書き出した骨組み)
+$requires
 experiment:
   name: $experiment
   seed: 0
@@ -1030,7 +1035,7 @@ data:
 
 model:
   # ML-ModelControl の形のモデルの定義 (ML-CreateArchitecture で組む. 空なら
-  # train.py の仮のモデル)
+  # train.py の仮のモデル. 書くなら requires に modelcontrol を足す)
   spec: null$cloud_model
 ''')
 
@@ -1073,8 +1078,11 @@ def items_script(
         method=literal(active_value(problem, f"{PART}.method")),
     )
     baseline = comment_lines(
-        "TODO: 比べる相手 ("
-        f"{active_value(problem, f'{PART}.baseline')}) の値も評価の表に足す",
+        f"比べる相手 ({active_value(problem, f'{PART}.baseline')}): ファイル"
+        "の組の受け持ちには, 今のやり方をデータで書く問いが無いので比べない. "
+        "比べるなら, 相手の出力で求めた値の行を evaluate_test の返す表に足"
+        "し, save_evaluation に baseline (相手の名前) を渡す (ML-Found の評価"
+        "の表の形)",
         indent=""
     )
     body = Template(PARTS[kind]).substitute(baseline_comment=baseline)
@@ -1084,7 +1092,7 @@ def items_script(
 
 
 def items_config(
-    experiment: str, stages: dict, kind: str, dataset: str
+    experiment: str, stages: dict, kind: str, dataset: str, requires: str
 ) -> str:
     """
     版 2 のデータセットで学習する config の基準を作る関数
@@ -1099,6 +1107,8 @@ def items_config(
         正解の種類 (mask か point_cloud)
     dataset: str
         データセットの場所 (プロジェクトのディレクトリから)
+    requires: str
+        一番上の requires の行 (skeleton.requires_text)
 
     Returns
     ----------
@@ -1119,6 +1129,7 @@ def items_config(
         patience=5 if cloud else 10,
         cloud_data=CLOUD_DATA if cloud else "",
         cloud_model=CLOUD_MODEL if cloud else "",
+        requires=requires,
     )
 
     return text
@@ -1261,8 +1272,8 @@ def items_readme(
         "ただし `make_bundle` は版 2 のデータセットからはまだ一式を作れ"
         "ない (ML-Inference の残り). それまでは `final_model.pt` を "
         "`train.py` と同じモデルに読んで推論する",
-        "", "`train.py` の印 (TODO) の所 (モデル, 比べる相手の評価など) は"
-        "書き足す. 問題の設定を変えたら, 書き出し直すか手で直す.", "",
+        "", "`train.py` の印 (TODO) の所 (モデルなど) は書き足す. 問題の"
+        "設定を変えたら, 書き出し直すか手で直す.", "",
     ]
     text = "\n".join(lines)
 
