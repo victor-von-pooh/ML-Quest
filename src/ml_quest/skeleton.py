@@ -824,11 +824,13 @@ def origin_file(origin: Union[str, Path], path: Path) -> str:
     ValueError
         空の場合と, 書き出すプロジェクトの problem.yaml そのものの場合
     """
-    # ディレクトリなら中の problem.yaml. 写しが自分を指さないように
+    # ディレクトリ (YAML のファイルの名前でない場所) なら中の
+    # problem.yaml. 写しが自分を指さないように
     if not str(origin).strip():
         raise ValueError("元の問題の設定の場所が空です")
     target = Path(origin).expanduser().resolve()
-    if target.is_dir() or target == path.resolve():
+    if (target.is_dir() or target == path.resolve()
+            or target.suffix.lower() not in (".yaml", ".yml")):
         target = target / "problem.yaml"
     if target == (path / "problem.yaml").resolve():
         raise ValueError(

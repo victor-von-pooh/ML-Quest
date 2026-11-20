@@ -721,6 +721,13 @@ def test_problem_origin(tmp_path: Path) -> None:
         (tmp_path / "x.yaml").resolve()
     )
 
+    # まだ無いディレクトリを渡しても, 中の problem.yaml を指す
+    fourth = tmp_path / "fourth"
+    make_project(copied, fourth, origin=tmp_path / "later")
+    assert problem_origin(load_problem(fourth)) == str(
+        (tmp_path / "later" / "problem.yaml").resolve()
+    )
+
     # 元の問題の設定に記録しても, origin は入らない
     assert "origin" not in record_project(problem, project)
 
