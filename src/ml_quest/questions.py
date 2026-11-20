@@ -273,11 +273,14 @@ QUESTIONS: list[dict[str, Any]] = [
     {"id": "issue.owner", "section": 1, "kind": "text", "required": True,
      "title": "誰の課題ですか",
      "help": "課題を抱えていて, 解けたら嬉しい人や部署. 例: 店長, 本部の"
-             "仕入れの担当"},
+             "仕入れの担当 (仕事). 計測の研究室 (研究). ゲームの作り手 "
+             "(娯楽)"},
     {"id": "issue.pain", "section": 1, "kind": "text", "required": True,
      "title": "何に困っていますか",
-     "help": "機械学習の言葉ではなく, 業務の言葉で. 例: 総菜の廃棄が多く, "
-             "夕方には品切れも出る"},
+     "help": "機械学習の言葉ではなく, 課題の言葉で. 例: 総菜の廃棄が多く, "
+             "夕方には品切れも出る (仕事). 測ったものから元の形を作り直す"
+             "と誤差が大きく, 1 件に時間もかかる (研究). 遊ぶ人がすぐに"
+             "飽きてやめる (娯楽)"},
     {"id": "issue.current", "section": 1, "kind": "text", "required": True,
      "title": "今はどうしていますか",
      "help": "今のやり方. 後で比べる相手になる. 例: 前の週の同じ曜日と同じ"
@@ -286,10 +289,11 @@ QUESTIONS: list[dict[str, Any]] = [
     # 2. 指標
     {"id": "issue.kpi.name", "section": 2, "kind": "text",
      "required": True, "title": "何が変われば解けたと言えますか",
-     "help": "業務の数字. 例: 廃棄と欠品の損, 解約の件数, 確かめの手間"},
+     "help": "課題の数字. 例: 廃棄と欠品の損, 解約の件数 (仕事). 再構成の"
+             "誤差, 1 件の処理時間 (研究). 続けて遊ぶ時間 (娯楽)"},
     {"id": "issue.kpi.unit", "section": 2, "kind": "text",
      "required": False, "title": "その数字の単位は",
-     "help": "例: 円 / 月, 件 / 週, 時間 / 日"},
+     "help": "例: 円 / 月, 件 / 週, mm, 秒 / 件, 分 / 回"},
     {"id": "issue.kpi.better", "section": 2, "kind": "choice",
      "required": True, "title": "小さいほど良いですか, 大きいほど良いですか",
      "choices": [{"value": "lower", "label": "小さいほど良い"},
@@ -623,7 +627,7 @@ QUESTIONS: list[dict[str, Any]] = [
      "help": "最良のモデルを選ぶ向き"},
     {"id": f"{PART}.evaluation.link", "section": 8, "kind": "text",
      "required": False, "when": USES_ML,
-     "title": "その指標が良くなると, 業務の指標はどう良くなりますか",
+     "title": "その指標が良くなると, 課題の指標はどう良くなりますか",
      "help": "例: 誤差が小さいほど作る量の外れが減り, 廃棄と欠品の損が減る"},
 
     # 9. 確かめ方
@@ -651,7 +655,9 @@ QUESTIONS: list[dict[str, Any]] = [
     {"id": "verification.success", "section": 9, "kind": "text",
      "required": True, "when": USES_ML,
      "title": "どうなれば成功ですか",
-     "help": "業務の指標で. 例: 廃棄と欠品の損が今のやり方より 2 割少ない"},
+     "help": "課題の指標で. 例: 廃棄と欠品の損が今のやり方より 2 割少ない"
+             " (仕事). 再構成の誤差が今の手法より小さい (研究). 続けて"
+             "遊ぶ時間が 1 割延びる (娯楽)"},
 
     # 10. 運用
     {"id": "operation.review", "section": 10, "kind": "text",
