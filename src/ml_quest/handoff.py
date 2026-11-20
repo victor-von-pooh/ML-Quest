@@ -187,6 +187,32 @@ def project_of(problem: dict) -> dict:
     return project
 
 
+def problem_origin(problem: dict) -> Optional[str]:
+    """
+    写した問題の設定から, 元の問題の設定のファイルの場所を読む関数
+
+    make_project が骨組みのプロジェクトの problem.yaml に書き, 学習の
+    スクリプトが実験に写すときもそのまま残る
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 1 か版 2)
+
+    Returns
+    ----------
+    origin: Optional[str]
+        元の problem.yaml の絶対パス (写しでないか, 文字の絶対パスでない
+        値は None. ファイルがあるかは見ない)
+    """
+    # 手で崩した値は使わない (絶対パスの文字だけ)
+    value = problem.get("origin") if isinstance(problem, dict) else None
+    origin = (value if isinstance(value, str) and value.strip()
+              and PurePath(value).is_absolute() else None)
+
+    return origin
+
+
 def part_of(problem: dict) -> dict:
     """
     受け持ちの型に依らない答えをまとめる関数

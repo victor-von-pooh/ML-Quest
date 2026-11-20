@@ -964,7 +964,8 @@ def main() -> None:
     trainer = make_trainer(model, experiment, dataset)
     trainer.fit(loaders["train"], loaders["valid"])
 
-    # 実験だけで見直せるように, 問題の設定とモデルの定義の写し
+    # 実験だけで見直せるように, 問題の設定とモデルの定義の写し (元の問題の
+    # 設定の場所 origin も残る)
     run_dir = Path(experiment.run_dir)
     shutil.copy(PROJECT_DIR / "problem.yaml", run_dir / "problem.yaml")
     if cfg.model.spec:

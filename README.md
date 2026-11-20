@@ -41,10 +41,13 @@ print("\n".join(describe(problem)))
 stages = handoff(problem)   # part, data, model, training, inference と, 要る機能 (requires), 方策の守り (policy), プロジェクト (project)
 
 # ML-Found のプロジェクトの骨組みの書き出しと, その場所の記録 (データセットとモデルの定義の置き場も) の保存
-make_project(problem, "/work/my_project")
+save_problem(problem, "/work/problem.yaml")
+make_project(problem, "/work/my_project", origin="/work/problem.yaml")   # 写しに元の場所 (origin) を残す
 problem = record_project(problem, "/work/my_project")
-save_problem(problem, "problem.yaml")
+save_problem(problem, "/work/problem.yaml")
 ```
+
+プロジェクトと実験に写した問題の設定は, 元の場所を持つ. 推論の段階は `problem_origin(load_problem(写し))` で元を見つけ, 写した後に直した損得を読む.
 
 手元のデータは, 課題, 指標, 分解, 決めること (1 から 4) に答えた後, 機械学習の受け持ち (5) で入れる. 写し先を渡すとデータを写し, 写した場所と元の場所と ML-EDA の読み方を持つ.
 
