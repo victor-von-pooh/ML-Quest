@@ -353,7 +353,7 @@ pip で入らないものを含む外の道具 (ROS2, MuJoCo, CUDA) は, 要る�
 
 | 段階 | 値 | 使い方 (今は利用者が各段階の画面で選ぶ) |
 | --- | --- | --- |
-| データの分析 (ML-EDA, ML-Fathom) | `target`, `task`, `time_column`, `series_by`, `split` (予測と, 分類と回帰で時刻の順で分ける列 (`ml.split_time_column`) があれば `time`, 相手をまとめる列があれば `group`, 分類は `stratified`, 他は `random`. レシピの下書きの分割と同じ. 時刻の列は `time_column` で渡し, 学習に使わない列にしてもよい), `group_column` (相手をまとめる列. 時刻の順でも渡し, ML-EDA が分割をまたぐ重なりを知らせる), `min_lag` (過去の値の列に使ってよい最も小さいずらし幅. 予測だけ), `known` (学習に使ってよい列), `drop` (`unknown` と `forbidden` の列) | 読み込みの日時の列 (`load_data` の `time_column`. 系列を分ける列が複数あると ML-EDA は日時の列を推定できない), レシピの目的の列, タスク, 分割, 除く列 |
+| データの分析 (ML-EDA, ML-Fathom) | `target`, `task`, `time_column`, `series_by`, `split` (予測と, 分類と回帰で時刻の順で分ける列 (`ml.split_time_column`) があれば `time`, 相手をまとめる列があれば `group`, 分類は `stratified`, 他は `random`. レシピの下書きの分割と同じ. 時刻の列は `time_column` で渡し, 学習に使わない列にしてもよい), `group_column` (相手をまとめる列. 時刻の順でも渡し, ML-EDA が分割をまたぐ重なりを知らせる), `min_lag` (過去の値の列に使ってよい最も小さいずらし幅. 予測だけ), `known` (学習に使ってよい列), `drop` (`unknown` と `forbidden` の列と, 今のやり方の列 (`action.current` の `column`). 今のやり方は決めることの結果で予測の時点では分からず, 学習に入れると答えが漏れるため. 利用者が `known` に入れた場合は落とさず, 確かめが注意を出す) | 読み込みの日時の列 (`load_data` の `time_column`. 系列を分ける列が複数あると ML-EDA は日時の列を推定できない), レシピの目的の列, タスク, 分割, 除く列 |
 | 受け持ち | `part` (`role`, `unit`, `output`, `target_kind`, `target_source`, `target_process`, `method`) | 型に依らない 5 つの答え |
 | モデルの作成 (ML-ModelControl, ML-CreateArchitecture) | `task`, `outputs` (回帰と予測は 1, 分類はクラスの数. 分からなければ空), `role`, `target_kind` | 出力の大きさ |
 | 学習・評価 (ML-Found, ML-Dashboard) | `metric`, `monitor` (`valid/<指標>`. RMSE はバッチの平均で書けないので, 並びの同じ `valid/mse`. その他は `valid/<名前>`), `mode` (`min` か `max`), `role`, `target_kind` | config の `trainer.monitor` と `trainer.mode` |

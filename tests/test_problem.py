@@ -308,6 +308,13 @@ def test_handoff_current() -> None:
     assert handoff(column)["inference"]["decision"]["current"] == (
         "contacted"
     )
+
+    # 今のやり方の列は学習に使わず落とす (予測の時点で分かる列に入れた
+    # 場合は落とさない)
+    assert "contacted" in handoff(column)["data"]["drop"]
+    assert any(step.get("op") == "drop_columns"
+               and "contacted" in step["columns"]
+               for step in recipe_from(column)["recipe"]["steps"])
     sozai = example_problem("総菜の作る量")
     weekly = answer(sozai, "action.current", {"type": "lag", "periods": 7})
     assert "current" not in handoff(weekly)["inference"]["decision"]
@@ -327,6 +334,7 @@ def test_handoff_current() -> None:
     # 今のやり方の列を学習に使うと注意
     leaky = answer(column, "information.known",
                    get_value(column, "information.known") + ["contacted"])
+    assert "contacted" not in handoff(leaky)["data"]["drop"]
     assert any(item["id"] == "action.current"
                and item["level"] == "warning" for item in check(leaky))
 
