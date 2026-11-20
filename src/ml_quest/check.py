@@ -760,7 +760,7 @@ def check_evaluation(problem: dict) -> list[dict]:
     if metric and not get_value(problem, f"{PART}.evaluation.link"):
         found.append(finding(
             "warning", f"{PART}.evaluation.link",
-            "学習の指標と業務の指標のつながりが空です. 指標が良くなっても"
+            "学習の指標と課題の指標のつながりが空です. 指標が良くなっても"
             "課題が解けるとは限りません"
         ))
 

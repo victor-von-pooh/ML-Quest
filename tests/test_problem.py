@@ -67,6 +67,39 @@ def test_examples_are_consistent() -> None:
         example_problem("無い見本")
 
 
+def test_wording_is_not_business_only() -> None:
+    """
+    問いと確かめの文が仕事に限る言葉 (業務, 実務, KPI) を使わず, 課題の
+    指標と書くことを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 問いの見出し, 説明, 選択肢の文
+    texts = []
+    for item in QUESTIONS:
+        texts.append(str(item.get("title", "")))
+        texts.append(str(item.get("help", "")))
+        for choice in item.get("choices", []):
+            texts.append(str(choice.get("label", "")))
+    for text in texts:
+        for word in ("業務", "実務", "KPI"):
+            assert word not in text, text
+
+    # 指標のつながりが空の警告
+    problem = answer(example_problem("総菜の作る量"),
+                     "ml.parts.0.evaluation.link", "")
+    messages = [item["message"] for item in check(problem)
+                if item["id"] == "ml.parts.0.evaluation.link"]
+    assert len(messages) == 1
+    assert "課題の指標" in messages[0]
+
+
 def test_questions_and_answers() -> None:
     """
     問いの並びが今の答えで要るかを変え, 答えの形を確かめることを確かめる
