@@ -93,7 +93,7 @@ def errors_of(problem: dict) -> list[str]:
 
 def test_effect_without_new_answers() -> None:
     """
-    方策と集め方に答えていない効果を見積もるのファイルが, 前と同じく
+    方策と集め方に答えていない効果を見積もるのファイルが, 誤り無く
     渡せることを確かめる関数
 
     Parameters
@@ -104,13 +104,13 @@ def test_effect_without_new_answers() -> None:
     ----------
     None
     """
-    # 足した問いは任意なので誤りにならず, 受け渡しは空と None
+    # 方策と集め方の問いは任意なので誤りにならず, 受け渡しは空と None
     problem = effect_problem()
     assert is_ready(problem)
     stages = handoff(problem)
     assert stages["requires"] == [] and stages["policy"] is None
 
-    # 列の予測の見本も, 前の値に 2 つを足しただけ
+    # 列の予測の見本も, 要る機能は空で方策の守りは None
     sample = handoff(example_problem("総菜の作る量"))
     assert sample["requires"] == [] and sample["policy"] is None
     assert set(sample) == {"part", "data", "model", "training",
