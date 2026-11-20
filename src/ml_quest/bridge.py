@@ -15,19 +15,27 @@ from ml_quest.questions import PART
 VALID_RATIO = 0.15
 TEST_RATIO = 0.15
 
-# 正解の種類から, ML-EDA の版 2 の書き出しと, 入力と正解のディレクトリの
-# 名前 (ML-EDA の合成の見本と同じ)
+# 正解の種類から, ML-EDA のファイルの組の書き出しと, 入力と正解のディレク
+# トリの名前 (ML-EDA の合成の見本と同じ)
 EXPORTS = {
     "mask": ("export_image_masks", "images", "masks"),
     "point_cloud": ("export_capture_clouds", "captures", "clouds"),
 }
 
-# 書き出しの設定の鍵と, 書き出しごとの他の引数
+# 書き出しの設定の鍵と, 書き出しごとの他の引数 (中身の手順 item_steps を
+# 渡すと ML-EDA は版 3 で書く)
 EXPORT_KEYS = ("function", "inputs", "targets", "split", "groups", "origin",
                "options")
 EXPORT_OPTIONS = {
-    "export_image_masks": ("classes", "mask_suffix"),
-    "export_capture_clouds": ("cloud_units",),
+    "export_image_masks": ("classes", "mask_suffix", "item_steps"),
+    "export_capture_clouds": ("cloud_units", "item_steps"),
+}
+
+# 書き出しごとの, 中身の手順を渡せる項目の名前 (領域の手順は ML-EDA が画像
+# の resize から決める)
+STEP_ENTRIES = {
+    "export_image_masks": ("image",),
+    "export_capture_clouds": ("capture", "cloud"),
 }
 
 
@@ -144,7 +152,7 @@ def load_of(data: dict) -> Optional[dict]:
 
 def export_from(problem: dict, data: dict) -> dict:
     """
-    ファイルの組の受け持ちの, 版 2 の書き出しの設定を返す関数
+    ファイルの組の受け持ちの, 書き出しの設定を返す関数
 
     書き戻した設定があり, 書き出しが正解の種類に合えばそれを返す
 
@@ -208,7 +216,8 @@ def pair_dirs(
     dirs: tuple[Optional[str], Optional[str]]
         入力と正解のディレクトリ (分からなければ None)
     """
-    # データを入れていないか, 版 2 のデータセットを入れた場合は埋めない
+    # データを入れていないか, ファイルの組のデータセットを入れた場合は
+    # 埋めない
     source = data.get("source") or {}
     location = data_location(problem)
     _, inputs, targets = EXPORTS[kind]
@@ -218,8 +227,8 @@ def pair_dirs(
                      "選んでください")
         return dirs
     if source.get("loader") == ITEMS_LOADER:
-        notes.append("入れたデータは書き出した版 2 のデータセットです. 書き"
-                     "出し直すなら, 元の入力と正解のディレクトリを選んで"
+        notes.append("入れたデータは書き出したデータセットです. 書き出し"
+                     "直すなら, 元の入力と正解のディレクトリを選んで"
                      "ください")
         return dirs
 
@@ -447,10 +456,12 @@ def apply_export(problem: dict, export: dict) -> dict:
     settings = checked_export(export)
     conflicts = export_conflicts(problem, settings)
     set_value(problem, "data.export", settings)
+    steps = settings["options"].get("item_steps") or {}
+    named = (f". 中身の手順は {', '.join(steps)}" if steps else "")
     result = {
         "problem": problem,
-        "changes": [f"ファイルの組の書き出しの設定 ({settings['function']})"
-                    "を書き戻した"],
+        "changes": [f"ファイルの組の書き出しの設定 ({settings['function']}"
+                    f"{named}) を書き戻した"],
         "conflicts": conflicts, "choices": [],
     }
 
@@ -475,7 +486,8 @@ def checked_export(export: Any) -> dict:
     ----------
     ValueError
         辞書でない, 知らない鍵か書き出し, 辞書でない分割, グループ,
-        正解の出どころ, 他の引数, 文字でないディレクトリの場合
+        正解の出どころ, 他の引数, 文字でないディレクトリ, 中身の手順の形の
+        誤りの場合
     """
     # 鍵と書き出し
     if not isinstance(export, dict):
@@ -502,6 +514,9 @@ def checked_export(export: Any) -> dict:
     if extra:
         raise ValueError(f"{function} の引数に {', '.join(extra)} はあり"
                          "ません")
+    steps = checked_steps(function, options.pop("item_steps", None))
+    if steps:
+        options["item_steps"] = steps
     settings = {
         "function": function,
         "inputs": export.get("inputs") or None,
@@ -514,6 +529,63 @@ def checked_export(export: Any) -> dict:
     }
 
     return settings
+
+
+def checked_steps(function: str, item_steps: Any) -> Optional[dict]:
+    """
+    書き出しの設定の中身の手順の形を確かめ, 写しを返す関数
+
+    手順の名前と引数は ML-EDA が書き出すときに確かめる
+
+    Parameters
+    ----------
+    function: str
+        書き出しの関数の名前
+    item_steps: Any
+        項目の名前から手順の並び
+
+    Returns
+    ----------
+    steps: Optional[dict]
+        手順の並びが空でない項目だけの写し (無ければ None)
+
+    Raises
+    ----------
+    ValueError
+        辞書でない, 書き出しに無い項目の名前, 並びでない手順, 辞書でない
+        手順, op が文字でない手順の場合
+    """
+    # 無い場合と空の辞書は無いもの
+    if item_steps is None:
+        steps: Optional[dict] = None
+        return steps
+    if not isinstance(item_steps, dict):
+        raise ValueError("中身の手順 (item_steps) は項目の名前から手順の"
+                         "並びの辞書にしてください")
+    names = STEP_ENTRIES[function]
+    unknown = sorted(str(key) for key in item_steps if key not in names)
+    if unknown:
+        raise ValueError(f"{function} の中身の手順を渡せる項目は "
+                         f"{', '.join(names)} です ({', '.join(unknown)} "
+                         "には渡せません)")
+
+    # 項目ごとの並びと, 手順ごとの op
+    steps = {}
+    for name, value in item_steps.items():
+        if not isinstance(value, list):
+            raise ValueError(f"中身の手順の {name} は手順の並びにしてくだ"
+                             "さい")
+        for step in value:
+            if not isinstance(step, dict) or not isinstance(
+                step.get("op"), str
+            ):
+                raise ValueError(f"中身の手順の {name} の手順は, 文字の op "
+                                 "を持つ辞書にしてください")
+        if value:
+            steps[name] = copy.deepcopy(value)
+    steps = steps or None
+
+    return steps
 
 
 def export_conflicts(problem: dict, settings: dict) -> list[dict]:
