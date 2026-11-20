@@ -316,11 +316,48 @@ def column_data(problem: dict, task: Optional[str]) -> dict:
                    "loader": value(problem, "data.loader"),
                    "options": value(problem, "data.options")}
         if value(problem, "data.source") else None,
-        "drop": (value(problem, "information.unknown") or [])
-        + (value(problem, "information.forbidden") or []),
+        "drop": drop_columns(problem),
     }
 
     return data
+
+
+def drop_columns(problem: dict) -> list[str]:
+    """
+    学習に使わずに落とす列を返す関数
+
+    予測の時点で分からない列と使ってはいけない列に加えて, 今のやり方の
+    列 (今のやり方で行動したか, 置いた量) も落とす. 今のやり方は決める
+    ことの結果なので, 予測の時点では分からず, 学習に入れると答えが漏れる
+    ため (比べる相手としてだけ使う). 利用者が予測の時点で分かる列に
+    入れた場合は落とさない (確かめが注意を出す)
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+
+    Returns
+    ----------
+    drop: list[str]
+        落とす列 (重ならない. 目的の列は含めない)
+    """
+    # 分からない列, 使ってはいけない列, 今のやり方の列の順
+    value = active_value
+    names = ((value(problem, "information.unknown") or [])
+             + (value(problem, "information.forbidden") or []))
+    current = value(problem, "action.current") or {}
+    known = value(problem, "information.known") or []
+    if (isinstance(current, dict) and current.get("type") == "column"
+            and current.get("column") not in known):
+        names = names + [current.get("column")]
+    target = value(problem, f"{PART}.target.column")
+    drop = []
+    for name in names:
+        if isinstance(name, str) and name != target and name not in drop:
+            drop.append(name)
+
+    return drop
 
 
 def describe(problem: dict) -> list[str]:
