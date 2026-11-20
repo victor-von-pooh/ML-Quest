@@ -43,7 +43,7 @@ ML-Quest の今の設計と決まりをまとめる. まだやっていないこ
 | `src/ml_quest/questions.py` | 問いの並び, タスクと指標の選択肢 |
 | `src/ml_quest/problem.py` | 問題の設定の作成, 答え, 読み書き, 列の名前の読み込み |
 | `src/ml_quest/check.py` | 確かめ |
-| `src/ml_quest/handoff.py` | 受け渡しの値と要約の文 |
+| `src/ml_quest/handoff.py` | 受け渡しの値と要約の文, 写した問題の設定の元の場所 |
 | `src/ml_quest/requirements.py` | 要る機能の名前 (ML-Found の登録簿の名前) と, 答えから要る機能 |
 | `src/ml_quest/skeleton.py` | ML-Found のプロジェクトの骨組みと, 書き出したプロジェクトの記録 |
 | `src/ml_quest/baseline_skeleton.py` | 列の予測の骨組みで, 今のやり方と比べる部分 |
@@ -156,6 +156,8 @@ project:                          # 書き出した学習のプロジェクト (
   path: /work/sozai_project       #    プロジェクトのディレクトリ (絶対パス)
   dataset: /work/sozai_project/outputs/dataset      # train.py がデータセットを読む場所 (config の data.dataset)
   model_spec: /work/sozai_project/models/model.yaml # train.py がモデルの定義を読む場所 (config の model.spec. 無ければ null)
+
+origin: /work/problems/sozai/problem.yaml # 元の問題の設定 (写しだけが持つ. make_project が書く. 絶対パス)
 ```
 
 - 上から順に決める. 各項目は次の項目の根拠になる (課題が無ければ指標は決まらず, 指標が無ければ機械学習の受け持ちの良し悪しは決まらない)
@@ -166,6 +168,7 @@ project:                          # 書き出した学習のプロジェクト (
 - 決める時点で分かる目的の値 (`available_lag`) は, 予測の時点で使える列と同じく漏れを防ぐための答え. 前の日の 17 時に翌日を決めるなら, 前の日の値はまだ確定しないので 2. 学習に 1 期前の値を使うと, 学習とたどり直しでは当たり, 使うときは外れる (ML_tester の 21 で, 1 期前からと 2 期前からで, たどり直しの今のやり方との差を比べられる)
 - `action.decision` は ML-Inference の意思決定の形 (`type` は `quantity`, `select`, `triage`, `none`) と同じ. `none` は予測を見て人が決める場合 (意思決定の材料を作らない). 対象を選ぶ型は, 効果の渡し方 (`effect_kind`: `share` 防げる割合 (既定) か `uplift` 行動したとき − しないときの当たりの確率) と, `uplift` の向き (`effect_goal`: 当たりを減らしたいなら `reduce`, 増やしたいなら `raise`) も書ける. 効果のモデル (介入の記録から学ぶ) の見積もりを, 確率を二重に掛けずに渡すため
 - 書き出したプロジェクトの記録 (`project`) は, 後ろの段階の画面がデータセットとモデルの定義の置き場を写さずに使うためのもの. 答えではないので問いと確かめには出ない. 無い場合と, 絶対パスの文字でない値は「記録が無い」として扱う. この項目を知らない読む側は無視するだけで, 他の答えの意味は変わらないので, 版 2 に含む
+- 元の問題の設定の場所 (`origin`) は, 骨組みのプロジェクトと学習の実験に写した問題の設定が, 元のファイル (ML-Pathfinder の置き場の `problem.yaml` など) を指すためのもの. 推論の段階は写しの代わりに元を読み, 写した後に直した損得を使う (写しは書き出した時点の値のまま). `problem_origin(problem)` で読む. 無い場合と, 絶対パスの文字でない値は「元の場所が無い」(`None`) として扱う. ファイルがあるかは見ない (読む側が確かめ, 無ければ写しを使う). 答えではないので問いと確かめには出ない. この項目を知らない読む側は無視するだけなので, 版 2 に含む
 - 知らない項目は残す (読む側は無視する). 版を上げるのは, 項目を消すか, 名前, 意味, 値の型を変える場合
 
 ### 受け持ちと, 型に依らない 5 つの問い
@@ -374,7 +377,7 @@ pip で入らないものを含む外の道具 (ROS2, MuJoCo, CUDA) は, 要る�
 
 ```
 <プロジェクト>/
-├── problem.yaml                # 問題の設定の写し
+├── problem.yaml                # 問題の設定の写し (元の場所 origin を持つ)
 ├── README.md                   # 課題の要約と, 次にすること (データの分析, モデルの作成, 学習)
 ├── configs/
 │   ├── default/train.yaml      # 要る機能 (requires), 指標から monitor と mode. データセットとモデルの定義の場所
@@ -382,6 +385,7 @@ pip で入らないものを含む外の道具 (ROS2, MuJoCo, CUDA) は, 要る�
 └── train.py                    # 学習のスクリプト
 ```
 
+- **元の場所**: `make_project(problem, path, origin=...)` は, 元の問題の設定 (`problem.yaml` か, それを持つディレクトリ) の絶対パスを, プロジェクトの `problem.yaml` の `origin` に書く. 学習のスクリプトは実験のディレクトリにこの写しをそのまま写すので, 実験の写しからも元が分かる. `origin` を省くと, 渡した問題の設定の `origin` をそのまま残す (写しから書き出し直しても元を指す). 書き出すプロジェクトの `problem.yaml` そのものを元にするのは誤り (写しが自分を指すため). 画面 (ML-Pathfinder) は置き場の `problem.yaml` を渡す
 - 学習のスクリプトは, ML-EDA のデータセット (`outputs/dataset`) を読み, ML-ModelControl の定義 (`models/model.yaml`) からモデルを組み立て, ML-Found で学習し, テスト用の分割で評価し, 今のやり方と比べ (下の「今のやり方との比べ」), ML-Inference の推論の一式を実験の中に作る (問題の設定の意思決定と結論を既定値にする)
 - **要る機能**: config の一番上の `requires` に, 学習のスクリプトが読み込むライブラリ (列の予測は `eda`, `modelcontrol`, `inference`. ファイルの組は `eda`. `modelcontrol` は config に定義を書いたときだけ読むので, 書いたら足すと config の注記で案内する) と, 受け渡しの `requires` (問題の設定から要る機能) を書く. ML-Found は学習の前に確かめ, 足りなければ入れ方を示して止まる. ML-Dashboard は同じ名前でプロジェクトの環境を作る
 - **プロジェクトの記録**: `record_project(problem, path)` は, 書き出したプロジェクトの config (`data.dataset` と `model.spec`) をプロジェクトのディレクトリから絶対パスにして, 問題の設定の `project` に入れて返す (元は変えない. 前の記録は置き換える). 場所を config から読むのは, train.py が読む場所と同じにするため. 画面 (ML-Pathfinder) は書き出しの後にこれを保存する. プロジェクトの中の `problem.yaml` の写しには記録を持たせない (プロジェクトを動かしても古い場所を指さないように. train.py はプロジェクトのディレクトリからの場所で読む)

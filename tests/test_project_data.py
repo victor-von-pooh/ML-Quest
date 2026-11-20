@@ -8,8 +8,8 @@ import yaml
 
 from ml_quest import (
     answer, apply_recipe, attach_data, check, example_problem, get_value,
-    handoff, inspect_data, load_problem, make_project, prune_copies,
-    recipe_from, record_project, resolve_choice, save_problem
+    handoff, inspect_data, load_problem, make_project, problem_origin,
+    prune_copies, recipe_from, record_project, resolve_choice, save_problem
 )
 
 
@@ -683,3 +683,51 @@ def test_baseline_in_skeleton(tmp_path: Path) -> None:
     script = (tmp_path / "churn" / "train.py").read_text("utf-8")
     assert "手元のデータを入れていない" in script
     assert "compare_baseline" not in script
+
+
+def test_problem_origin(tmp_path: Path) -> None:
+    """
+    写した問題の設定が元の場所を絶対パスで持ち, 書き出し直しても残り,
+    崩した値と自分を指す場所を受け付けないことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 元のディレクトリを渡しても, 中の problem.yaml の絶対パス
+    problem = example_problem("総菜の作る量")
+    store = tmp_path / "problems" / "one"
+    save_problem(problem, store / "problem.yaml")
+    assert problem_origin(problem) is None
+    project = tmp_path / "project"
+    make_project(problem, project, origin=store)
+    copied = load_problem(project)
+    original = str((store / "problem.yaml").resolve())
+    assert problem_origin(copied) == original
+    assert "origin" not in problem
+
+    # 写しから書き出し直すと元を指したまま. 渡せば置き換え
+    other = tmp_path / "other"
+    make_project(copied, other)
+    assert problem_origin(load_problem(other)) == original
+    third = tmp_path / "third"
+    make_project(copied, third, origin=tmp_path / "x.yaml")
+    assert problem_origin(load_problem(third)) == str(
+        (tmp_path / "x.yaml").resolve()
+    )
+
+    # 元の問題の設定に記録しても, origin は入らない
+    assert "origin" not in record_project(problem, project)
+
+    # 崩した値と相対パスは無いものとして扱う. 自分を指す場所と空は誤り
+    assert problem_origin(dict(copied, origin="rel/problem.yaml")) is None
+    assert problem_origin(dict(copied, origin=3)) is None
+    with pytest.raises(ValueError, match="写しです"):
+        make_project(problem, tmp_path / "self", origin=tmp_path / "self")
+    with pytest.raises(ValueError, match="空です"):
+        make_project(problem, tmp_path / "empty", origin=" ")

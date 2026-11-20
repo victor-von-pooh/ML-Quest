@@ -262,7 +262,8 @@ $scale_lines
     trainer = Trainer(model, experiment, Step(scale))
     trainer.fit(train_loader, valid_loader)
 
-    # 実験だけで見直せるように, 問題の設定とモデルの定義の写し
+    # 実験だけで見直せるように, 問題の設定とモデルの定義の写し (元の問題の
+    # 設定の場所 origin も残る)
     run_dir = Path(experiment.run_dir)
     shutil.copy(PROJECT_DIR / "problem.yaml", run_dir / "problem.yaml")
     shutil.copy(spec, run_dir / "model_spec.yaml")
@@ -802,9 +803,46 @@ def project_files(
     return files
 
 
+def origin_file(origin: Union[str, Path], path: Path) -> str:
+    """
+    元の問題の設定の場所を, problem.yaml の絶対パスにする関数
+
+    Parameters
+    ----------
+    origin: Union[str, Path]
+        元の problem.yaml か, それを持つディレクトリ
+    path: Path
+        書き出すプロジェクトのディレクトリ
+
+    Returns
+    ----------
+    place: str
+        元の problem.yaml の絶対パス
+
+    Raises
+    ----------
+    ValueError
+        空の場合と, 書き出すプロジェクトの problem.yaml そのものの場合
+    """
+    # ディレクトリなら中の problem.yaml. 写しが自分を指さないように
+    if not str(origin).strip():
+        raise ValueError("元の問題の設定の場所が空です")
+    target = Path(origin).expanduser().resolve()
+    if target.is_dir() or target == path.resolve():
+        target = target / "problem.yaml"
+    if target == (path / "problem.yaml").resolve():
+        raise ValueError(
+            f"{target} は書き出すプロジェクトの写しです. 元の問題の設定の"
+            "場所を渡してください"
+        )
+    place = str(target)
+
+    return place
+
+
 def make_project(
     problem: dict, path: Union[str, Path], name: Optional[str] = None,
-    overwrite: bool = False
+    overwrite: bool = False, origin: Optional[Union[str, Path]] = None
 ) -> list[str]:
     """
     問題の設定から, ML-Found のプロジェクトの骨組みを書き出す関数
@@ -819,6 +857,10 @@ def make_project(
         実験の名前 (省略すると目的の列とタスクから)
     overwrite: bool = False
         既にあるファイルを上書きするか
+    origin: Optional[Union[str, Path]] = None
+        元の問題の設定 (problem.yaml か, それを持つディレクトリ). 写しの
+        origin に絶対パスで残す (省略すると, 渡した問題の設定の origin を
+        そのまま残す)
 
     Returns
     ----------
@@ -829,13 +871,15 @@ def make_project(
     ----------
     ValueError
         渡せない問題の設定の場合, 書き出せない受け持ちか指標がその他の
-        場合, 入れたデータセットが受け持ちに合わない場合と, 上書きしない
-        既にあるファイルがある場合
+        場合, 入れたデータセットが受け持ちに合わない場合, 上書きしない
+        既にあるファイルがある場合と, 元の場所が書き出す写しそのものの
+        場合
     """
     # 書き出せるか (project_error と同じ決まり). 受け渡しの値 (版 1 は先に
     # 版 2 へ移行). データはプロジェクトの data に写し, 写した問題の設定は
     # その場所を指す. プロジェクトの記録は写しに持たせない (プロジェクトを
-    # 動かしても古い場所を指さないように)
+    # 動かしても古い場所を指さないように). 元の問題の設定の場所は写しの
+    # origin に (推論の段階が元の今の値を読めるように)
     error = project_error(problem)
     if error is not None:
         raise ValueError(error)
@@ -845,6 +889,8 @@ def make_project(
                    if key != "project"}
     stages = handoff(problem)
     path = Path(path)
+    if origin is not None:
+        problem = {**problem, "origin": origin_file(origin, path)}
     source = data_location(problem)
     data_file = (Path("data") / Path(source).name
                  if isinstance(source, str) and Path(source).exists()
