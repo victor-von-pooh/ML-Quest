@@ -9,9 +9,9 @@ from ml_quest.problem import active_value, get_value
 from ml_quest.questions import PART
 
 # 学習のスクリプトが読み込むライブラリの, ML-Found の登録簿の機能の名前
-# (ml_eda と ml_inference. ml_modelcontrol は config に定義を書いたとき
-# だけ読む)
-ITEMS_LIBRARIES = ["eda", "inference"]
+# (ml_eda, ml_modelcontrol, ml_inference. config の model.spec の定義が
+# 無いうちは ml_modelcontrol と ml_inference を読まない)
+ITEMS_LIBRARIES = ["eda", "modelcontrol", "inference"]
 
 # 学習のスクリプトの頭 (読み込みと, 問題の設定から決まる既定値). 答えの
 # 文字は JSON の文字列で埋め込み
@@ -24,6 +24,7 @@ ML-EDA のファイルの組のデータセット (版 2 か版 3) で学習す�
 from pathlib import Path
 import shutil
 import sys
+from typing import Optional
 
 import numpy as np
 import torch
@@ -33,7 +34,8 @@ from torch.utils.data import DataLoader, Dataset
 from ml_eda import ItemDataset, ItemSplit, load_items
 from ml_found import (
     Experiment, Trainer, describe_origin, load_project_config,
-    save_evaluation, start_experiment, task_from_dataset, write_task
+    save_evaluation, save_sample, start_experiment, task_from_dataset,
+    write_task
 )
 
 # このプロジェクトのディレクトリ (ML-Found のプロジェクト)
@@ -50,6 +52,9 @@ METHOD = $method
 
 # 分割の名前 (学習用, 検証用, テスト用)
 SPLITS = ("train", "valid", "test")
+
+# 見本 (入力, 予測, 正解) を書く検証用の件数
+SAMPLES = 3
 '''
 
 # 画像の領域: 画素ごとの交差エントロピーと, 背景を除いた IoU の平均
@@ -500,6 +505,52 @@ def evaluate_test(
 
     return rows
 
+
+def save_samples(
+    trainer: Trainer, part: Dataset, dataset: ItemDataset,
+    experiment: Experiment
+) -> None:
+    """
+    検証用の数件の入力, 予測, 正解を見本に書く関数
+
+    Parameters
+    ----------
+    trainer: Trainer
+        学習した後の MaskTrainer
+    part: Dataset
+        検証用の MaskDataset
+    dataset: ItemDataset
+        ML-EDA のファイルの組のデータセット
+    experiment: Experiment
+        実験 (samples/ に書く)
+
+    Returns
+    ----------
+    None
+    """
+    # 予測の番号を領域の値に戻す表と, 値の名前 (データセットと同じ値で
+    # 書き, 凡例に名前を出す)
+    lookup, names = class_table(dataset)[:2]
+    values = np.flatnonzero(lookup >= 0)
+    classes = {int(value): name for value, name in zip(values, names)}
+    model = trainer.model.cpu().eval()
+    for index in range(min(SAMPLES, len(part))):
+        # 1 件の画像の予測と, データセットのままの正解
+        item = part.items[index]
+        image, _ = part[index]
+        with torch.no_grad():
+            predicted = model(image.unsqueeze(0)).argmax(dim=1)[0]
+        target = np.asarray(item[part.names[1]]).astype(np.int64)
+        label = f"検証用の {item['id']}"
+        save_sample(experiment, f"valid_{index}_input", image.numpy(),
+                    kind="image", split="valid", caption=f"{label} の入力")
+        save_sample(experiment, f"valid_{index}_predicted",
+                    values[predicted.numpy()], kind="mask", split="valid",
+                    caption=f"{label} の予測", classes=classes)
+        save_sample(experiment, f"valid_{index}_target", target,
+                    kind="mask", split="valid", caption=f"{label} の正解",
+                    classes=classes)
+
 $baseline_comment
 '''
 
@@ -910,6 +961,79 @@ def evaluate_test(
 
     return rows
 
+
+def cloud_convention(
+    part: Dataset, dataset: ItemDataset, index: int
+) -> dict:
+    """
+    見本の点群の値の決まり (単位と, 正規化で足した量) を返す関数
+
+    Parameters
+    ----------
+    part: Dataset
+        検証用の CloudDataset
+    dataset: ItemDataset
+        ML-EDA のファイルの組のデータセット
+    index: int
+        分割の中の位置
+
+    Returns
+    ----------
+    convention: dict
+        units と, 正規化した場合は件の shift (ML-EDA の表の値のまま.
+        正規化した座標 = 元の座標 + shift)
+    """
+    # 正規化の単位 (無ければ正解の項目の単位) と, 件の表の shift の列
+    normalization = dataset.info.get("normalization") or {}
+    units = (normalization.get("units")
+             or dataset.entries[part.names[1]].get("units"))
+    columns = normalization.get("columns") or []
+    row = part.items.rows.iloc[index]
+    convention = {"units": units} if units else {}
+    if columns and all(column in row.index for column in columns):
+        convention["shift"] = [float(row[column]) for column in columns]
+
+    return convention
+
+
+def save_samples(
+    trainer: Trainer, part: Dataset, dataset: ItemDataset,
+    experiment: Experiment
+) -> None:
+    """
+    検証用の数件の入力, 予測, 正解の点を見本に書く関数
+
+    Parameters
+    ----------
+    trainer: Trainer
+        学習した後の CloudTrainer
+    part: Dataset
+        検証用の CloudDataset
+    dataset: ItemDataset
+        ML-EDA のファイルの組のデータセット
+    experiment: Experiment
+        実験 (samples/ に書く)
+
+    Returns
+    ----------
+    None
+    """
+    # 検証と同じ選びの点と予測. 値の決まりで元の座標に戻して見られる
+    model = trainer.model.cpu().eval()
+    for index in range(min(SAMPLES, len(part))):
+        points, target = part[index]
+        with torch.no_grad():
+            predicted = model(points.unsqueeze(0))[0]
+        convention = cloud_convention(part, dataset, index)
+        label = f"検証用の {part.items.rows.iloc[index]['id']}"
+        for name, text, value in (("input", "入力の点", points),
+                                  ("predicted", "予測", predicted),
+                                  ("target", "正解", target)):
+            save_sample(experiment, f"valid_{index}_{name}", value.numpy(),
+                        kind="point_cloud", split="valid",
+                        caption=f"{label} の{text}",
+                        convention=convention)
+
 $baseline_comment
 '''
 
@@ -938,7 +1062,31 @@ def entry_names(dataset: ItemDataset) -> tuple[str, str]:
     return names
 
 
-def make_model(dataset: ItemDataset, cfg: object) -> nn.Module:
+def spec_file(cfg: object) -> Optional[Path]:
+    """
+    config の model.spec の, ML-ModelControl の定義のファイルを返す関数
+
+    Parameters
+    ----------
+    cfg: object
+        config (model.spec に定義の場所. プロジェクトのディレクトリから)
+
+    Returns
+    ----------
+    spec: Optional[Path]
+        定義のファイル (場所を書いていないか, ファイルがまだ無ければ None)
+    """
+    # ML-CreateArchitecture で組んで保存するまでは無い
+    spec = PROJECT_DIR / cfg.model.spec if cfg.model.spec else None
+    if spec is not None and not spec.is_file():
+        spec = None
+
+    return spec
+
+
+def make_model(
+    dataset: ItemDataset, cfg: object, spec: Optional[Path]
+) -> nn.Module:
     """
     モデルを作る関数
 
@@ -947,19 +1095,19 @@ def make_model(dataset: ItemDataset, cfg: object) -> nn.Module:
     dataset: ItemDataset
         ML-EDA のファイルの組のデータセット
     cfg: object
-        config (model.spec に ML-ModelControl の定義の場所)
+        config (仮のモデルの大きさと乱数の種)
+    spec: Optional[Path]
+        ML-ModelControl の定義のファイル (無ければ None)
 
     Returns
     ----------
     model: nn.Module
         定義から組み立てたモデルか, 仮のモデル
     """
-    # ML-ModelControl の定義を書いていれば組み立て (ML-ModelControl は任意
-    # の依存なので, 使うときだけの読み込み)
-    if cfg.model.spec:
+    # 定義があれば組み立て (定義の無いうちは ML-ModelControl を読まない)
+    if spec is not None:
         from ml_modelcontrol import build_model
-        model = build_model(PROJECT_DIR / cfg.model.spec,
-                            seed=cfg.experiment.seed)
+        model = build_model(spec, seed=cfg.experiment.seed)
         return model
     model = placeholder(dataset, cfg)
 
@@ -967,8 +1115,8 @@ def make_model(dataset: ItemDataset, cfg: object) -> nn.Module:
 
 
 def make_inference(
-    cfg: object, path: Path, dataset: ItemDataset, run_dir: Path,
-    experiment: Experiment
+    cfg: object, spec: Optional[Path], path: Path, dataset: ItemDataset,
+    run_dir: Path, experiment: Experiment
 ) -> None:
     """
     学習した重みから, 実験の中に ML-Inference の推論の一式を作る関数
@@ -976,7 +1124,9 @@ def make_inference(
     Parameters
     ----------
     cfg: object
-        config (model.spec に ML-ModelControl の定義の場所)
+        config (一式の名前と 1 件の扱い)
+    spec: Optional[Path]
+        ML-ModelControl の定義のファイル (無ければ None)
     path: Path
         ML-EDA のファイルの組のデータセットの場所
     dataset: ItemDataset
@@ -991,18 +1141,18 @@ def make_inference(
     None
     """
     # 仮のモデルは ML-ModelControl の定義が無いので一式にできない
-    if not cfg.model.spec:
+    if spec is None:
         experiment.logger.info(
             "仮のモデル (PlaceholderModel) は ML-ModelControl の定義が無い"
-            "ので, 推論の一式を作りません. config の model.spec に定義を"
-            "書くと, 学習の後に作ります"
+            "ので, 推論の一式を作りません. config の model.spec の場所に"
+            "定義を置くと, 学習の後に作ります"
         )
         return
 
     # 学習と同じ 1 件の扱いで一式を作り, 検証用の分割の評価を記録と比べる
     from ml_inference import make_bundle
     info = make_bundle(
-        run_dir / "inference", PROJECT_DIR / cfg.model.spec, path, run_dir,
+        run_dir / "inference", spec, path, run_dir,
         items=bundle_items(dataset, cfg), name=cfg.experiment.name
     )
     check = info["check"]
@@ -1024,8 +1174,8 @@ def make_inference(
 
 def main() -> None:
     """
-    ML-EDA のファイルの組のデータセットで学習し, テスト用の評価と推論の一式を
-    残す関数
+    ML-EDA のファイルの組のデータセットで学習し, テスト用の評価, 見本と
+    推論の一式を残す関数
 
     Parameters
     ----------
@@ -1074,9 +1224,16 @@ def main() -> None:
         for name, part in datasets.items()
     }
 
-    # モデルの組み立てと学習 (検証は trainer.valid_every_n_epochs ごとと
-    # 最後のエポック)
-    model = make_model(dataset, cfg)
+    # モデルの組み立てと学習 (定義がまだ無ければ仮のモデル. 検証は
+    # trainer.valid_every_n_epochs ごとと最後のエポック)
+    spec = spec_file(cfg)
+    if spec is None:
+        experiment.logger.info(
+            f"モデルの定義 ({cfg.model.spec or '場所なし'}) が無いので, "
+            "仮のモデル (PlaceholderModel) で学習します. ML-CreateArchitecture"
+            " で組んだ定義をその場所に置くと, 定義のモデルで学習します"
+        )
+    model = make_model(dataset, cfg, spec)
     trainer = make_trainer(model, experiment, dataset)
     trainer.fit(loaders["train"], loaders["valid"])
 
@@ -1084,8 +1241,8 @@ def main() -> None:
     # 設定の場所 origin も残る)
     run_dir = Path(experiment.run_dir)
     shutil.copy(PROJECT_DIR / "problem.yaml", run_dir / "problem.yaml")
-    if cfg.model.spec:
-        shutil.copy(PROJECT_DIR / cfg.model.spec, run_dir / "model_spec.yaml")
+    if spec is not None:
+        shutil.copy(spec, run_dir / "model_spec.yaml")
 
     # 結果の表示と, 指標が何との一致か. 学習した後の重みは, 最良のモデル
     # に戻した場合だけ最良のエポック (select_best: false などは最後)
@@ -1108,8 +1265,15 @@ def main() -> None:
     else:
         experiment.logger.info("テスト用の分割が無いので, 評価しません")
 
-    # 実験の中に推論の一式 (ML-ModelControl の定義を書いた場合だけ)
-    make_inference(cfg, path, dataset, run_dir, experiment)
+    # 検証用の数件の見本 (ML-Dashboard の見本のタブ). 書けなくても
+    # 学習の結果は残すので, 警告だけ
+    try:
+        save_samples(trainer, datasets["valid"], dataset, experiment)
+    except ValueError as error:
+        experiment.logger.warning(f"見本を書けません: {error}")
+
+    # 実験の中に推論の一式 (ML-ModelControl の定義がある場合だけ)
+    make_inference(cfg, spec, path, dataset, run_dir, experiment)
 
 
 if __name__ == "__main__":
@@ -1154,9 +1318,9 @@ data:
   batch_size: 8$cloud_data
 
 model:
-  # ML-ModelControl の形のモデルの定義 (ML-CreateArchitecture で組む. 空なら
-  # train.py の仮のモデル. 書くなら requires に modelcontrol を足す)
-  spec: null$cloud_model
+  # ML-ModelControl の形のモデルの定義 (ML-CreateArchitecture で組んで, この
+  # 場所に保存する). ファイルが無いうちは train.py の仮のモデルで学習する
+  spec: models/model.yaml$cloud_model
 ''')
 
 # 点群の検証の間隔と, 点の数
@@ -1381,10 +1545,11 @@ def items_readme(
     every = ("検証 (Chamfer 距離) は `trainer.valid_every_n_epochs` ごとと"
              "最後のエポックだけ. " if kind == "point_cloud" else "")
     lines += [
-        "2. **モデルの作成**: `train.py` の `PlaceholderModel` (印 TODO. 動く"
-        "ことを確かめるだけの小さなモデル) を課題に合うモデルに置き換えるか,"
-        " ML-CreateArchitecture で組んだ定義を `models/` に置き, config の "
-        "`model.spec` にその場所を書く"
+        "2. **モデルの作成** (ML-ModelControl, ML-CreateArchitecture): "
+        "ML-CreateArchitecture で組んだ定義を, config の `model.spec` の場所"
+        " (`models/model.yaml`) に保存する. 定義が無いうちは, `train.py` の "
+        "`PlaceholderModel` (印 TODO. 動くことを確かめるだけの小さなモデル)"
+        " で学習する"
         + (". 入力は (バッチ, チャンネル, 高さ, 幅) の 0 から 1 の画像, 出力は"
            " (バッチ, クラス数, 高さ, 幅) のスコア. クラスは `dataset.yaml` の"
            " `classes` (無ければ `values`). 名前の無い値 0 は背景 "
@@ -1394,10 +1559,13 @@ def items_readme(
            "点"),
         "3. **学習** (ML-Found, ML-Dashboard): `python train.py`. 結果は "
         "`outputs/<実験の名前>/<日付>/<時刻>/` に残る (`task.yaml`, テスト用の"
-        f"分割があれば `evaluations/`). {every}検証用の "
+        "分割があれば `evaluations/`, 検証用の 3 件の入力と予測と正解の見本 "
+        "`samples/`" + (". 領域は値の名前の凡例付き" if kind == "mask" else
+                        ". 点群は正規化を戻した元の座標でも見られる")
+        + f"). {every}検証用の "
         f"`{stages['training']['monitor']}` が最も良いモデルを選ぶ",
-        "4. **推論** (ML-Inference, ML-Provide): config の `model.spec` に"
-        "定義を書いて学習すると, `train.py` が学習の後に実験の中の "
+        "4. **推論** (ML-Inference, ML-Provide): `model.spec` の場所に定義を"
+        "置いて学習すると, `train.py` が学習の後に実験の中の "
         "`inference/` に推論の一式 (出力の形 `" + kind + "`) を作る. 1 件"
         "の扱いは学習と同じもの "
         + ("(選ぶ点の数と検証用の分割と同じ乱数の種)" if kind ==

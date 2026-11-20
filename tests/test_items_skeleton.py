@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -211,14 +212,17 @@ def test_items_project(tmp_path: Path, kind: str) -> None:
     assert (config["trainer"]["monitor"], config["trainer"]["mode"]) == (
         monitor
     )
-    assert config["requires"] == ["eda", "inference"]
+    assert config["requires"] == ["eda", "modelcontrol", "inference"]
     assert "比べる相手" in script and "TODO: 比べる相手" not in script
-    assert record_project(problem, project)["project"]["model_spec"] is None
+    assert record_project(problem, project)["project"]["model_spec"] == str(
+        (project / "models" / "model.yaml").resolve()
+    )
     assert config["trainer"].get("valid_every_n_epochs") == (
         2 if kind == "point_cloud" else None
     )
     assert config["data"]["dataset"] == "outputs/dataset"
-    assert config["model"]["spec"] is None
+    assert config["model"]["spec"] == "models/model.yaml"
+    assert (project / "models").is_dir()
     assert config["experiment"]["name"] == f"{kind}_predict"
 
     # README: 書き出しの関数と, 今の処理の正解は超えられないこと
@@ -228,10 +232,13 @@ def test_items_project(tmp_path: Path, kind: str) -> None:
     assert function in readme
     assert ("超えられない" in readme) == (kind == "mask")
 
-    # 推論: 定義を書けば学習の後に一式, 仮のモデルは作らない
+    # 推論: 定義を置けば学習の後に一式, 仮のモデルは作らない
     assert f"出力の形 `{kind}`" in readme and "`inference/`" in readme
     assert "一式を作らない" in readme
     assert "make_inference" in script and "bundle_items" in script
+
+    # 見本: 検証用の数件を save_sample で
+    assert "save_sample(" in script and "`samples/`" in readme
 
 
 def test_items_refused() -> None:
@@ -322,6 +329,10 @@ def test_items_with_data(tmp_path: Path) -> None:
         evaluations = list(runs[0].parent.glob("evaluations/*.json"))
         assert len(evaluations) == 1
         assert not (runs[0].parent / "inference").exists()
+        assert not (runs[0].parent / "model_spec.yaml").exists()
+        log = (runs[0].parent / "train.log").read_text(encoding="utf-8")
+        assert "仮のモデル (PlaceholderModel) で学習します" in log
+        check_samples(runs[0].parent, kind)
         check_bundle(project, kind)
 
 
@@ -427,7 +438,7 @@ def check_bundle(project: Path, kind: str) -> None:
     ----------
     None
     """
-    # 定義を置いて, 上書きで model.spec に
+    # config の model.spec の場所に定義を置く (上書きは無し)
     if not all(importlib.util.find_spec(name) for name in BUNDLING):
         return
     from ml_inference import predict
@@ -439,7 +450,7 @@ def check_bundle(project: Path, kind: str) -> None:
     )
     for run in (project / "outputs").glob("*/*/*"):
         shutil.rmtree(run)
-    train(project, "model.spec=models/model.yaml")
+    train(project)
 
     # 実験の中の一式と, 記録との比べ (検証用の分割と同じ扱い)
     runs = sorted((project / "outputs").glob("*/*/*/inference"))
@@ -455,6 +466,55 @@ def check_bundle(project: Path, kind: str) -> None:
         "masks" if kind == "mask" else "clouds"
     ))
     assert (frame["status"] == "ok").all()
+    assert (runs[0].parent / "model_spec.yaml").is_file()
+
+
+def check_samples(run: Path, kind: str) -> None:
+    """
+    学習の後に, 検証用の数件の入力, 予測, 正解の見本が書かれたことを
+    確かめる関数
+
+    Parameters
+    ----------
+    run: Path
+        実験のディレクトリ
+    kind: str
+        正解の種類
+
+    Returns
+    ----------
+    None
+    """
+    # 一覧は版 2 で, 1 件に入力, 予測, 正解
+    index = json.loads((run / "samples" / "index.json")
+                       .read_text(encoding="utf-8"))
+    assert index["format_version"] == 2
+    entries = {entry["name"]: entry for entry in index["samples"]}
+    assert {"valid_0_input", "valid_0_predicted", "valid_0_target"} <= set(
+        entries
+    )
+    assert all(entry["split"] == "valid" and entry["epoch"] is None
+               for entry in entries.values())
+    for entry in entries.values():
+        assert (run / "samples" / entry["file"]).is_file()
+
+    # 領域は値の名前の表, 点群は ML-EDA の shift のままの値の決まり
+    predicted = entries["valid_0_predicted"]
+    if kind == "mask":
+        assert entries["valid_0_input"]["kind"] == "image"
+        assert predicted["kind"] == "mask"
+        names = {item["id"]: item["name"]
+                 for item in entries["valid_0_target"]["classes"]}
+        assert names == {0: "background", 1: "circle", 2: "square"}
+        return
+    from ml_eda import load_items
+
+    assert predicted["kind"] == "point_cloud"
+    rows = load_items(run.parents[3] / "data" / "clouds").split(
+        "valid"
+    ).rows
+    shift = [float(rows.iloc[0][f"shift_{axis}"]) for axis in "xyz"]
+    assert predicted["convention"] == {"units": "meter", "shift": shift}
 
 
 def test_items_mismatch(tmp_path: Path) -> None:
