@@ -171,6 +171,10 @@ def test_items_project(tmp_path: Path, kind: str) -> None:
     assert function in readme
     assert ("超えられない" in readme) == (kind == "mask")
 
+    # 推論: ML-Inference の出力の形と, 版 2 のデータセットの残り
+    assert f'form="{kind}"' in readme
+    assert "まだ一式を作れない" in readme
+
 
 def test_items_refused() -> None:
     """
