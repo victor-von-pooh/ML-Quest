@@ -387,10 +387,10 @@ pip で入らないものを含む外の道具 (ROS2, MuJoCo, CUDA) は, 要る�
 
 - **元の場所**: `make_project(problem, path, origin=...)` は, 元の問題の設定 (`problem.yaml` か, それを持つディレクトリ) の絶対パスを, プロジェクトの `problem.yaml` の `origin` に書く. 学習のスクリプトは実験のディレクトリにこの写しをそのまま写すので, 実験の写しからも元が分かる. `origin` を省くと, 渡した問題の設定の `origin` をそのまま残す (写しから書き出し直しても元を指す). 書き出すプロジェクトの `problem.yaml` そのものを元にするのは誤り (写しが自分を指すため). 画面 (ML-Pathfinder) は置き場の `problem.yaml` を渡す
 - 学習のスクリプトは, ML-EDA のデータセット (`outputs/dataset`) を読み, ML-ModelControl の定義 (`models/model.yaml`) からモデルを組み立て, ML-Found で学習し, テスト用の分割で評価し, 今のやり方と比べ (下の「今のやり方との比べ」), ML-Inference の推論の一式を実験の中に作る (問題の設定の意思決定と結論を既定値にする)
-- **要る機能**: config の一番上の `requires` に, 学習のスクリプトが読み込むライブラリ (列の予測は `eda`, `modelcontrol`, `inference`. ファイルの組は `eda`. `modelcontrol` は config に定義を書いたときだけ読むので, 書いたら足すと config の注記で案内する) と, 受け渡しの `requires` (問題の設定から要る機能) を書く. ML-Found は学習の前に確かめ, 足りなければ入れ方を示して止まる. ML-Dashboard は同じ名前でプロジェクトの環境を作る
+- **要る機能**: config の一番上の `requires` に, 学習のスクリプトが読み込むライブラリ (列の予測は `eda`, `modelcontrol`, `inference`. ファイルの組は `eda` と `inference` (学習の後に推論の一式を作るため. ML-Inference は ML-ModelControl を依存に持つ). `modelcontrol` は config に定義を書いたときだけ読むので, 書いたら足すと config の注記で案内する) と, 受け渡しの `requires` (問題の設定から要る機能) を書く. ML-Found は学習の前に確かめ, 足りなければ入れ方を示して止まる. ML-Dashboard は同じ名前でプロジェクトの環境を作る
 - **プロジェクトの記録**: `record_project(problem, path)` は, 書き出したプロジェクトの config (`data.dataset` と `model.spec`) をプロジェクトのディレクトリから絶対パスにして, 問題の設定の `project` に入れて返す (元は変えない. 前の記録は置き換える). 場所を config から読むのは, train.py が読む場所と同じにするため. 画面 (ML-Pathfinder) は書き出しの後にこれを保存する. プロジェクトの中の `problem.yaml` の写しには記録を持たせない (プロジェクトを動かしても古い場所を指さないように. train.py はプロジェクトのディレクトリからの場所で読む)
 - タスクごとの損失と指標: 分類は交差エントロピーと正解率 (正解率を監視するなら, 同じ値を損失で比べる `trainer.monitor_tiebreak: valid/loss`), 回帰と予測は目的の値を学習用の平均と標準偏差で標準化した二乗誤差と元の単位の平均絶対誤差 (RMSE なら元の単位の二乗誤差を監視し, テスト用の評価はエポック全体から RMSE を求める. ML-Found はバッチの平均で書ける指標だけを平均するため)
-- 推論の一式の確かめが学習の記録と比べられるのは, 監視した指標が `accuracy` か `mae` の場合だけ (ML-Inference の決まり). それ以外では比べない理由を記録に書く
+- 推論の一式の確かめが学習の記録と比べられるのは, 監視した指標が `accuracy` か `mae` (ファイルの組の骨組みは `iou` か `chamfer`) の場合だけ (ML-Inference の決まり). それ以外では比べない理由を記録に書く
 - 答えの文字 (名前, 予測すること, 比べる相手) は, JSON の文字列か 1 行のコメントとして埋め込む (改行や引用符でスクリプトが壊れないように). 実験の名前は目的の列とタスクから作り, 日本語の文字は残す
 - 検証用の分割の無いデータセットは, 学習の前に止めて案内する (最も良いモデルを選べないため)
 - **今のやり方との比べ**: 問題の設定に今のやり方をデータで書き (`action.current`. 上の「今のやり方をデータで書く」), データを入れていれば, 学習のスクリプトは推論の一式を作った後に, 検証用とテスト用で, 学習したモデルと今のやり方を同じ行で比べ, ML-Found の評価の表 (`evaluations/baseline_valid.json`, `baseline_test.json`) に推奨の形 (1 行に `rows`, `split_rows`, `<指標>`, `<指標>_baseline`, `<指標>_diff`. `baseline` に比べる相手の名前) で書く. 指標は回帰と予測では最良を選ぶ指標 (平均絶対誤差か RMSE), 分類では正解率
@@ -419,8 +419,8 @@ pip で入らないものを含む外の道具 (ROS2, MuJoCo, CUDA) は, 要る�
 - **監視**: config の `trainer.monitor` と `trainer.mode` は受け渡しの値 (`valid/iou` と `max`, `valid/chamfer` と `min`, `valid/loss` と `min`)
 - **task.yaml**: ML-Found の `task_from_dataset` でデータセットから受け持ち, 正解の種類と出どころを埋め, 問題の設定の出力の形 (`output`), 何を出すか (`what`), 作り方 (`method`) を足して `write_task` で書く. 元にした実験か重み (`base`) は印を残す
 - **正解の出どころ**: README に書く. 正解の出どころが今の処理 (`process`) なら, 「指標はその処理との一致で, モデルはその処理を超えられない」と書き, 書き出しで `origin` に処理の名前と設定を渡すよう案内する (ML-EDA の `settings` は辞書なので, 問題の設定の文は `{"note": ...}` にして渡す). 入れたデータセットの `target.origin` も添える
-- **推論**: 推論の一式は作らない. ML-Inference の一式は出力の形 `mask` と `point_cloud` を持つが, `make_bundle` は版 2 のデータセットから一式を作れない (ML-Inference の TODO.md). README には `make_bundle` の出力の形 (`form`) と, それまでは `final_model.pt` を `train.py` と同じモデルに読んで推論することを書く
-- 合成のデータ (`ml_eda.synthetic`) から書き出した 2 つの版 2 のデータセットで, 骨組みを書き出し, スクリプトが Python として読めることをテストで確かめる. ML-Found と PyTorch が入っていれば 2 エポック学習まで通す (入っていなければ飛ばす)
+- **推論**: config の `model.spec` に ML-ModelControl の定義を書いた場合, 学習とテスト用の評価の後に, 実験の中の `inference/` に ML-Inference の推論の一式を `make_bundle` で作り (名前は実験の名前), 一式の確かめを `train.log` に書く. 1 件の扱い (`items`) は学習と同じものを渡す. 領域は入力と正解の項目の名前と, クラスの番号ごとの領域の値 (値の番号の表から), 点群はそれに加えて選ぶ点の数 (`data.input_points`, `data.target_points`) と検証用の分割の乱数の種 (`data.seed` + 1). 検証用の分割と同じ点を選ぶので, 一式の確かめ (`valid/iou`, `valid/chamfer`) が学習の記録と合う. 仮のモデル (`PlaceholderModel`) は定義が無く一式にできないので, 作らない理由を `train.log` に書く. README には, 一式を ML-Provide で登録すること, 新しい画像や撮影を推論すると領域の値か元の座標の点群が返ること, 仮のモデルでは一式を作らないことを書く
+- 合成のデータ (`ml_eda.synthetic`) から書き出した 2 つの版 2 のデータセットで, 骨組みを書き出し, スクリプトが Python として読めることをテストで確かめる. ML-Found と PyTorch が入っていれば 2 エポック学習まで通し, ML-Inference も入っていれば, モデルの定義を書いた骨組みで推論の一式まで作って確かめが学習の記録と合うかを見る (入っていなければ飛ばす)
 
 ## 12. 書き出し
 
