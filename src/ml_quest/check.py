@@ -18,6 +18,9 @@ METRIC_NAME = re.compile(r"[A-Za-z0-9_.@-]+")
 # 列の予測の出力の形
 COLUMN_OUTPUTS = ["class", "value", "distribution"]
 
+# 版 2 のデータセットで骨組みを書き出せる正解の種類 (予測するの受け持ち)
+ITEMS_KINDS = ("mask", "point_cloud")
+
 # 受け持ちの中の, 辞書で書く項目
 PART_DICTS = [f"{PART}.target", f"{PART}.target.process",
               f"{PART}.evaluation", f"{PART}.policy"]
@@ -851,6 +854,29 @@ def is_column_part(problem: dict) -> bool:
     )
 
     return column
+
+
+def is_items_part(problem: dict) -> bool:
+    """
+    受け持ちがファイルの組 (予測するで, 正解の種類が画像の領域か点群) かを
+    返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    items: bool
+        ファイルの組の受け持ちか
+    """
+    # 受け持ちと正解の種類の答え (要らない問いの古い答えは除外)
+    items = active_value(problem, f"{PART}.role") == "predict" and (
+        active_value(problem, f"{PART}.target.kind") in ITEMS_KINDS
+    )
+
+    return items
 
 
 def check_v1(problem: dict) -> list[dict]:

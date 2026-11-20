@@ -328,17 +328,19 @@ def test_point_cloud_handoff() -> None:
     assert stages["part"]["target_process"] == {"name": "今の再構成",
                                                 "settings": "細かさ 1 mm"}
     assert stages["data"]["target"] is None
-    assert stages["data"]["split"] is None
+    assert stages["data"]["split"] == "random"
+    assert stages["data"]["groups"] is None
     assert stages["inference"] == {"decision": None, "conclusion": {},
                                    "horizon": None}
     assert any("予測すること: 試しの出力" in text
                for text in describe(problem))
 
-    # 今の処理の名前は必須. 表の列の段階は対象外
+    # 今の処理の名前は必須. レシピの下書きは書き出しの設定
     nameless = answer(problem, "ml.parts.0.target.process.name", None)
     assert "ml.parts.0.target.process.name" in errors_of(nameless)
-    with pytest.raises(ValueError, match="表の列"):
-        recipe_from(problem)
+    start = recipe_from(problem)
+    assert start["recipe"] is None
+    assert start["export"]["function"] == "export_capture_clouds"
 
 
 def test_each_role_checks() -> None:

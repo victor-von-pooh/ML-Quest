@@ -68,6 +68,8 @@ start = recipe_from(problem)        # データの読み方と, ML-EDA のレシ
 result = apply_recipe(problem, recipe)   # 目的の列とタスクを書き戻し, 列の使い方の食い違いと選ぶ問いを返す
 ```
 
+予測するで正解の種類が画像の領域か点群の受け持ちでは, `recipe_from` は ML-EDA の版 2 の書き出し (`export_image_masks`, `export_capture_clouds`) の設定の下書き (入力と正解のディレクトリ, 分割, グループ, 正解の出どころ) を `export` で返し, `apply_recipe` はその設定を受け取って問題の設定に書き戻す.
+
 要る機能 (強化学習, MuJoCo, ROS2, CUDA) は答えの途中でも出せる. 名前は ML-Found の登録簿 (`describe_requirements`) と同じなので, 画面は入れ方のカードを早めに出せる.
 
 ```python

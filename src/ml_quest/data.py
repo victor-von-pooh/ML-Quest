@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from ml_quest.check import finding, is_column_part
+from ml_quest.check import ITEMS_KINDS, finding, is_column_part
 from ml_quest.problem import (
     active_value, answer, data_location, get_value, set_value,
     upgrade_problem
@@ -42,8 +42,6 @@ COPY_NAME = re.compile(f"[0-9a-f]{{{COPY_DIGITS}}}")
 ITEMS_LOADER = "items"
 ITEMS_VERSION = 2
 
-# 版 2 のデータセットで骨組みを書き出せる正解の種類 (予測するの受け持ち)
-ITEMS_KINDS = ("mask", "point_cloud")
 
 
 def import_eda() -> Any:

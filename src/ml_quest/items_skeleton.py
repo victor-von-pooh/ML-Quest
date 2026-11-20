@@ -4,7 +4,7 @@ from string import Template
 from typing import Callable, Optional
 
 from ml_quest.handoff import describe
-from ml_quest.problem import active_value
+from ml_quest.problem import active_value, get_value
 from ml_quest.questions import PART
 
 # 学習のスクリプトが読み込むライブラリの, ML-Found の登録簿の機能の名前
@@ -1360,6 +1360,8 @@ def items_readme(
             "作る" + (f". 入れたデータはこのディレクトリの `{raw}` に写した"
                       if raw else "")
         )
+    if info is None:
+        lines += export_lines(problem, dataset)
     if process and info is None:
         lines.append("    - 正解の出どころ `origin` に今の処理の名前と設定を"
                      "渡す (ML-EDA の `settings` は辞書. 問題の設定の文は "
@@ -1403,6 +1405,42 @@ def items_readme(
     text = "\n".join(lines)
 
     return text
+
+
+def export_lines(problem: dict, dataset: str) -> list[str]:
+    """
+    書き戻した書き出しの設定を, README の案内の行にする関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+    dataset: str
+        データセットの場所 (プロジェクトのディレクトリから)
+
+    Returns
+    ----------
+    lines: list[str]
+        案内の行 (書き戻した設定が無ければ空)
+    """
+    # 書き出しの関数と, ディレクトリ, 分割, グループの数
+    lines: list[str] = []
+    saved = get_value(problem, "data.export")
+    if not isinstance(saved, dict) or not saved.get("function"):
+        return lines
+    split = saved.get("split") or {}
+    groups = saved.get("groups") or {}
+    lines = [
+        "    - データの分析 (ML-Fathom) で書き戻した設定: "
+        f"`{saved['function']}({json.dumps(saved.get('inputs'))}, "
+        f"{json.dumps(saved.get('targets'))}, \"{dataset}\", "
+        f"split={json.dumps(split, ensure_ascii=False)})`"
+        + (f" (グループは {len(groups)} 件の対応)" if groups else ""),
+        "    - ML-Fathom の「問題の設定から始める」で書き出していれば, "
+        f"`{dataset}` に入っている",
+    ]
+
+    return lines
 
 
 def items_name(problem: dict) -> str:
