@@ -384,7 +384,7 @@ pip で入らないものを含む外の道具 (ROS2, MuJoCo, CUDA) は, 要る�
 - **監視**: config の `trainer.monitor` と `trainer.mode` は受け渡しの値 (`valid/iou` と `max`, `valid/chamfer` と `min`, `valid/loss` と `min`)
 - **task.yaml**: ML-Found の `task_from_dataset` でデータセットから受け持ち, 正解の種類と出どころを埋め, 問題の設定の出力の形 (`output`), 何を出すか (`what`), 作り方 (`method`) を足して `write_task` で書く. 元にした実験か重み (`base`) は印を残す
 - **正解の出どころ**: README に書く. 正解の出どころが今の処理 (`process`) なら, 「指標はその処理との一致で, モデルはその処理を超えられない」と書き, 書き出しで `origin` に処理の名前と設定を渡すよう案内する (ML-EDA の `settings` は辞書なので, 問題の設定の文は `{"note": ...}` にして渡す). 入れたデータセットの `target.origin` も添える
-- **推論**: 推論の一式は作らない (README に書く)
+- **推論**: 推論の一式は作らない. ML-Inference の一式は出力の形 `mask` と `point_cloud` を持つが, `make_bundle` は版 2 のデータセットからはまだ一式を作れない (ML-Inference の残り). README には `make_bundle` の出力の形 (`form`) と, それまでは `final_model.pt` を `train.py` と同じモデルに読んで推論することを書く
 - 合成のデータ (`ml_eda.synthetic`) から書き出した 2 つの版 2 のデータセットで, 骨組みを書き出し, スクリプトが Python として読めることをテストで確かめる. ML-Found と PyTorch が入っていれば 2 エポック学習まで通す (入っていなければ飛ばす)
 
 ## 書き出し

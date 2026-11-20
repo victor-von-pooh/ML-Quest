@@ -1255,8 +1255,12 @@ def items_readme(
         "`outputs/<実験の名前>/<日付>/<時刻>/` に残る (`task.yaml`, テスト用の"
         f"分割があれば `evaluations/`). {every}検証用の "
         f"`{stages['training']['monitor']}` が最も良いモデルを選ぶ",
-        "4. **推論**: ML-Inference の一式がまだこの出力の形を持たないので, "
-        "推論の一式は作らない",
+        "4. **推論** (ML-Inference): 推論の一式は出力の形 "
+        f"`{kind}` を持つ (`make_bundle(..., form=\"{kind}\")`. 重みは"
+        "学習した実験のディレクトリ, モデルは ML-ModelControl の定義). "
+        "ただし `make_bundle` は版 2 のデータセットからはまだ一式を作れ"
+        "ない (ML-Inference の残り). それまでは `final_model.pt` を "
+        "`train.py` と同じモデルに読んで推論する",
         "", "`train.py` の印 (TODO) の所 (モデル, 比べる相手の評価など) は"
         "書き足す. 問題の設定を変えたら, 書き出し直すか手で直す.", "",
     ]
