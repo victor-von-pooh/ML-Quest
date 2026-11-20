@@ -1,6 +1,6 @@
 # ML-Quest
 
-「機械学習を全て GUI 上で行う」うちの「問題の設定」の段階のライブラリ. 画面のアプリ [ML-Pathfinder](https://github.com/victor-von-pooh/ML-Pathfinder) が使う.
+「機械学習を全て GUI 上で行う」うちの「問題の設定」の段階のライブラリ. 課題を分解し, どの部分を機械学習に任せると課題が解けるかを決めて, 問題の設定のファイルに残す. 画面のアプリ [ML-Pathfinder](https://github.com/victor-von-pooh/ML-Pathfinder) が使う.
 
 ## できること
 
