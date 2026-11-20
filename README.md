@@ -68,7 +68,7 @@ start = recipe_from(problem)        # データの読み方と, ML-EDA のレシ
 result = apply_recipe(problem, recipe)   # 目的の列とタスクを書き戻し, 列の使い方の食い違いと選ぶ問いを返す
 ```
 
-予測するで正解の種類が画像の領域か点群の受け持ちでは, `recipe_from` は ML-EDA の版 2 の書き出し (`export_image_masks`, `export_capture_clouds`) の設定の下書き (入力と正解のディレクトリ, 分割, グループ, 正解の出どころ) を `export` で返し, `apply_recipe` はその設定を受け取って問題の設定に書き戻す.
+予測するで正解の種類が画像の領域か点群の受け持ちでは, `recipe_from` は ML-EDA のファイルの組の書き出し (`export_image_masks`, `export_capture_clouds`) の設定の下書き (入力と正解のディレクトリ, 分割, グループ, 正解の出どころ, 他の引数) を `export` で返し, `apply_recipe` はその設定を受け取って問題の設定に書き戻す. 他の引数 (`options`) には中身の手順 (`item_steps`. `{"image": [{"op": "resize", "width": 64, "height": 64}]}` など) も持てる. 手順を渡すと ML-EDA はデータセットを版 3 で書くので, 書き戻した設定から同じデータセットを作り直せる.
 
 要る機能 (強化学習, MuJoCo, ROS2, CUDA) は答えの途中でも出せる. 名前は ML-Found の登録簿 (`describe_requirements`) と同じなので, 画面は入れ方のカードを早めに出せる.
 
@@ -88,7 +88,7 @@ problem = example_problem("総菜の作る量")
 
 書き出した骨組みの README に, 次にすること (データの分析で選ぶ値, モデルの入力の形と出力の大きさ, 学習の起動, 推論の一式の登録) が書かれる. 学習のスクリプトは ML-EDA, ML-ModelControl, ML-Found, ML-Inference を使い, config の `requires` にその名前 (ML-Found の登録簿の `eda`, `modelcontrol`, `inference`) を書くので, ML-Found が学習の前に足りないものと入れ方を示す. 問題の設定に今のやり方をデータで書いてデータを入れていれば, 学習のスクリプトは検証用とテスト用で今のやり方と比べた評価の表 (`evaluations/baseline_valid.json` など) を書く.
 
-骨組みを書き出せるのは, 列の予測 (分類, 回帰, 時系列の予測) と, 予測するで正解の種類が画像の領域か点群の受け持ち. 後の 2 つは ML-EDA の版 2 のデータセット (`export_image_masks`, `export_capture_clouds`) で学習する骨組みで, 入れた版 2 のデータセットをプロジェクトに写し, 仮のモデル (印 TODO) と, 損失と指標 (領域は交差エントロピーと IoU, 点群は Chamfer) を書く. config に ML-ModelControl の定義を書けば, 学習の後に ML-Inference の推論の一式も実験の中に作る. 書き出せない理由は `project_error(problem)` で分かる.
+骨組みを書き出せるのは, 列の予測 (分類, 回帰, 時系列の予測) と, 予測するで正解の種類が画像の領域か点群の受け持ち. 後の 2 つは ML-EDA のファイルの組のデータセット (版 2 か, 中身の手順をかけた版 3. `export_image_masks`, `export_capture_clouds`) で学習する骨組みで, 入れたデータセットをプロジェクトに写し, 仮のモデル (印 TODO) と, 損失と指標 (領域は交差エントロピーと IoU, 点群は Chamfer) を書く. config に ML-ModelControl の定義を書けば, 学習の後に ML-Inference の推論の一式も実験の中に作る. 書き出せない理由は `project_error(problem)` で分かる.
 
 ## 文書
 

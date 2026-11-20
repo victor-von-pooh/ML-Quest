@@ -788,7 +788,7 @@ def project_files(
         }
         return files
 
-    # ファイルの組 (入れたデータが版 2 のデータセットなら, その写しを読む)
+    # ファイルの組 (入れたデータがデータセットなら, その写しを読む)
     dataset = dataset_place(info, data_file)
     raw = data_file.as_posix() if data_file and info is None else None
     files = {

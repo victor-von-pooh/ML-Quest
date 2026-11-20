@@ -8,7 +8,7 @@ from ml_quest import (
     answer, apply_recipe, attach_data, handoff, make_project, recipe_from,
     record_project
 )
-from test_items_skeleton import kind_problem
+from test_items_skeleton import KIND_STEPS, kind_problem
 
 # 正解の種類ごとの書き出しの関数
 FUNCTIONS = {"mask": "export_image_masks",
@@ -175,6 +175,54 @@ def test_apply_export_round_trip() -> None:
     assert any("合わない" in note for note in start["notes"])
 
 
+def test_apply_export_item_steps() -> None:
+    """
+    書き出しの設定の中身の手順を書き戻し, 下書きに返し, 形の誤りを止める
+    ことを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 項目ごとの手順を書き戻すと, 往復で同じ (変えた点に項目の名前)
+    for kind in ("mask", "point_cloud"):
+        problem = kind_problem(kind)
+        export = recipe_from(problem)["export"]
+        export["options"]["item_steps"] = copy.deepcopy(KIND_STEPS[kind])
+        result = apply_recipe(problem, export)
+        assert result["conflicts"] == []
+        assert all(name in result["changes"][0] for name in KIND_STEPS[kind])
+        written = result["problem"]
+        again = recipe_from(written)
+        assert again["export"]["options"]["item_steps"] == KIND_STEPS[kind]
+        assert again["export"] == written["data"]["export"]
+
+    # 空の辞書と空の並びは落とす
+    problem = kind_problem("mask")
+    base = recipe_from(problem)["export"]
+    for steps in ({}, {"image": []}, None):
+        export = copy.deepcopy(base)
+        export["options"]["item_steps"] = steps
+        written = apply_recipe(problem, export)["problem"]
+        assert "item_steps" not in written["data"]["export"]["options"]
+
+    # 形の誤り (領域と知らない項目, 並びでない, op の無い手順, 辞書でない)
+    for steps, words in (({"mask": [{"op": "resize_mask"}]}, "image"),
+                         ({"cloud": []}, "cloud"),
+                         ({"image": {"op": "resize"}}, "並び"),
+                         ({"image": [{"width": 8}]}, "op"),
+                         ({"image": ["resize"]}, "op"),
+                         (["image"], "辞書")):
+        export = copy.deepcopy(base)
+        export["options"]["item_steps"] = steps
+        with pytest.raises(ValueError, match=words):
+            apply_recipe(problem, export)
+
+
 def test_apply_export_conflicts() -> None:
     """
     書き出しの設定の食い違いと形の誤りを確かめる関数
@@ -223,10 +271,11 @@ def test_apply_export_conflicts() -> None:
 
 
 @pytest.mark.parametrize("kind", ["mask", "point_cloud"])
-def test_export_into_project(tmp_path: Path, kind: str) -> None:
+@pytest.mark.parametrize("steps", [False, True])
+def test_export_into_project(tmp_path: Path, kind: str, steps: bool) -> None:
     """
-    下書きで書き出し, 書き戻した問題の設定から骨組みが版 2 のデータセットを
-    読むことを通しで確かめる関数
+    下書きで書き出し, 書き戻した問題の設定から骨組みがファイルの組の
+    データセットを読むことを通しで確かめる関数
 
     Parameters
     ----------
@@ -234,6 +283,8 @@ def test_export_into_project(tmp_path: Path, kind: str) -> None:
         一時ディレクトリ
     kind: str
         正解の種類
+    steps: bool
+        中身の手順を足して版 3 で書き出すか
 
     Returns
     ----------
@@ -252,6 +303,8 @@ def test_export_into_project(tmp_path: Path, kind: str) -> None:
     # (画面と同じ使い方)
     export = recipe_from(problem)["export"]
     export["split"].update(valid=0.25, test=0.25)
+    if steps:
+        export["options"]["item_steps"] = copy.deepcopy(KIND_STEPS[kind])
     function = getattr(eda, export["function"])
     function(export["inputs"], export["targets"], target,
              split=export["split"], groups=export["groups"],
@@ -270,5 +323,13 @@ def test_export_into_project(tmp_path: Path, kind: str) -> None:
     items = eda.load_items(project / config["data"]["dataset"])
     assert items.info["target"]["kind"] == kind
     assert items.info["target"]["origin"]["type"] == export["origin"]["type"]
+    assert items.info["format_version"] == (3 if steps else 2)
     readme = (project / "README.md").read_text(encoding="utf-8")
     assert "書き戻した設定" in readme and str(dirs["inputs"]) in readme
+    assert ("item_steps=" in readme) == steps
+
+    # 書き戻した設定から同じ手順で作り直せる (問題の設定に手順が残る)
+    again = recipe_from(written)["export"]
+    assert again["options"].get("item_steps") == (
+        KIND_STEPS[kind] if steps else None
+    )

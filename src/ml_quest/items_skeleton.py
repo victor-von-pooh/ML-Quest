@@ -3,6 +3,7 @@ from pathlib import Path
 from string import Template
 from typing import Callable, Optional
 
+from ml_quest.data import describe_steps, entry_steps
 from ml_quest.handoff import describe
 from ml_quest.problem import active_value, get_value
 from ml_quest.questions import PART
@@ -17,8 +18,8 @@ ITEMS_LIBRARIES = ["eda", "inference"]
 ITEMS_HEAD = '''"""
 問題の設定 (problem.yaml) から ML-Quest が書き出した学習のスクリプト
 
-ML-EDA の版 2 のデータセット (ファイルの組) で学習する骨組みなので, 印
-(TODO) の所を書き足す
+ML-EDA のファイルの組のデータセット (版 2 か版 3) で学習する骨組みなので,
+印 (TODO) の所を書き足す
 """
 from pathlib import Path
 import shutil
@@ -252,7 +253,7 @@ def class_table(
     Parameters
     ----------
     dataset: ItemDataset
-        ML-EDA の版 2 のデータセット
+        ML-EDA のファイルの組のデータセット
 
     Returns
     ----------
@@ -360,7 +361,7 @@ def make_datasets(dataset: ItemDataset, cfg: object) -> dict:
     Parameters
     ----------
     dataset: ItemDataset
-        ML-EDA の版 2 のデータセット
+        ML-EDA のファイルの組のデータセット
     cfg: object
         config (使わない. 点群とそろえるための引数)
 
@@ -388,7 +389,7 @@ def placeholder(dataset: ItemDataset, cfg: object) -> nn.Module:
     Parameters
     ----------
     dataset: ItemDataset
-        ML-EDA の版 2 のデータセット
+        ML-EDA のファイルの組のデータセット
     cfg: object
         config (使わない. 点群とそろえるための引数)
 
@@ -417,7 +418,7 @@ def make_trainer(
     experiment: Experiment
         実験
     dataset: ItemDataset
-        ML-EDA の版 2 のデータセット
+        ML-EDA のファイルの組のデータセット
 
     Returns
     ----------
@@ -442,7 +443,7 @@ def bundle_items(dataset: ItemDataset, cfg: object) -> dict:
     Parameters
     ----------
     dataset: ItemDataset
-        ML-EDA の版 2 のデータセット
+        ML-EDA のファイルの組のデータセット
     cfg: object
         config (使わない. 点群とそろえるための引数)
 
@@ -776,7 +777,7 @@ def make_datasets(dataset: ItemDataset, cfg: object) -> dict:
     Parameters
     ----------
     dataset: ItemDataset
-        ML-EDA の版 2 のデータセット
+        ML-EDA のファイルの組のデータセット
     cfg: object
         config (入力と正解の点の数と乱数の種)
 
@@ -805,7 +806,7 @@ def placeholder(dataset: ItemDataset, cfg: object) -> nn.Module:
     Parameters
     ----------
     dataset: ItemDataset
-        ML-EDA の版 2 のデータセット (使わない. 領域とそろえるための引数)
+        ML-EDA のファイルの組のデータセット (使わない. 領域とそろえるための引数)
     cfg: object
         config (出す点の数)
 
@@ -833,7 +834,7 @@ def make_trainer(
     experiment: Experiment
         実験
     dataset: ItemDataset
-        ML-EDA の版 2 のデータセット (使わない. 領域とそろえるための引数)
+        ML-EDA のファイルの組のデータセット (使わない. 領域とそろえるための引数)
 
     Returns
     ----------
@@ -853,7 +854,7 @@ def bundle_items(dataset: ItemDataset, cfg: object) -> dict:
     Parameters
     ----------
     dataset: ItemDataset
-        ML-EDA の版 2 のデータセット
+        ML-EDA のファイルの組のデータセット
     cfg: object
         config (入力と正解の点の数と乱数の種)
 
@@ -922,7 +923,7 @@ def entry_names(dataset: ItemDataset) -> tuple[str, str]:
     Parameters
     ----------
     dataset: ItemDataset
-        ML-EDA の版 2 のデータセット
+        ML-EDA のファイルの組のデータセット
 
     Returns
     ----------
@@ -944,7 +945,7 @@ def make_model(dataset: ItemDataset, cfg: object) -> nn.Module:
     Parameters
     ----------
     dataset: ItemDataset
-        ML-EDA の版 2 のデータセット
+        ML-EDA のファイルの組のデータセット
     cfg: object
         config (model.spec に ML-ModelControl の定義の場所)
 
@@ -977,9 +978,9 @@ def make_inference(
     cfg: object
         config (model.spec に ML-ModelControl の定義の場所)
     path: Path
-        ML-EDA の版 2 のデータセットの場所
+        ML-EDA のファイルの組のデータセットの場所
     dataset: ItemDataset
-        ML-EDA の版 2 のデータセット
+        ML-EDA のファイルの組のデータセット
     run_dir: Path
         実験のディレクトリ
     experiment: Experiment
@@ -1023,7 +1024,7 @@ def make_inference(
 
 def main() -> None:
     """
-    ML-EDA の版 2 のデータセットで学習し, テスト用の評価と推論の一式を
+    ML-EDA のファイルの組のデータセットで学習し, テスト用の評価と推論の一式を
     残す関数
 
     Parameters
@@ -1148,7 +1149,7 @@ trainer:
 
 # プロジェクト固有の設定
 data:
-  # ML-EDA の版 2 のデータセット (プロジェクトのディレクトリから)
+  # ML-EDA のファイルの組のデータセット (プロジェクトのディレクトリから)
   dataset: $dataset
   batch_size: 8$cloud_data
 
@@ -1170,7 +1171,8 @@ def items_script(
     problem: dict, kind: str, literal: Callable, comment_lines: Callable
 ) -> str:
     """
-    問題の設定から, 版 2 のデータセットで学習するスクリプトを作る関数
+    問題の設定から, ファイルの組のデータセットで学習するスクリプトを
+    作る関数
 
     Parameters
     ----------
@@ -1214,7 +1216,7 @@ def items_config(
     experiment: str, stages: dict, kind: str, dataset: str, requires: str
 ) -> str:
     """
-    版 2 のデータセットで学習する config の基準を作る関数
+    ファイルの組のデータセットで学習する config の基準を作る関数
 
     Parameters
     ----------
@@ -1309,7 +1311,8 @@ def items_readme(
     info: Optional[dict], raw: Optional[str]
 ) -> str:
     """
-    版 2 のデータセットで学習するプロジェクトの README を作る関数
+    ファイルの組のデータセットで学習するプロジェクトの README を作る
+    関数
 
     Parameters
     ----------
@@ -1322,10 +1325,11 @@ def items_readme(
     dataset: str
         データセットの場所 (プロジェクトのディレクトリから)
     info: Optional[dict]
-        入れたデータセットの説明 (版 2 のデータセットを入れていなければ
-        None)
+        入れたデータセットの説明 (ファイルの組のデータセットを入れて
+        いなければ None)
     raw: Optional[str]
-        写した元のデータの場所 (版 2 のデータセットでないデータを写した
+        写した元のデータの場所 (ファイルの組のデータセットでないデータを
+        写した
         場合. プロジェクトのディレクトリから)
 
     Returns
@@ -1336,12 +1340,12 @@ def items_readme(
     # 筋道の要約と, 正解の出どころ
     lines = [f"# {problem.get('name', '')}", "",
              "ML-Quest の問題の設定 (`problem.yaml`) から書き出した, "
-             "ML-Found のプロジェクトの骨組み (ML-EDA の版 2 のデータセット"
+             "ML-Found のプロジェクトの骨組み (ML-EDA のファイルの組のデータセット"
              "で学習する).", "", "## 課題から行動まで", ""]
     lines += [f"- {sentence}" for sentence in describe(problem)]
     lines += origin_lines(problem, info)
 
-    # 1. データ (入れた版 2 のデータセットか, 書き出しの案内)
+    # 1. データ (入れたデータセットか, 書き出しの案内)
     function, inputs, extra = EXPORTERS[kind]
     process = active_value(problem, f"{PART}.target.process.name")
     origin = (', origin={"type": "process", "name": ..., "settings": '
@@ -1350,8 +1354,13 @@ def items_readme(
               "学習する環境には ML-EDA, ML-Found (と, 定義を使うなら "
               "ML-ModelControl) を入れる.", ""]
     if info is not None:
-        lines.append(f"1. **データ**: 入れた版 2 のデータセットを `{dataset}`"
-                     " に写した. 学習はこれを読む. 書き出し直したら写し直す")
+        lines.append(f"1. **データ**: 入れた版 {info.get('format_version')} "
+                     f"のデータセットを `{dataset}` に写した. 学習はこれを"
+                     "読む. 書き出し直したら写し直す")
+        lines += [f"    - 書き出しでかけた中身の手順 ({name}): "
+                  f"{describe_steps(steps)}. ファイルはかけた後なので学習は"
+                  "そのまま読む. 推論でも新しい 1 件に同じ手順をかける"
+                  for name, steps in entry_steps(info).items()]
     else:
         lines.append(
             f"1. **データの分析** (コードなら ML-EDA の `{function}`): "
@@ -1430,11 +1439,15 @@ def export_lines(problem: dict, dataset: str) -> list[str]:
         return lines
     split = saved.get("split") or {}
     groups = saved.get("groups") or {}
+    options = saved.get("options")
+    steps = options.get("item_steps") if isinstance(options, dict) else None
     lines = [
         "    - データの分析 (ML-Fathom) で書き戻した設定: "
         f"`{saved['function']}({json.dumps(saved.get('inputs'))}, "
         f"{json.dumps(saved.get('targets'))}, \"{dataset}\", "
-        f"split={json.dumps(split, ensure_ascii=False)})`"
+        f"split={json.dumps(split, ensure_ascii=False)}"
+        + (f", item_steps={json.dumps(steps, ensure_ascii=False)}"
+           if steps else "") + ")`"
         + (f" (グループは {len(groups)} 件の対応)" if groups else ""),
         "    - ML-Fathom の「問題の設定から始める」で書き出していれば, "
         f"`{dataset}` に入っている",
@@ -1445,7 +1458,7 @@ def export_lines(problem: dict, dataset: str) -> list[str]:
 
 def items_name(problem: dict) -> str:
     """
-    版 2 のデータセットの骨組みの, 実験の名前の元を返す関数
+    ファイルの組のデータセットの骨組みの, 実験の名前の元を返す関数
 
     Parameters
     ----------
@@ -1471,16 +1484,18 @@ def dataset_place(info: Optional[dict], copied: Optional[Path]) -> str:
     Parameters
     ----------
     info: Optional[dict]
-        入れたデータセットの説明 (版 2 のデータセットでなければ None)
+        入れたデータセットの説明 (ファイルの組のデータセットでなければ
+        None)
     copied: Optional[Path]
         プロジェクトに写すデータの場所 (プロジェクトからの相対)
 
     Returns
     ----------
     place: str
-        入れた版 2 のデータセットなら写した場所, 他は outputs/dataset
+        入れたファイルの組のデータセットなら写した場所, 他は
+        outputs/dataset
     """
-    # 版 2 のデータセットは書き出し済み
+    # ファイルの組のデータセットは書き出し済み
     place = copied.as_posix() if info is not None and copied else (
         "outputs/dataset"
     )

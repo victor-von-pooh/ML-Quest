@@ -97,14 +97,26 @@ def kind_problem(kind: str) -> dict:
     return problem
 
 
-def write_datasets(root: Path) -> dict:
+# 正解の種類ごとの, 版 3 で書き出す中身の手順 (大きさを変え, 点を選ぶ)
+KIND_STEPS = {
+    "mask": {"image": [{"op": "resize", "width": 12, "height": 12}]},
+    "point_cloud": {
+        "capture": [{"op": "resize", "width": 12, "height": 12}],
+        "cloud": [{"op": "sample_points", "points": 48, "seed": 0}],
+    },
+}
+
+
+def write_datasets(root: Path, steps: bool = False) -> dict:
     """
-    ML-EDA の合成の見本から, 版 2 のデータセットを 2 つ書き出す関数
+    ML-EDA の合成の見本から, ファイルの組のデータセットを 2 つ書き出す関数
 
     Parameters
     ----------
     root: Path
         書き出す場所
+    steps: bool
+        中身の手順をかけて版 3 で書くか (既定は版 2)
 
     Returns
     ----------
@@ -122,13 +134,15 @@ def write_datasets(root: Path) -> dict:
         root / "masks", split=split,
         classes={0: "background", 1: "circle", 2: "square"},
         origin={"type": "process", "name": "今の塗り分け",
-                "settings": {"note": "細かさ 1 画素"}}
+                "settings": {"note": "細かさ 1 画素"}},
+        item_steps=KIND_STEPS["mask"] if steps else None
     )
     synthetic.write_shape_captures(root / "raw_c", count=6, views=3,
                                    size=(16, 16), points=64)
     eda.export_capture_clouds(
         root / "raw_c" / "captures", root / "raw_c" / "clouds",
-        root / "clouds", split=split
+        root / "clouds", split=split,
+        item_steps=KIND_STEPS["point_cloud"] if steps else None
     )
     paths = {"mask": root / "masks", "point_cloud": root / "clouds"}
 
@@ -309,6 +323,92 @@ def test_items_with_data(tmp_path: Path) -> None:
         assert len(evaluations) == 1
         assert not (runs[0].parent / "inference").exists()
         check_bundle(project, kind)
+
+
+def test_items_version3(tmp_path: Path) -> None:
+    """
+    中身の手順をかけた版 3 のデータセットを版 2 と同じく入れ, 手順を見せ,
+    骨組みに写して学習まで通ることを確かめる関数 (ML-Found と PyTorch が
+    無ければ学習は飛ばす)
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 入れると読み方は items. 確かめは版と中身の手順の info だけ
+    paths = write_datasets(tmp_path / "datasets", steps=True)
+    trainable = all(importlib.util.find_spec(name) for name in TRAINING)
+    for kind, path in paths.items():
+        info = yaml.safe_load((path / "dataset.yaml")
+                              .read_text(encoding="utf-8"))
+        assert info["format_version"] == 3
+        problem = attach_data(kind_problem(kind), str(path))
+        assert problem["data"]["loader"] == "items"
+        found = inspect_data(problem)
+        assert [item["level"] for item in found["findings"]] == [
+            "info", "info"
+        ]
+        assert "ML-EDA の版 3" in found["findings"][0]["message"]
+        message = found["findings"][1]["message"]
+        assert "中身の手順" in message
+        assert all(f"{name}: " in message for name in KIND_STEPS[kind])
+        assert project_error(problem) is None
+
+        # 骨組みは写した版 3 を読み, README に版と手順
+        project = tmp_path / kind
+        make_project(problem, project)
+        readme = (project / "README.md").read_text(encoding="utf-8")
+        assert "入れた版 3 のデータセット" in readme
+        assert "resize (width 12, height 12)" in readme
+        if kind == "point_cloud":
+            assert "sample_points (points 48, seed 0)" in readme
+        if not trainable:
+            continue
+
+        # 2 エポックの学習と, task.yaml のデータセットの版
+        train(project)
+        runs = sorted((project / "outputs").glob("*/*/*/task.yaml"))
+        assert len(runs) == 1
+        task = yaml.safe_load(runs[0].read_text(encoding="utf-8"))
+        assert task["target"]["kind"] == kind
+        assert task["dataset"]["format_version"] == 3
+        log = (runs[0].parent / "train.log").read_text(encoding="utf-8")
+        assert "(版 3)" in log
+
+
+def test_items_newer_version(tmp_path: Path) -> None:
+    """
+    知っているより新しい版のデータセットは, 読めないと止めることを
+    確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 版 4 は新しい ML-Quest の案内. 真偽値の版は版の誤り
+    newer = tmp_path / "newer"
+    newer.mkdir()
+    (newer / "dataset.yaml").write_text(
+        "format_version: 4\nrole: predict\ntarget: {kind: mask}\n",
+        encoding="utf-8"
+    )
+    problem = answer(kind_problem("mask"), "data.source", str(newer))
+    message = project_error(problem)
+    assert message is not None and "読めません" in message
+    (newer / "dataset.yaml").write_text("format_version: true\n",
+                                        encoding="utf-8")
+    message = project_error(problem)
+    assert message is not None and "版が True" in message
 
 
 def check_bundle(project: Path, kind: str) -> None:

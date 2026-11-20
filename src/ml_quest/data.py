@@ -38,9 +38,10 @@ VOLATILE_OPTIONS = {"time_column"}
 COPY_DIGITS = 12
 COPY_NAME = re.compile(f"[0-9a-f]{{{COPY_DIGITS}}}")
 
-# ML-EDA の版 2 のデータセット (ファイルの組) の読み方の名前と版
+# ML-EDA のファイルの組のデータセットの読み方の名前と, 読める版の組 (ML-EDA
+# の ITEMS_FORMAT_VERSIONS の写し. 版 3 は版 2 に中身の手順を足した版)
 ITEMS_LOADER = "items"
-ITEMS_VERSION = 2
+ITEMS_VERSIONS = (2, 3)
 
 
 
@@ -179,7 +180,7 @@ def items_message(problem: dict) -> Optional[str]:
     入れたデータセットが受け持ちに合わない理由を返す関数
 
     ファイルの組の受け持ち (予測するの mask と point_cloud) には, 受け持ち
-    と正解の種類が同じ版 2 のデータセットだけが使える. 他の受け持ちでは
+    と正解の種類が同じ版 2 か版 3 のデータセットだけが使える. 他の受け持ちでは
     データセットを見ない (列の予測が dataset.yaml で止まらないように)
 
     Parameters
@@ -215,17 +216,15 @@ def items_message(problem: dict) -> Optional[str]:
     target = info.get("target")
     target = target if isinstance(target, dict) else {}
     message = None
-    if isinstance(version, int) and version > ITEMS_VERSION:
+    if isinstance(version, int) and version > max(ITEMS_VERSIONS):
         message = (f"入れたデータセットの版 {version} は, この ML-Quest では"
                    "読めません (新しい ML-Quest を使ってください)")
-    elif version != ITEMS_VERSION:
+    elif not is_items_version(version):
         message = (f"入れたデータセットの版が {version} です. 正解の種類が "
-                   f"{kind} の受け持ちには, ML-EDA の版 2 のデータセット "
-                   "(export_image_masks か export_capture_clouds の書き出し) "
-                   "を入れてください")
-    elif version == ITEMS_VERSION and (
-        info.get("role") != role or target.get("kind") != kind
-    ):
+                   f"{kind} の受け持ちには, ML-EDA の版 2 か版 3 のデータ"
+                   "セット (export_image_masks か export_capture_clouds の"
+                   "書き出し) を入れてください")
+    elif info.get("role") != role or target.get("kind") != kind:
         message = (f"入れたデータセットは受け持ち {info.get('role')}, 正解の"
                    f"種類 {target.get('kind')} ですが, 問題の設定は受け持ち "
                    f"{role}, 正解の種類 {kind} です (データを入れ直すか, "
@@ -503,9 +502,31 @@ def attach_data(
     return updated
 
 
+def is_items_version(version: Any) -> bool:
+    """
+    dataset.yaml の版がファイルの組の版 (2 か 3) かを返す関数
+
+    Parameters
+    ----------
+    version: Any
+        dataset.yaml の format_version
+
+    Returns
+    ----------
+    items: bool
+        読める版の組にある整数か (真偽値は除く)
+    """
+    # True == 1 などの取り違えを除く
+    items = (isinstance(version, int) and not isinstance(version, bool)
+             and version in ITEMS_VERSIONS)
+
+    return items
+
+
 def is_items(location: Path) -> bool:
     """
-    データの場所が ML-EDA の版 2 のデータセットかを返す関数
+    データの場所が ML-EDA のファイルの組のデータセット (版 2 か版 3) かを
+    返す関数
 
     Parameters
     ----------
@@ -515,15 +536,15 @@ def is_items(location: Path) -> bool:
     Returns
     ----------
     items: bool
-        dataset.yaml の版が 2 のディレクトリか (読めない説明は False. 読む
-        ときに ML-EDA が誤りを出す)
+        dataset.yaml の版が 2 か 3 のディレクトリか (読めない説明は False.
+        読むときに ML-EDA が誤りを出す)
     """
     # 版 1 は ML-EDA の読み込みへ
     try:
         info = dataset_info(location)
     except ValueError:
         info = None
-    items = info is not None and info.get("format_version") == ITEMS_VERSION
+    items = info is not None and is_items_version(info.get("format_version"))
 
     return items
 
@@ -532,7 +553,7 @@ def attach_items(
     problem: dict, location: Path, copied: Optional[Path]
 ) -> dict:
     """
-    版 2 のデータセットを確かめ, 場所と読み方を入れる関数
+    ファイルの組のデータセットを確かめ, 場所と読み方を入れる関数
 
     Parameters
     ----------
@@ -575,7 +596,7 @@ def attach_items(
 
 def items_overview(problem: dict, location: str) -> dict:
     """
-    入れた版 2 のデータセットの概要と確かめを返す関数
+    入れたファイルの組のデータセットの概要と確かめを返す関数
 
     Parameters
     ----------
@@ -587,8 +608,9 @@ def items_overview(problem: dict, location: str) -> dict:
     Returns
     ----------
     result: dict
-        overview (表でないので None), suggestions (空), findings (件数と
-        正解の種類と出どころの info, 受け持ちに合わなければ error)
+        overview (表でないので None), suggestions (空), findings (版,
+        件数, 正解の種類と出どころの info, 版 3 の中身の手順の info, 受け
+        持ちに合わなければ error)
     """
     # 説明から件数, 分割, 正解の種類と出どころ (読めなければ error)
     try:
@@ -609,17 +631,28 @@ def items_overview(problem: dict, location: str) -> dict:
                        if isinstance(value, dict))
     findings = [finding(
         "info", "data.source",
-        f"ML-EDA の版 2 のデータセット {info.get('name')}: 正解の種類 "
+        f"ML-EDA の版 {info.get('format_version')} のデータセット "
+        f"{info.get('name')}: 正解の種類 "
         f"{target.get('kind')}, 分割 ({counts or 'なし'}), 正解の出どころ "
         f"{origin.get('type', 'unknown')}"
         + (f" ({origin['name']})" if origin.get("name") else "")
     )]
+    steps = entry_steps(info)
+    if steps:
+        findings.append(finding(
+            "info", "data.source",
+            "書き出しでかけた中身の手順: " + ". ".join(
+                f"{name}: {describe_steps(value)}"
+                for name, value in steps.items()
+            ) + " (推論でも新しい 1 件に同じ手順をかける)"
+        ))
 
     # 受け持ちに合うか (列の予測には使えないことも) と, 検証用の分割
     message = items_message(problem)
     if is_column_part(problem):
-        message = ("版 2 のデータセットは列の予測には使えません (受け持ちと"
-                   "正解の種類を答え直すか, 表のデータを入れてください)")
+        message = ("ファイルの組のデータセットは列の予測には使えません (受け"
+                   "持ちと正解の種類を答え直すか, 表のデータを入れてくださ"
+                   "い)")
     if message is not None:
         findings.append(finding("error", "data.source", message))
     if "valid" not in splits:
@@ -631,6 +664,59 @@ def items_overview(problem: dict, location: str) -> dict:
     result = {"overview": None, "suggestions": [], "findings": findings}
 
     return result
+
+
+def entry_steps(info: dict) -> dict:
+    """
+    データセットの説明から, 項目ごとの中身の手順を集める関数
+
+    Parameters
+    ----------
+    info: dict
+        dataset.yaml の中身
+
+    Returns
+    ----------
+    steps: dict
+        項目の名前から手順の並び (版 3 で手順を持つ項目だけ. 辞書でない
+        手順は除く)
+    """
+    # 版 3 の entries.<名前>.steps (版 2 は持たない)
+    entries = info.get("entries")
+    entries = entries if isinstance(entries, dict) else {}
+    steps = {}
+    for name, entry in entries.items():
+        value = entry.get("steps") if isinstance(entry, dict) else None
+        kept = [step for step in value or [] if isinstance(step, dict)]
+        if kept:
+            steps[str(name)] = kept
+
+    return steps
+
+
+def describe_steps(steps: list) -> str:
+    """
+    中身の手順の並びを, 人が読む文にする関数
+
+    Parameters
+    ----------
+    steps: list
+        手順の並び ({op: resize, width: 64, height: 64} など)
+
+    Returns
+    ----------
+    text: str
+        resize (width 64, height 64), grayscale のような文
+    """
+    # 手順の名前と引数をかける順に
+    parts = []
+    for step in steps:
+        values = ", ".join(f"{key} {value}" for key, value in step.items()
+                           if key != "op")
+        parts.append(f"{step.get('op')}" + (f" ({values})" if values else ""))
+    text = ", ".join(parts)
+
+    return text
 
 
 def copy_place(
