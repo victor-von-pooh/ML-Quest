@@ -23,7 +23,7 @@ Python 3.10 以上. 依存は PyYAML と pandas だけ. 手元のデータから
 ```python
 from ml_quest import (
     answer, check, describe, handoff, make_project, new_problem,
-    questions, save_problem
+    questions, record_project, save_problem
 )
 
 # 問いの順に答える (questions で問いの並びと, 今要るかが分かる)
@@ -38,11 +38,12 @@ for item in check(problem):
 
 # 課題から行動までの要約, 後ろの段階ごとの値
 print("\n".join(describe(problem)))
-stages = handoff(problem)   # part, data, model, training, inference と, 要る機能 (requires), 方策の守り (policy)
+stages = handoff(problem)   # part, data, model, training, inference と, 要る機能 (requires), 方策の守り (policy), プロジェクト (project)
 
-# 保存と, ML-Found のプロジェクトの骨組みの書き出し
+# ML-Found のプロジェクトの骨組みの書き出しと, その場所の記録 (データセットとモデルの定義の置き場も) の保存
+make_project(problem, "/work/my_project")
+problem = record_project(problem, "/work/my_project")
 save_problem(problem, "problem.yaml")
-make_project(problem, "my_project")
 ```
 
 手元のデータは, 課題, 指標, 分解, 決めること (1 から 4) に答えた後, 機械学習の受け持ち (5) で入れる. 写し先を渡すとデータを写し, 写した場所と元の場所と ML-EDA の読み方を持つ.
@@ -80,7 +81,7 @@ from ml_quest import EXAMPLES, example_problem
 problem = example_problem("総菜の作る量")
 ```
 
-書き出した骨組みの README に, 次にすること (データの分析で選ぶ値, モデルの出力の大きさ, 学習の起動, 推論の一式の登録) が書かれる. 学習のスクリプトは ML-EDA, ML-ModelControl, ML-Found, ML-Inference を使うので, 学習する環境にはそれらを入れる.
+書き出した骨組みの README に, 次にすること (データの分析で選ぶ値, モデルの入力の形と出力の大きさ, 学習の起動, 推論の一式の登録) が書かれる. 学習のスクリプトは ML-EDA, ML-ModelControl, ML-Found, ML-Inference を使い, config の `requires` にその名前 (ML-Found の登録簿の `eda`, `modelcontrol`, `inference`) を書くので, ML-Found が学習の前に足りないものと入れ方を示す. 問題の設定に今のやり方をデータで書いてデータを入れていれば, 学習のスクリプトは検証用とテスト用で今のやり方と比べた評価の表 (`evaluations/baseline_valid.json` など) を書く.
 
 骨組みを書き出せるのは, 列の予測 (分類, 回帰, 時系列の予測) と, 予測するで正解の種類が画像の領域か点群の受け持ち. 後の 2 つは ML-EDA の版 2 のデータセット (`export_image_masks`, `export_capture_clouds`) で学習する骨組みで, 入れた版 2 のデータセットをプロジェクトに写し, 仮のモデル (印 TODO) と, 損失と指標 (領域は交差エントロピーと IoU, 点群は Chamfer) を書く. 書き出せない理由は `project_error(problem)` で分かる.
 

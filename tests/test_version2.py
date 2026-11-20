@@ -266,10 +266,11 @@ def test_column_handoff_unchanged() -> None:
         "series_by": ["store", "item"], "split": "time",
         "group_column": None, "min_lag": 2,
         "known": ["store", "item", "temperature_forecast", "promo"],
-        "source": None, "drop": ["customers"],
+        "source": None, "drop": ["customers"], "project_dataset": None,
     }
     assert stages["model"] == {"task": "forecasting", "outputs": 1,
-                               "role": "predict", "target_kind": "column"}
+                               "role": "predict", "target_kind": "column",
+                               "project_model_spec": None}
     assert stages["training"] == {"metric": "mae", "monitor": "valid/mae",
                                   "mode": "min", "role": "predict",
                                   "target_kind": "column"}

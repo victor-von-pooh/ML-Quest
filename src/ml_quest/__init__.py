@@ -12,7 +12,7 @@ from ml_quest.questions import (
     TARGET_KINDS, TARGET_SOURCES, TASKS, UNITS
 )
 from ml_quest.requirements import FEATURES, required_features
-from ml_quest.skeleton import make_project, project_error
+from ml_quest.skeleton import make_project, project_error, record_project
 
 __all__ = [
     "EXAMPLES", "FEATURES", "FORMAT_VERSION", "LEGACY_KEYS", "METHODS",
@@ -21,6 +21,7 @@ __all__ = [
     "apply_recipe", "attach_data", "check", "describe", "example_problem",
     "get_value", "handoff", "inspect_data", "is_ready", "load_problem",
     "make_project", "new_problem", "project_error", "prune_copies",
-    "questions", "read_columns", "recipe_from", "required_features",
+    "questions", "read_columns", "recipe_from", "record_project",
+    "required_features",
     "resolve_choice", "save_problem", "upgrade_problem",
 ]
