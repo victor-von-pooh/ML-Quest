@@ -14,7 +14,7 @@
 ## 優先度 低
 
 ### データの場所の型を確かめる
-- 何を: `check` で `data.source` (と `data.origin`) が文字列かを確かめ, 違えば error (「データの場所は文字の場所で書いてください」など) にする. `inspect_key`, `inspect_data`, `open_errors`, `make_project`, `handoff` (`data_location` で `data.origin` を `Path` にする所) は, その場合に Python の例外 (`TypeError`) で止まらずに確かめの error で返す
+- 何を: `check` で `data.source` (と `data.origin`) が文字列かを確かめ, 違えば error (「データの場所は文字の場所で書いてください」など) にする. `inspect_key`, `inspect_data`, `open_errors`, `make_project`, `handoff` (`data_location` で `data.origin` を `Path` にする所), `recipe_from` (ファイルの組の `pair_dirs` で場所を `Path` にする所) は, その場合に Python の例外 (`TypeError`) で止まらずに確かめの error で返す
 - なぜ: 手で書いたファイルで場所が数などになると, 今は確かめに出ず, 分析と書き出しが英語の例外で止まり, 画面 (ML-Pathfinder) が自分で型を確かめて日本語の文にしているため
 - 終わりの条件: 場所が文字列でない問題の設定で, `check` に error があり, 分析と書き出しの関数が例外を投げない
 - つながり: ML-Pathfinder (詳しい画面と書き出しで, 場所の型を自分で確かめている)
