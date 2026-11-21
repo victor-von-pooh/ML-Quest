@@ -7,8 +7,8 @@ import pytest
 import yaml
 
 from ml_quest import (
-    answer, attach_data, check, example_problem, make_project, questions,
-    recipe_from, record_project
+    answer, attach_data, check, example_problem, make_project, open_errors,
+    project_error, questions, recipe_from, record_project
 )
 from ml_quest.data import CONTENT_LOADERS, content_kind
 from ml_quest.questions import REPORTED_BASELINE
@@ -294,6 +294,11 @@ def test_content_project(tmp_path: Path, kind: str) -> None:
     assert "入れたデータが 1 件の中身で学ぶ画像か文" in script
     assert "答えて骨組みを書き出し直すと" not in script
     assert "evaluation.current" in script and "save_reported" not in script
+    assert "最良を選ぶ指標が accuracy (正解率) なら" in script + readme
+    assert "logger.info(f\"今のやり方とは比べません: {BASELINE_REASON}" in (
+        script
+    )
+    assert "分からない ため" not in readme
     config = yaml.safe_load(
         (project / "configs/default/train.yaml").read_text(encoding="utf-8")
     )
@@ -345,10 +350,15 @@ def test_content_reported(tmp_path: Path, kind: str) -> None:
 
     # 割合の指標は 0 から 1 で, 負と 1 を超える値は誤り
     for wrong in (85, -0.1):
-        found = check(answer(problem, key, wrong))
+        wrong_problem = answer(problem, key, wrong)
+        found = check(wrong_problem)
         assert [item["id"] for item in found if item["level"] == "error"] == [
             key
         ]
+        # 骨組みは組めるので, 「それでも書き出す」の対象
+        assert project_error(wrong_problem) is None
+        assert [item["id"] for item in open_errors(wrong_problem)] == [key]
+    assert "正解率は 0 から 1" in check(answer(problem, key, 85))[0]["message"]
     problem = answer(problem, key, 0.75)
     assert [f for f in check(problem) if f["level"] == "error"] == []
 
@@ -359,10 +369,16 @@ def test_content_reported(tmp_path: Path, kind: str) -> None:
     compile(script, "train.py", "exec")
     assert max(len(line) for line in script.splitlines()) <= 79
     assert "BASELINE_VALUE = 0.75" in script
-    assert 'save_reported(experiment, "accuracy", accuracy.item())' in script
+    call = ('\n\n    # 答えた今のやり方での指標の値と並べる\n'
+            '    save_reported(experiment, "accuracy", accuracy.item())')
+    assert call in script
+    assert "テスト用の件のうち当たった割合" in script
+    assert "今のやり方 (今のやり方)" not in script
+    assert "答えた今のやり方での指標の値と" in script
     assert "save_evaluation" in script and "compare_baseline" not in script
     readme = (project / "README.md").read_text(encoding="utf-8")
-    assert "今のやり方での `accuracy` の値 (0.75)" in readme
+    assert ("今のやり方での `accuracy` の値 (0.75. "
+            "`ml.parts.0.evaluation.current`)") in readme
     assert "別のデータで数えた値との比べで目安です" in readme
 
 

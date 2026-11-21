@@ -24,8 +24,12 @@ EXPORTABLE_ERRORS = (
     "issue", "decomposition", "action.who", "action.when", "action.what",
     "action.basis", "action.decision", "verification", "operation",
     "ml.constraints", f"{PART}.what", f"{PART}.item", f"{PART}.baseline",
-    f"{PART}.consumer", f"{PART}.downstream", f"{PART}.evaluation.link"
+    f"{PART}.consumer", f"{PART}.downstream", f"{PART}.evaluation.link",
+    f"{PART}.evaluation.current"
 )
+
+# 0 から 1 の割合の指標の, 画面の呼び方
+RATE_NAMES = {"accuracy": "正解率", "iou": "IoU "}
 
 # 列の予測の出力の形
 COLUMN_OUTPUTS = ["class", "value", "distribution"]
@@ -851,10 +855,11 @@ def reported_range(metric: Any, value: Any) -> list[dict]:
     elif value < 0:
         found.append(finding("error", key,
                              "今のやり方での指標の値が負です"))
-    elif metric in ("accuracy", "iou") and value > 1:
+    elif metric in RATE_NAMES and value > 1:
         found.append(finding(
             "error", key,
-            f"{metric} は 0 から 1 の割合で書いてください (85 % なら 0.85)"
+            f"{RATE_NAMES[metric]}は 0 から 1 の割合で書いてください (85 % "
+            "なら 0.85)"
         ))
 
     return found

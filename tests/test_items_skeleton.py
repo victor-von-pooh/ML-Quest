@@ -251,6 +251,9 @@ def test_items_project(tmp_path: Path, kind: str) -> None:
     # ればテスト用の評価で並べる
     assert "save_reported" not in script and "evaluation.current" in script
     metric = {"mask": "iou", "point_cloud": "chamfer"}[kind]
+    assert f"最良を選ぶ指標が {metric} (" in script
+    assert "info(f\"今のやり方とは比べません: {BASELINE_REASON}\")" in script
+    assert f"最良を選ぶ指標が {metric} (" in readme
     reported = answer(problem, "ml.parts.0.evaluation.current", 0.5)
     make_project(reported, tmp_path / "reported")
     script = (tmp_path / "reported" / "train.py").read_text(encoding="utf-8")
@@ -259,8 +262,13 @@ def test_items_project(tmp_path: Path, kind: str) -> None:
     assert "BASELINE_VALUE = 0.5" in script
     assert f'save_reported(experiment, "{metric}",' in script
     readme = (tmp_path / "reported" / "README.md").read_text("utf-8")
-    assert f"今のやり方での `{metric}` の値 (0.5)" in readme
-    assert "目安" in readme
+    assert f"今のやり方での `{metric}` の値 (0.5. `ml.parts.0.evaluation" in (
+        readme
+    )
+    counting = {"mask": "背景を除く", "point_cloud": "座標の単位"}[kind]
+    assert "目安" in readme and counting in script and counting in readme
+    assert "答えた今のやり方での指標の値とも並べません" in script
+    assert "今のやり方 (今のやり方)" not in script
 
 
 def test_items_refused() -> None:
@@ -340,7 +348,7 @@ def test_items_with_data(tmp_path: Path) -> None:
                 "train.py", "exec")
         readme = (project / "README.md").read_text(encoding="utf-8")
         assert "入れた版 2 のデータセット" in readme
-        assert ("答えた今のやり方での `iou` の値 (0.25)" in readme) == (
+        assert ("今のやり方での `iou` の値 (0.25." in readme) == (
             kind == "mask"
         )
         if not trainable:
@@ -362,6 +370,8 @@ def test_items_with_data(tmp_path: Path) -> None:
                                 "point_cloud": ["test_chamfer.json"]}[kind])
         if kind == "mask":
             check_reported(runs[0].parent, "iou", 0.25)
+        log = (runs[0].parent / "train.log").read_text(encoding="utf-8")
+        assert ("今のやり方とは比べません" in log) == (kind == "point_cloud")
         assert not (runs[0].parent / "inference").exists()
         assert not (runs[0].parent / "model_spec.yaml").exists()
         log = (runs[0].parent / "train.log").read_text(encoding="utf-8")

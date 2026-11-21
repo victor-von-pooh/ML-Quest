@@ -10,8 +10,8 @@ from typing import Any, Optional, Union
 import yaml
 
 from ml_quest.baseline_skeleton import (
-    EVALUATION_PREFIX, REPORTED_HINT, baseline_code, baseline_note,
-    baseline_reason, reported_code, reported_sentence, reported_value
+    EVALUATION_PREFIX, baseline_code, baseline_note, baseline_reason,
+    reported_code, reported_hint, reported_sentence, reported_value
 )
 from ml_quest.check import is_column_part, split_errors
 from ml_quest.data import (
@@ -562,16 +562,29 @@ def training_script(
                    "止めない)\n    compare_baseline(trainer.model, dataset, "
                    "experiment, center, scale)\n")
     elif reported is not None:
-        # 画像と文で, 答えた今のやり方での指標の値とテスト用の値を並べる
-        baseline = reported_code(problem, literal)
-        compare = ""
+        # 画像と文で, 答えた今のやり方での指標の値とテスト用の値を並べる.
+        # テスト用の分割が無ければ並べないことを train.log に
         key = "accuracy" if task == "classification" else metric
         value = "accuracy" if task == "classification" else "value"
-        call = ("\n    # 答えた今のやり方での指標の値と並べる\n    "
+        baseline = reported_code(problem, literal, key)
+        call = ("\n\n    # 答えた今のやり方での指標の値と並べる\n    "
                 f'save_reported(experiment, "{key}", {value}.item())')
-    else:
+        compare = ("\n    # テスト用の分割が無ければ, 答えた今のやり方での指標"
+                   "の値と並べない\n    if \"test\" not in dataset.frames:\n"
+                   "        experiment.logger.info(\n            \"テスト用の"
+                   "分割が無いので, 答えた今のやり方での指標の値と\"\n"
+                   "            \"並べません\"\n        )\n")
+    elif kind is not None:
+        # 画像と文で答えていなければ, 比べない理由をコメントと train.log に
+        hint = content_hint(task)
         baseline = baseline_note(problem, str(reason), comment_lines,
-                                 retry=kind is None)
+                                 retry=False, hint=hint)
+        baseline += ("\n# 今のやり方と比べない理由 (train.log に書く)\n"
+                     f"BASELINE_REASON = {literal(f'{reason}. {hint}')}\n")
+        compare = ("\n    # 今のやり方と比べない理由\n    experiment.logger."
+                   "info(f\"今のやり方とは比べません: {BASELINE_REASON}\")\n")
+    else:
+        baseline = baseline_note(problem, str(reason), comment_lines)
         compare = ""
 
     # 頭 (比べるときだけ pandas, 元のデータの読み込み, 評価の表の書き出し)
@@ -624,6 +637,28 @@ def training_script(
     script = head + body + tail
 
     return script
+
+
+def content_hint(task: Optional[str]) -> str:
+    """
+    画像と文で, 今のやり方での指標の値を答えれば並べられることの文を作る
+    関数
+
+    Parameters
+    ----------
+    task: Optional[str]
+        タスク
+
+    Returns
+    ----------
+    hint: str
+        文 (分類は正解率, 回帰と予測は誤差の指標と並べる)
+    """
+    # 骨組みのテスト用の評価が求める指標
+    hint = reported_hint("accuracy (正解率)" if task == "classification"
+                         else "mae か rmse")
+
+    return hint
 
 
 def experiment_name(problem: dict, name: Optional[str]) -> str:
@@ -830,9 +865,10 @@ def project_readme(
             else stages["training"]["metric"]
         )
     elif kind is not None:
-        compare = f"今のやり方とは比べない ({reason} ため). {REPORTED_HINT}"
+        compare = (f"今のやり方とは比べない ({reason}ため). "
+                   f"{content_hint(data['task'])}")
     else:
-        compare = f"今のやり方とは比べない ({reason} ため)"
+        compare = f"今のやり方とは比べない ({reason}ため)"
     lines += [
         "2. **モデルの作成** (ML-CreateArchitecture): 入力 1 つと出力 1 つの"
         f"モデルを組み, `models/model.yaml` に置く. {CONTENT_INPUTS[kind]}. "

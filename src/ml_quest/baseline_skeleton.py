@@ -452,9 +452,9 @@ def scores(
 # 答えた今のやり方での指標の値とテスト用の値を並べる部分
 REPORTED = '''
 
-# 比べる相手 (今のやり方). 今のやり方をデータの上で作れないので, 問題の設定
-# で答えた今のやり方での指標の値 (evaluation.current) と, テスト用の分割の
-# モデルの値を並べる. 別のデータで数えた値との比べで目安
+# 比べる相手 (今のやり方). 今のやり方の結果を 1 件ずつ並べられないので, 問題
+# の設定で答えた今のやり方での指標の値 (ml.parts.0.evaluation.current) と,
+# テスト用の分割のモデルの値を並べる. 数えた件が違うので目安
 BASELINE_NAME = $name
 BASELINE_VALUE = $value
 REPORTED_TEXT = $text
@@ -489,10 +489,17 @@ def save_reported(experiment: Experiment, key: str, value: float) -> None:
     )
 '''
 
-# 画像と文で, 今のやり方での指標の値を答えれば並べられることの文
-REPORTED_HINT = ("最良を選ぶ指標が accuracy, mae, rmse なら, 今のやり方での"
-                 "指標の値 (evaluation.current) を答えて書き出し直すと, テスト"
-                 "用の値と並べる")
+# 今のやり方での指標の値と並べる指標の, 数え方と単位
+REPORTED_METRICS = {
+    "accuracy": "正解率 (テスト用の件のうち当たった割合. 0 から 1)",
+    "mae": "平均絶対誤差 (目的の値の単位)",
+    "rmse": "二乗平均平方根誤差 (目的の値の単位)",
+    "iou": ("IoU (クラスごとの重なりの画素数を和の画素数で割り, 背景を除く"
+            "クラスで平均. 予測にも正解にも無いクラスは 1. 0 から 1)"),
+    "chamfer": ("Chamfer 距離 (予測の点から正解の最も近い点までの距離 (2 乗"
+                "しない) の平均と, 逆向きの平均の和の半分. データセットの座標"
+                "の単位)"),
+}
 
 # 回帰と予測の指標 (名前, 式, 名前の文)
 METRIC_EXPRESSIONS = {
@@ -571,7 +578,8 @@ def baseline_reason(
 
 
 def baseline_note(
-    problem: dict, reason: str, comment_lines: Callable, retry: bool = True
+    problem: dict, reason: str, comment_lines: Callable, retry: bool = True,
+    hint: str = ""
 ) -> str:
     """
     今のやり方と比べない理由を, 学習のスクリプトのコメントにする関数
@@ -586,7 +594,10 @@ def baseline_note(
         文を 1 行ずつのコメントにする関数 (skeleton.comment_lines)
     retry: bool = True
         答えて書き出し直せば比べることを書くか (画像と文では False で,
-        代わりに今のやり方での指標の値を答えれば並べることを書く)
+        代わりに hint を書く)
+    hint: str = ""
+        retry でないときに書く, 今のやり方での指標の値を答えれば並べる
+        ことの文 (reported_hint)
 
     Returns
     ----------
@@ -601,7 +612,7 @@ def baseline_note(
                  "と比べた評価の表 (evaluations/"
                  f"{EVALUATION_PREFIX}<分割>.json) を書く")
     else:
-        text += f". {REPORTED_HINT}"
+        text += f". {hint}"
     note = "\n" + comment_lines(text, indent="")
 
     return note
@@ -684,7 +695,52 @@ def reported_value(problem: dict) -> Optional[float]:
     return value
 
 
-def reported_code(problem: dict, literal: Callable) -> str:
+def reported_hint(metrics: str) -> str:
+    """
+    今のやり方での指標の値を答えれば並べられることの文を作る関数
+
+    Parameters
+    ----------
+    metrics: str
+        その骨組みで並べられる指標 (例: accuracy (正解率))
+
+    Returns
+    ----------
+    hint: str
+        文 (句点なし)
+    """
+    # 並べられる指標と, 答える問い
+    hint = (f"最良を選ぶ指標が {metrics} なら, 今のやり方での指標の値 "
+            f"({PART}.evaluation.current) を答えて書き出し直すと, テスト用の"
+            "値と並べる")
+
+    return hint
+
+
+def reported_label(problem: dict) -> str:
+    """
+    答えた値の説明の文の, 比べる相手の呼び方を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    label: str
+        「今のやり方」か「今のやり方 (名前)」(名前が既定と同じなら省く)
+    """
+    # 既定の名前を括弧で繰り返さない
+    name = active_value(problem, f"{PART}.baseline") or DEFAULT_NAME
+    label = DEFAULT_NAME if name == DEFAULT_NAME else (
+        f"{DEFAULT_NAME} ({name})"
+    )
+
+    return label
+
+
+def reported_code(problem: dict, literal: Callable, metric: str) -> str:
     """
     答えた今のやり方での指標の値とテスト用の値を並べる部分の学習の
     スクリプトを作る関数
@@ -695,17 +751,20 @@ def reported_code(problem: dict, literal: Callable) -> str:
         問題の設定 (版 2. 今のやり方での指標の値を答えたもの)
     literal: Callable
         文字を Python の式にする関数 (skeleton.literal)
+    metric: str
+        並べる指標の名前 (REPORTED_METRICS の鍵)
 
     Returns
     ----------
     code: str
         定数と, 評価の表に書く関数
     """
-    # 相手の名前, 答えた値, 表の説明
+    # 相手の名前, 答えた値, 表の説明 (数え方と単位)
     name = active_value(problem, f"{PART}.baseline") or DEFAULT_NAME
-    text = (f"今のやり方 ({name}) の値は問題の設定で答えた値 (evaluation."
-            "current) で, モデルの値はテスト用の分割で求めた. 別のデータで"
-            "数えた値との比べで目安です")
+    text = (f"{reported_label(problem)}の値は問題の設定で答えた値 ("
+            f"{PART}.evaluation.current) で, モデルの値はテスト用の分割で"
+            f"求めた{REPORTED_METRICS[metric]}. 別のデータで数えた値との比べ"
+            "で目安です")
     code = Template(REPORTED).substitute(
         name=literal(str(name)),
         value=python_value(reported_value(problem)),
@@ -731,13 +790,15 @@ def reported_sentence(problem: dict, metric: str) -> str:
     sentence: str
         文 (句点なし)
     """
-    # 何と並べ, どこに書き, どれだけ確かか
+    # 何と並べ, どう数え, どこに書き, どれだけ確かか
     value = reported_value(problem)
     sentence = (
         "今のやり方とは同じ件で比べず, 問題の設定で答えた今のやり方での "
-        f"`{metric}` の値 ({value:g}) と, テスト用の分割のモデルの値を評価の"
+        f"`{metric}` の値 ({value:g}. `{PART}.evaluation.current`) と, "
+        f"テスト用の分割のモデルの値 ({REPORTED_METRICS[metric]}) を評価の"
         f"表 (`evaluations/{EVALUATION_PREFIX}test.json`) に並べる (別の"
-        "データで数えた値との比べで目安です. テスト用の分割が要る)"
+        "データで数えた値との比べで目安です. テスト用の分割が無ければ並べず"
+        ", `train.log` に書く)"
     )
 
     return sentence
