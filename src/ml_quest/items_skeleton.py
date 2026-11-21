@@ -1322,7 +1322,8 @@ model:
   # 場所に保存する)
   spec: models/model.yaml
   # spec のファイルが無いうちは train.py の仮のモデルで学習することの目印
-  # (ML-Dashboard の学習の準備が読む)
+  # (ML-Dashboard の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
+  # は spec のファイルがあるかで決まる)
   placeholder: true$cloud_model
 ''')
 

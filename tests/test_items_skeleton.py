@@ -224,6 +224,10 @@ def test_items_project(tmp_path: Path, kind: str) -> None:
     assert config["model"]["spec"] == "models/model.yaml"
     # 定義が無いうちは仮のモデルで学習することの目印 (ML-Dashboard が読む)
     assert config["model"]["placeholder"] is True
+    # 点群の出す点の数も model の下に残る
+    assert config["model"].get("output_points") == (
+        256 if kind == "point_cloud" else None
+    )
     assert (project / "models").is_dir()
     assert config["experiment"]["name"] == f"{kind}_predict"
 
