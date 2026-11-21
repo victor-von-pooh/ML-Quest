@@ -171,7 +171,7 @@ def export_stages(
     ValueError
         機械学習を使わない場合と, 骨組みを組めない error がある場合
     """
-    # 組めない error で止め, 組める error は返す
+    # 組めない error での停止と, 組める error の返却
     problem = upgrade_problem(problem)
     if get_value(problem, "ml.use") is not True:
         raise ValueError(no_ml_message(problem))

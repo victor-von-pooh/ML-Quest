@@ -4,12 +4,17 @@ from string import Template
 from typing import Any, Callable, Optional
 
 from ml_quest.bridge import recipe_from
+from ml_quest.check import reported_range
 from ml_quest.data import content_kind
-from ml_quest.problem import active_value, get_value
-from ml_quest.questions import PART
+from ml_quest.problem import active_value, applies, get_value
+from ml_quest.questions import BY_ID, PART
 
 # 比べる相手の評価の名前の頭 (evaluations/baseline_<分割>.json)
 EVALUATION_PREFIX = "baseline_"
+
+# 今のやり方での指標の値の問いの場所と, 案内に出す題
+KEY = f"{PART}.evaluation.current"
+QUESTION_TITLE = "今のやり方 (人の目視や今の仕組み) で, この指標は幾つですか"
 
 # 比べる相手の名前を答えていない場合の名前
 DEFAULT_NAME = "今のやり方"
@@ -606,7 +611,7 @@ def baseline_note(
     """
     # 比べる相手の名前と理由と, 比べるための手
     name = active_value(problem, f"{PART}.baseline") or DEFAULT_NAME
-    text = f"比べる相手 ({name}): {reason} ので, 今のやり方とは比べない"
+    text = f"比べる相手 ({name}): {reason}ので, 今のやり方とは比べない"
     if retry:
         text += (". 答えて骨組みを書き出し直すと, 検証用とテスト用で今のやり方"
                  "と比べた評価の表 (evaluations/"
@@ -683,11 +688,12 @@ def reported_value(problem: dict) -> Optional[float]:
     Returns
     ----------
     value: Optional[float]
-        値 (問いが要らないか, 答えていなければ None)
+        値 (問いが要らないか, 答えていないか, 誤りがあれば None)
     """
-    # 要る問いの数の答えだけ (確かめで数でない値は誤り)
-    value = active_value(problem, f"{PART}.evaluation.current")
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    # 要る問いの, 確かめで誤りの無い答えだけ (有限でない数, 負, 割合の指標
+    # で 1 を超える値は答えていない扱い)
+    value = active_value(problem, KEY)
+    if value is None or reported_error(problem) is not None:
         value = None
     else:
         value = float(value)
@@ -695,26 +701,59 @@ def reported_value(problem: dict) -> Optional[float]:
     return value
 
 
-def reported_hint(metrics: str) -> str:
+def reported_hint(problem: dict, metrics: str) -> str:
     """
     今のやり方での指標の値を答えれば並べられることの文を作る関数
 
     Parameters
     ----------
+    problem: dict
+        問題の設定 (版 2)
     metrics: str
         その骨組みで並べられる指標 (例: accuracy (正解率))
 
     Returns
     ----------
     hint: str
-        文 (句点なし)
+        文 (句点なし. 答えた値に誤りがあればその直し方, 問いが要る指標
+        なら問いの題, 他は指標の選び直しと問いの題)
     """
-    # 並べられる指標と, 答える問い
-    hint = (f"最良を選ぶ指標が {metrics} なら, 今のやり方での指標の値 "
-            f"({PART}.evaluation.current) を答えて書き出し直すと, テスト用の"
-            "値と並べる")
+    # 答えた値の誤り, 答える問い, 並べられる指標
+    error = reported_error(problem)
+    title = f"8 の「{QUESTION_TITLE}」({KEY}) "
+    if error:
+        hint = (f"答えた今のやり方での指標の値は使えないので並べない ({error})"
+                f". {title}の答えを直して書き出し直すと, テスト用の値と並べる")
+    elif applies(problem, BY_ID[KEY]):
+        hint = f"{title}に答えて書き出し直すと, テスト用の値と並べる"
+    else:
+        hint = (f"最良を選ぶ指標を {metrics} にし, {title}に答えて書き出し"
+                "直すと, テスト用の値と並べる")
 
     return hint
+
+
+def reported_error(problem: dict) -> Optional[str]:
+    """
+    答えた今のやり方での指標の値の誤りを返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    error: Optional[str]
+        確かめの文 (答えていないか, 誤りが無ければ None)
+    """
+    # 問いが要るときの答えだけを, 確かめと同じ決まりで
+    value = active_value(problem, KEY)
+    metric = active_value(problem, f"{PART}.evaluation.metric")
+    found = reported_range(metric, value)
+    error = found[0]["message"] if found else None
+
+    return error
 
 
 def reported_label(problem: dict) -> str:
@@ -731,7 +770,7 @@ def reported_label(problem: dict) -> str:
     label: str
         「今のやり方」か「今のやり方 (名前)」(名前が既定と同じなら省く)
     """
-    # 既定の名前を括弧で繰り返さない
+    # 既定の名前を括弧で繰り返さない呼び方
     name = active_value(problem, f"{PART}.baseline") or DEFAULT_NAME
     label = DEFAULT_NAME if name == DEFAULT_NAME else (
         f"{DEFAULT_NAME} ({name})"
@@ -757,19 +796,21 @@ def reported_code(problem: dict, literal: Callable, metric: str) -> str:
     Returns
     ----------
     code: str
-        定数と, 評価の表に書く関数
+        定数と, 評価の表に書く関数 (前後の空行なし. 置く側が空行を足す)
     """
     # 相手の名前, 答えた値, 表の説明 (数え方と単位)
     name = active_value(problem, f"{PART}.baseline") or DEFAULT_NAME
-    text = (f"{reported_label(problem)}の値は問題の設定で答えた値 ("
+    better = "大きい" if metric in ("accuracy", "iou") else "小さい"
+    text = (f"{reported_label(problem)} の値は問題の設定で答えた値 ("
             f"{PART}.evaluation.current) で, モデルの値はテスト用の分割で"
-            f"求めた{REPORTED_METRICS[metric]}. 別のデータで数えた値との比べ"
-            "で目安です")
+            f"求めた{REPORTED_METRICS[metric]}. 差 ({metric}_diff) はモデル"
+            f" − 今のやり方で, {metric} は{better}ほど良い. 別のデータで"
+            "数えた値との比べで目安です")
     code = Template(REPORTED).substitute(
         name=literal(str(name)),
         value=python_value(reported_value(problem)),
         text=literal(text), prefix=EVALUATION_PREFIX,
-    )
+    ).strip("\n")
 
     return code
 
@@ -802,3 +843,24 @@ def reported_sentence(problem: dict, metric: str) -> str:
     )
 
     return sentence
+
+
+def predict_log(problem: dict) -> str:
+    """
+    train.log の初めの行の, 予測することの句を作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    text: str
+        f 文字列の中に置く句 (何を出すかが空なら空)
+    """
+    # 何を出すかが空のときの句の省略
+    text = ("予測すること: {PREDICT}. "
+            if active_value(problem, f"{PART}.what") else "")
+
+    return text

@@ -1,3 +1,4 @@
+import ast
 import json
 from pathlib import Path
 import subprocess
@@ -294,7 +295,9 @@ def test_content_project(tmp_path: Path, kind: str) -> None:
     assert "入れたデータが 1 件の中身で学ぶ画像か文" in script
     assert "答えて骨組みを書き出し直すと" not in script
     assert "evaluation.current" in script and "save_reported" not in script
-    assert "最良を選ぶ指標が accuracy (正解率) なら" in script + readme
+    hint = "8 の「今のやり方 (人の目視や今の仕組み) で, この指標は幾つですか」"
+    assert hint in readme and "BASELINE_REASON = (" in script
+    assert "最良を選ぶ指標を" not in readme
     assert "logger.info(f\"今のやり方とは比べません: {BASELINE_REASON}" in (
         script
     )
@@ -374,12 +377,100 @@ def test_content_reported(tmp_path: Path, kind: str) -> None:
     assert call in script
     assert "テスト用の件のうち当たった割合" in script
     assert "今のやり方 (今のやり方)" not in script
-    assert "答えた今のやり方での指標の値と" in script
+    assert "テスト用の分割が無いので, 評価せず, 答えた値とも並べません" in script
     assert "save_evaluation" in script and "compare_baseline" not in script
+    text = next(ast.literal_eval(node.value) for node in ast.parse(
+        script
+    ).body if isinstance(node, ast.Assign)
+        and getattr(node.targets[0], "id", "") == "REPORTED_TEXT")
+    assert "差 (accuracy_diff) はモデル − 今のやり方" in text
+    assert "大きいほど良い" in text and "今のやり方 (問い合わせ" in text
     readme = (project / "README.md").read_text(encoding="utf-8")
     assert ("今のやり方での `accuracy` の値 (0.75. "
             "`ml.parts.0.evaluation.current`)") in readme
     assert "別のデータで数えた値との比べで目安です" in readme
+
+
+def test_content_questions(tmp_path: Path) -> None:
+    """
+    画像と文では予測の時点で分かる列を問わず, 今のやり方での指標の値の問い
+    の題が指標を名指すことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 表の列を学習に使わないので, 分かる列は要らない (答えなくても誤りなし)
+    problem = answer(content_problem("image", tmp_path),
+                     "information.known", None)
+    items = {item["id"]: item for item in questions(problem)}
+    assert items["information.known"]["applies"] is False
+    assert [f for f in check(problem) if f["level"] == "error"] == []
+    table = {item["id"]: item for item in questions(
+        example_problem("総菜の作る量")
+    )}
+    assert table["information.known"]["applies"] is True
+
+    # 題は最良を選ぶ指標の名前で
+    title = items["ml.parts.0.evaluation.current"]["title"]
+    assert "正解率は幾つですか" in title and "この指標" not in title
+
+
+@pytest.mark.parametrize("value", [85, -1, float("nan"), float("inf")])
+def test_content_reported_wrong(tmp_path: Path, value: float) -> None:
+    """
+    今のやり方での指標の値に誤りがあれば並べず, 理由をコメント, README,
+    train.log に書くことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+    value: float
+        誤りのある値 (非数と無限大は手で書いたもの)
+
+    Returns
+    ----------
+    None
+    """
+    # 骨組みを組める error なので, 「それでも書き出す」で書き出せる
+    problem = content_problem("image", tmp_path)
+    problem["ml"]["parts"][0]["evaluation"]["current"] = value
+    assert project_error(problem) is None
+    make_project(problem, tmp_path / "project", accept_errors=True)
+    script = (tmp_path / "project" / "train.py").read_text(encoding="utf-8")
+    compile(script, "train.py", "exec")
+    assert "save_reported" not in script and "BASELINE_VALUE" not in script
+    assert "BASELINE_REASON" in script
+    readme = (tmp_path / "project" / "README.md").read_text("utf-8")
+    assert "答えた今のやり方での指標の値は使えないので並べない" in readme
+
+
+def test_content_predict_log(tmp_path: Path) -> None:
+    """
+    何を出すかが空なら, train.log の初めの行の「予測すること」の句を省く
+    ことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 何を出すかを消した骨組み
+    problem = answer(content_problem("image", tmp_path), "ml.parts.0.what",
+                     None)
+    make_project(problem, tmp_path / "project", accept_errors=True)
+    script = (tmp_path / "project" / "train.py").read_text(encoding="utf-8")
+    assert "予測すること: {PREDICT}" not in script
 
 
 @pytest.mark.parametrize("kind", ["image", "text"])

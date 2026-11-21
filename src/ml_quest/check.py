@@ -633,7 +633,7 @@ def is_finite(value: Any) -> bool:
     finite: bool
         int か float で, 非数と無限大でなければ True
     """
-    # 真偽値は int の仲間なので除く
+    # int の仲間の真偽値の除外
     finite = (isinstance(value, (int, float)) and not isinstance(value, bool)
               and math.isfinite(value))
 
@@ -847,11 +847,9 @@ def reported_range(metric: Any, value: Any) -> list[dict]:
     key = f"{PART}.evaluation.current"
     if value is None:
         return found
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or (
-        value != value or value in (float("inf"), float("-inf"))
-    ):
+    if not is_finite(value):
         found.append(finding("error", key,
-                             "今のやり方での指標の値は数にしてください"))
+                             "今のやり方での指標の値は有限の数にしてください"))
     elif value < 0:
         found.append(finding("error", key,
                              "今のやり方での指標の値が負です"))

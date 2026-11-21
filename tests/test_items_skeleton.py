@@ -251,9 +251,9 @@ def test_items_project(tmp_path: Path, kind: str) -> None:
     # ればテスト用の評価で並べる
     assert "save_reported" not in script and "evaluation.current" in script
     metric = {"mask": "iou", "point_cloud": "chamfer"}[kind]
-    assert f"最良を選ぶ指標が {metric} (" in script
+    assert "BASELINE_REASON = (" in script
     assert "info(f\"今のやり方とは比べません: {BASELINE_REASON}\")" in script
-    assert f"最良を選ぶ指標が {metric} (" in readme
+    assert "8 の「今のやり方 (人の目視や今の仕組み) で" in readme
     reported = answer(problem, "ml.parts.0.evaluation.current", 0.5)
     make_project(reported, tmp_path / "reported")
     script = (tmp_path / "reported" / "train.py").read_text(encoding="utf-8")
@@ -267,7 +267,7 @@ def test_items_project(tmp_path: Path, kind: str) -> None:
     )
     counting = {"mask": "背景を除く", "point_cloud": "座標の単位"}[kind]
     assert "目安" in readme and counting in script and counting in readme
-    assert "答えた今のやり方での指標の値とも並べません" in script
+    assert "テスト用の分割が無いので, 評価せず, 答えた値とも並べません" in script
     assert "今のやり方 (今のやり方)" not in script
 
 

@@ -25,17 +25,24 @@ PART = "ml.parts.0"
 COLUMN_TARGET = [USES_ML, {"id": f"{PART}.role", "equals": "predict"},
                  {"id": f"{PART}.target.kind", "equals": "column"}]
 
-# 骨組みが今のやり方をデータの上で作れない場合 (入れたデータが画像か文の
-# 列の予測と, 画像の領域と点群). 読み込みの名前は data.CONTENT_LOADERS と
-# 同じ (食い違いはテストで確かめる)
+# 入れたデータが画像か文 (1 件の中身で学ぶ) の場合と, 骨組みが今のやり方の
+# 結果を 1 件ずつ並べられない場合 (画像か文の列の予測と, 画像の領域と点群).
+# 読み込みの名前は data.CONTENT_LOADERS と同じ (食い違いはテストで確かめる)
+CONTENT_DATA = [{"id": "data.loader", "in": ["image_folder", "text_lines"]},
+                {"id": "data.options.text_column", "filled": True}]
 REPORTED_BASELINE = [
     USES_ML, {"id": f"{PART}.role", "equals": "predict"},
     {"id": f"{PART}.evaluation.metric",
      "in": ["accuracy", "mae", "rmse", "iou", "chamfer"]},
-    {"any": [{"id": "data.loader", "in": ["image_folder", "text_lines"]},
-             {"id": "data.options.text_column", "filled": True},
+    {"any": [*CONTENT_DATA,
              {"id": f"{PART}.target.kind", "in": ["mask", "point_cloud"]}]},
 ]
+
+# 問いの題で名指す, 最良を選ぶ指標の短い名前 (title_metric の問いの
+# 「この指標」を置き換える)
+METRIC_TITLES = {"accuracy": "正解率", "mae": "平均絶対誤差",
+                 "rmse": "二乗平均平方根誤差", "iou": "IoU",
+                 "chamfer": "Chamfer 距離"}
 
 # 守る指標を書いた場合だけの問い
 HAS_GUARD = {"id": "issue.guard.name", "filled": True}
@@ -533,7 +540,7 @@ QUESTIONS: list[dict[str, Any]] = [
 
     # 6. 使える情報
     {"id": "information.known", "section": 6, "kind": "columns",
-     "required": True, "when": COLUMN_TARGET,
+     "required": True, "when": [*COLUMN_TARGET, {"none": CONTENT_DATA}],
      "title": "予測の時点で分かっている列は",
      "help": "学習に使ってよい列. 予測の時点で分からない列 (当日の客数など)"
              "で学習すると, 学習のときだけ当たり, 使うときに当たらない. 目的"
@@ -644,16 +651,12 @@ QUESTIONS: list[dict[str, Any]] = [
     {"id": f"{PART}.evaluation.current", "section": 8, "kind": "number",
      "required": False, "when": REPORTED_BASELINE,
      "title": "今のやり方 (人の目視や今の仕組み) で, この指標は幾つですか "
-              "(分かれば)",
+              "(分かれば)", "title_metric": True,
      "help": "画像や文, 領域, 点群の課題では, 今のやり方の結果を 1 件ずつ並べ"
              "られないので, ここに答えた値を学習したモデルのテスト用の値と並べ"
              "ます. 数えた件が違うので目安です. 例: 人が目で見て分けると 100 "
-             "件中 85 件当たる → 0.85. 数え方はモデルと同じにする: 正解率と "
-             "IoU は 0 から 1 の割合 (IoU はクラスごとの重なりの画素数を和の"
-             "画素数で割り, 背景を除いて平均. 予測にも正解にも無いクラスは 1)"
-             ", 平均絶対誤差と二乗平均平方根誤差は目的の値の単位, Chamfer 距離"
-             "は最も近い点までの距離 (2 乗しない) を両向きで平均した和の半分"
-             "で, データセットの座標の単位. 2 の「今の値」は課題の指標 (円など)"
+             "件中 85 件当たる → 0.85. 割合 (正解率, IoU) は 0 から 1, 誤差は"
+             "目的の値 (点群は座標) の単位. 2 の「今の値」は課題の指標 (円など)"
              "で, これとは別. 分からなければ空のまま"},
 
     # 9. 確かめ方

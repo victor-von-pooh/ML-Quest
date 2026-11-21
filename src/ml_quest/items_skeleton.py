@@ -4,7 +4,8 @@ from string import Template
 from typing import Callable, Optional
 
 from ml_quest.baseline_skeleton import (
-    reported_code, reported_hint, reported_sentence, reported_value
+    predict_log, reported_code, reported_hint, reported_sentence,
+    reported_value
 )
 from ml_quest.data import describe_steps, entry_steps
 from ml_quest.handoff import describe
@@ -1214,7 +1215,7 @@ def main() -> None:
     experiment = start_experiment(cfg, diff, str(PROJECT_DIR))
     task = write_task(experiment, task)
     experiment.logger.info(
-        f"問題: {PROBLEM_NAME}. 予測すること: {PREDICT}. データセット: "
+        f"問題: {PROBLEM_NAME}. ${predict_log}データセット: "
         f"{info['name']} (版 {info['format_version']}), 分割 "
         f"{info['splits']}"
     )
@@ -1266,7 +1267,8 @@ def main() -> None:
                         description=EVALUATION_TEXT.format(weights=weights),
                         epoch=epoch)
     else:
-        experiment.logger.info("テスト用の分割が無いので, 評価しません")$no_test$reason_log
+        experiment.logger.info("テスト用の分割が無いので, 評価$no_test")$reason_log
+
     # 検証用の数件の見本 (ML-Dashboard の見本のタブ). 書けなくても
     # 学習の結果は残すので, 警告だけ
     try:
@@ -1383,29 +1385,29 @@ def items_script(
     # 並べるための手の注記
     # (テスト用の分割が無い場合と, 答えていない場合は train.log にも)
     metric = "iou" if kind == "mask" else "chamfer"
-    reported, no_test, reason_log = "", "", ""
+    reported, no_test, reason_log = "", "しません", ""
     if reported_value(problem) is not None:
-        baseline = reported_code(problem, literal, metric)
+        baseline = "\n" + reported_code(problem, literal, metric)
         reported = REPORTED_CALLS[kind]
-        no_test = ("\n        experiment.logger.info(\"答えた今のやり方での指標"
-                   "の値とも並べません\")")
+        no_test = "せず, 答えた値とも並べません"
     else:
         reason = ("ファイルの組の受け持ちには今のやり方をデータで書く問いが"
                   "無いので, 今のやり方の値とは並べない. " + reported_hint(
-                      f"{metric} ({ITEMS_METRIC_NAMES[kind]})"
+                      problem, f"{metric} ({ITEMS_METRIC_NAMES[kind]})"
                   ))
-        baseline = comment_lines(
+        baseline = "\n" + comment_lines(
             f"比べる相手 ({active_value(problem, f'{PART}.baseline')}): "
             f"{reason}", indent=""
         ) + ("\n\n# 今のやり方と比べない理由 (train.log に書く)\n"
-             f"BASELINE_REASON = {literal(reason)}\n")
+             f"BASELINE_REASON = {literal(reason)}")
         reason_log = ("\n\n    # 今のやり方と比べない理由\n    experiment."
                       "logger.info(f\"今のやり方とは比べません: "
                       "{BASELINE_REASON}\")")
     body = Template(PARTS[kind]).substitute(baseline_comment=baseline,
                                             reported=reported)
     script = head + body + Template(ITEMS_MAIN).substitute(
-        no_test=no_test, reason_log=reason_log
+        no_test=no_test, reason_log=reason_log,
+        predict_log=predict_log(problem)
     )
 
     return script
@@ -1603,7 +1605,8 @@ def items_readme(
         + ". " + (reported_sentence(
             problem, "iou" if kind == "mask" else "chamfer"
         ) if reported_value(problem) is not None else reported_hint(
-            "iou (IoU)" if kind == "mask" else "chamfer (Chamfer 距離)"
+            problem, "iou (IoU)" if kind == "mask"
+            else "chamfer (Chamfer 距離)"
         )),
         "4. **推論** (ML-Inference, ML-Provide): `model.spec` の場所に定義を"
         "置いて学習すると, `train.py` が学習の後に実験の中の "

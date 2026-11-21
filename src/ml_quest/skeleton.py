@@ -11,7 +11,8 @@ import yaml
 
 from ml_quest.baseline_skeleton import (
     EVALUATION_PREFIX, baseline_code, baseline_note, baseline_reason,
-    reported_code, reported_hint, reported_sentence, reported_value
+    predict_log, reported_code, reported_hint, reported_sentence,
+    reported_value
 )
 from ml_quest.check import is_column_part, split_errors
 from ml_quest.data import (
@@ -126,7 +127,7 @@ def evaluate_test(
     """
     # テスト用の分割が無い場合は知らせだけ
     if "test" not in dataset.frames:
-        experiment.logger.info("テスト用の分割が無いので, 評価しません")
+        experiment.logger.info("テスト用の分割が無いので, 評価$no_test")
         return
     model = model.cpu().eval()
     x, y = dataset.tensors("test")
@@ -201,7 +202,7 @@ def evaluate_test(
     """
     # テスト用の分割が無い場合は知らせだけ
     if "test" not in dataset.frames:
-        experiment.logger.info("テスト用の分割が無いので, 評価しません")
+        experiment.logger.info("テスト用の分割が無いので, 評価$no_test")
         return
     model = model.cpu().eval()
     x, y = dataset.tensors("test")
@@ -261,7 +262,7 @@ $scale_lines
     model = build_model(spec, seed=cfg.experiment.seed)
     experiment = start_experiment(cfg, diff, str(PROJECT_DIR))
     experiment.logger.info(
-        f"問題: {PROBLEM_NAME}. 予測すること: {PREDICT}. $inputs_log"
+        f"問題: {PROBLEM_NAME}. ${predict_log}$inputs_log"
     )
     trainer = Trainer(model, experiment, Step(scale))
     trainer.fit(train_loader, valid_loader)
@@ -451,7 +452,7 @@ def expression(value: Any) -> str:
         式 (文字は JSON の文字列. 真偽値と None は Python の名前. 有限で
         ない数は float の式. 他の値は文字にする)
     """
-    # JSON の true, null は Python では名前の誤りになるので, 型ごとに書く
+    # 型ごとの式 (JSON の true, null は Python では名前の誤りになるため)
     if value is None or isinstance(value, bool):
         text = repr(value)
     elif isinstance(value, int):
@@ -562,30 +563,29 @@ def training_script(
                    "止めない)\n    compare_baseline(trainer.model, dataset, "
                    "experiment, center, scale)\n")
     elif reported is not None:
-        # 画像と文で, 答えた今のやり方での指標の値とテスト用の値を並べる.
-        # テスト用の分割が無ければ並べないことを train.log に
+        # 画像と文の, 答えた今のやり方での指標の値とテスト用の値の並べ (テスト
+        # 用の分割が無ければ, 並べないことを train.log に)
         key = "accuracy" if task == "classification" else metric
         value = "accuracy" if task == "classification" else "value"
-        baseline = reported_code(problem, literal, key)
+        baseline = "\n\n" + reported_code(problem, literal, key)
         call = ("\n\n    # 答えた今のやり方での指標の値と並べる\n    "
                 f'save_reported(experiment, "{key}", {value}.item())')
-        compare = ("\n    # テスト用の分割が無ければ, 答えた今のやり方での指標"
-                   "の値と並べない\n    if \"test\" not in dataset.frames:\n"
-                   "        experiment.logger.info(\n            \"テスト用の"
-                   "分割が無いので, 答えた今のやり方での指標の値と\"\n"
-                   "            \"並べません\"\n        )\n")
+        compare = ""
     elif kind is not None:
         # 画像と文で答えていなければ, 比べない理由をコメントと train.log に
-        hint = content_hint(task)
-        baseline = baseline_note(problem, str(reason), comment_lines,
-                                 retry=False, hint=hint)
-        baseline += ("\n# 今のやり方と比べない理由 (train.log に書く)\n"
-                     f"BASELINE_REASON = {literal(f'{reason}. {hint}')}\n")
+        hint = content_hint(problem, task)
+        baseline = "\n" + baseline_note(problem, str(reason), comment_lines,
+                                        retry=False, hint=hint)
+        baseline += ("\n\n# 今のやり方と比べない理由 (train.log に書く)\n"
+                     f"BASELINE_REASON = {literal(f'{reason}. {hint}')}")
         compare = ("\n    # 今のやり方と比べない理由\n    experiment.logger."
                    "info(f\"今のやり方とは比べません: {BASELINE_REASON}\")\n")
     else:
         baseline = baseline_note(problem, str(reason), comment_lines)
         compare = ""
+
+    # テスト用の分割が無いときの記録 (答えた値と並べるなら, それも)
+    no_test = "せず, 答えた値とも並べません" if call else "しません"
 
     # 頭 (比べるときだけ pandas, 元のデータの読み込み, 評価の表の書き出し)
     head = Template(HEAD).substitute(
@@ -608,7 +608,7 @@ def training_script(
     # タスクごとの step と評価
     if task == "classification":
         body = Template(CLASSIFICATION_STEP).substitute(
-            baseline=baseline, reported=call
+            baseline=baseline, reported=call, no_test=no_test
         )
         scaling = "分類は番号のまま"
         scale_lines = "    center, scale = 0.0, 1.0"
@@ -619,7 +619,8 @@ def training_script(
         body = Template(REGRESSION_STEP).substitute(
             key=key, expression=expression, metric_label=label
             if key == metric else "二乗誤差", test_expression=test_expression,
-            test_label=label, baseline=baseline, reported=call
+            test_label=label, baseline=baseline, reported=call,
+            no_test=no_test
         )
         scaling = "目的の値は学習用の平均と標準偏差で標準化"
         scale_lines = ("    center, scale = y_train.mean().item(), "
@@ -632,20 +633,22 @@ def training_script(
         train_target=train_target, valid_target=valid_target,
         target_scale=target_scale, compare=compare,
         inputs_log=INPUTS_LOG[kind], decision_log=DECISION_LOG if dropped
-        else "",
+        else "", predict_log=predict_log(problem),
     )
     script = head + body + tail
 
     return script
 
 
-def content_hint(task: Optional[str]) -> str:
+def content_hint(problem: dict, task: Optional[str]) -> str:
     """
     画像と文で, 今のやり方での指標の値を答えれば並べられることの文を作る
     関数
 
     Parameters
     ----------
+    problem: dict
+        問題の設定 (版 2)
     task: Optional[str]
         タスク
 
@@ -655,8 +658,8 @@ def content_hint(task: Optional[str]) -> str:
         文 (分類は正解率, 回帰と予測は誤差の指標と並べる)
     """
     # 骨組みのテスト用の評価が求める指標
-    hint = reported_hint("accuracy (正解率)" if task == "classification"
-                         else "mae か rmse")
+    hint = reported_hint(problem, "accuracy (正解率)" if task ==
+                         "classification" else "mae か rmse")
 
     return hint
 
@@ -866,7 +869,7 @@ def project_readme(
         )
     elif kind is not None:
         compare = (f"今のやり方とは比べない ({reason}ため). "
-                   f"{content_hint(data['task'])}")
+                   f"{content_hint(problem, data['task'])}")
     else:
         compare = f"今のやり方とは比べない ({reason}ため)"
     lines += [
@@ -908,7 +911,7 @@ def project_error(problem: dict) -> Optional[str]:
     message: Optional[str]
         誤りの文 (書き出せるなら None. 書き出し先のファイルは見ない)
     """
-    # 骨組みを組める error は返さない
+    # 骨組みを組めない理由の文だけ
     message = project_check(problem)[0]
 
     return message
@@ -1015,7 +1018,7 @@ def data_errors(problem: dict, inspected: Optional[dict]) -> list[dict]:
     errors: list[dict]
         確かめの並び (データを入れていなければ空)
     """
-    # 古いか別の問題の設定の結果と, 形の崩れた結果は使わず求め直す
+    # 古いか別の問題の設定の結果と, 形の崩れた結果の求め直し
     fresh = (
         isinstance(inspected, dict)
         and inspected.get("key") == inspect_key(problem)
@@ -1074,7 +1077,7 @@ def errors_section(
     text: str
         Markdown の節 (残っていなければ空)
     """
-    # 無ければ節を書かない
+    # 無ければ節は無し
     if not errors:
         return ""
     lines = ["", "## 書き出した時点で残っていた直すところ", "",
@@ -1267,9 +1270,9 @@ def make_project(
     if error is not None:
         raise ValueError(error)
 
-    # 書き出せる確かめの error は, 「それでも書き出す」のときだけ残ったまま.
-    # 損得と制約の error が残れば, 推論の一式の既定値を付けない (学習と
-    # 一式が最後まで通るように)
+    # 書き出せる確かめの error は「それでも書き出す」のときだけ残したまま.
+    # 損得と制約の error が残れば, 推論の一式の既定値は無し (学習と一式が
+    # 最後まで通るように)
     errors = exportable + data_errors(problem, inspected)
     if errors and not accept_errors:
         raise ValueError(errors_message(errors))
