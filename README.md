@@ -88,7 +88,7 @@ problem = example_problem("総菜の作る量")
 
 書き出した骨組みの README に, 次にすること (データの分析で選ぶ値, モデルの入力の形と出力の大きさ, 学習の起動, 推論の一式の登録) が書かれる. 学習のスクリプトは ML-EDA, ML-ModelControl, ML-Found, ML-Inference を使い, config の `requires` にその名前 (ML-Found の登録簿の `eda`, `modelcontrol`, `inference`) を書くので, ML-Found が学習の前に足りないものと入れ方を示す. 問題の設定に今のやり方をデータで書いてデータを入れていれば, 学習のスクリプトは検証用とテスト用で今のやり方と比べた評価の表 (`evaluations/baseline_valid.json` など) を書く.
 
-骨組みを書き出せるのは, 列の予測 (分類, 回帰, 時系列の予測) と, 予測するで正解の種類が画像の領域か点群の受け持ち. 後の 2 つは ML-EDA のファイルの組のデータセット (版 2 か, 中身の手順をかけた版 3. `export_image_masks`, `export_capture_clouds`) で学習する骨組みで, 入れたデータセットをプロジェクトに写し, 仮のモデル (印 TODO) と, 損失と指標 (領域は交差エントロピーと IoU, 点群は Chamfer) を書く. config の `model.spec` は `models/model.yaml` で, そこに ML-ModelControl の定義を置けばそのモデルで学習し, 学習の後に ML-Inference の推論の一式も実験の中に作る (置くまでは仮のモデルで学習する). 学習の後に, 検証用の数件の入力, 予測, 正解を ML-Found の見本 (`samples/`) に書く. 書き出せない理由は `project_error(problem)` で分かる.
+骨組みを書き出せるのは, 列の予測 (分類, 回帰, 時系列の予測. 表と時系列のほか, 画像と文のデータの分類も. 画像と文では README が 1 件の中身で学ぶ案内になる) と, 予測するで正解の種類が画像の領域か点群の受け持ち. 後の 2 つは ML-EDA のファイルの組のデータセット (版 2 か, 中身の手順をかけた版 3. `export_image_masks`, `export_capture_clouds`) で学習する骨組みで, 入れたデータセットをプロジェクトに写し, 仮のモデル (印 TODO) と, 損失と指標 (領域は交差エントロピーと IoU, 点群は Chamfer) を書く. config の `model.spec` は `models/model.yaml` で, そこに ML-ModelControl の定義を置けばそのモデルで学習し, 学習の後に ML-Inference の推論の一式も実験の中に作る (置くまでは仮のモデルで学習する). 学習の後に, 検証用の数件の入力, 予測, 正解を ML-Found の見本 (`samples/`) に書く. 書き出せない理由は `project_error(problem)` で分かる.
 
 ## 文書
 

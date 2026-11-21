@@ -47,6 +47,9 @@ COPY_NAME = re.compile(f"[0-9a-f]{{{COPY_DIGITS}}}")
 ITEMS_LOADER = "items"
 ITEMS_VERSIONS = (2, 3)
 
+# 1 件の中身で学ぶデータの, ML-EDA の読み込みの名前と種類 (ML-EDA の kind)
+CONTENT_LOADERS = {"image_folder": "image", "text_lines": "text"}
+
 
 
 def import_eda() -> Any:
@@ -142,6 +145,30 @@ def source_of(data: Any) -> dict:
               "size": raw.get("size"), "modified": raw.get("modified")}
 
     return source
+
+
+def content_kind(stages: dict) -> Optional[str]:
+    """
+    入れたデータが 1 件の中身で学ぶ種類 (画像か文) なら, その種類を返す関数
+
+    Parameters
+    ----------
+    stages: dict
+        受け渡し (データの分析の source の loader から決める)
+
+    Returns
+    ----------
+    kind: Optional[str]
+        image か text (表と時系列と, データを入れていなければ None)
+    """
+    # 入れたデータの読み込みの名前. 表の中の文の列 (text_column) で読んだ
+    # ものも ML-EDA では文
+    source = stages["data"].get("source") or {}
+    kind = CONTENT_LOADERS.get(source.get("loader"))
+    if kind is None and (source.get("options") or {}).get("text_column"):
+        kind = "text"
+
+    return kind
 
 
 def dataset_info(location: Union[str, Path]) -> Optional[dict]:

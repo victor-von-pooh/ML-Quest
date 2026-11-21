@@ -12,7 +12,9 @@ from ml_quest.baseline_skeleton import (
     EVALUATION_PREFIX, baseline_code, baseline_note, baseline_reason
 )
 from ml_quest.check import is_column_part
-from ml_quest.data import ITEMS_KINDS, copy_data, dataset_info, items_message
+from ml_quest.data import (
+    ITEMS_KINDS, content_kind, copy_data, dataset_info, items_message
+)
 from ml_quest.handoff import describe, handoff
 from ml_quest.items_skeleton import (
     ITEMS_LIBRARIES, dataset_place, items_config, items_name, items_readme,
@@ -256,8 +258,7 @@ $scale_lines
     model = build_model(spec, seed=cfg.experiment.seed)
     experiment = start_experiment(cfg, diff, str(PROJECT_DIR))
     experiment.logger.info(
-        f"問題: {PROBLEM_NAME}. 予測すること: {PREDICT}. 学習に使う列 "
-        f"{len(dataset.features)}: {dataset.features}"
+        f"問題: {PROBLEM_NAME}. 予測すること: {PREDICT}. $inputs_log"
     )
     trainer = Trainer(model, experiment, Step(scale))
     trainer.fit(train_loader, valid_loader)
@@ -300,6 +301,52 @@ $compare
 if __name__ == "__main__":
     main()
 '''
+
+# 学習の記録の入力の文 (表と時系列は学習に使う列, 画像と文は 1 件の形)
+INPUTS_LOG = {
+    None: ('学習に使う列 "\n        f"{len(dataset.features)}: '
+           '{dataset.features}'),
+    "image": ('1 件の画像の形 (チャンネル, 高さ, 幅): "\n        '
+              'f"{tuple(x_train.shape[1:])}'),
+    "text": ('1 件の文の形 (語の番号の長さ): "\n        '
+             'f"{tuple(x_train.shape[1:])}'),
+}
+
+# README のデータの分析の, 画像と文で学ぶもの (表の列でなく 1 件の中身)
+CONTENT_DATA = {
+    "image": ("学ぶのは 1 件の画像の中身で, 読み込みが作る表の列 (`path`, "
+              "`width`, `height` など) は学習に使わない. 画像の大きさがそろ"
+              "わないなら, レシピの中身の手順 (`item_steps`) に `resize` "
+              "(`width`, `height`) を足してそろえる (そろわないまま ML-EDA は"
+              "書き出さない)"),
+    "text": ("学ぶのは 1 件の文の中身で, 読み込みが作る表の列 (`file`, "
+             "`length`, `words` など) は学習に使わない. 文はレシピの中身の"
+             "手順 (`item_steps`) の `vocabulary` で語の番号の並びにする "
+             "(例 `[{op: vocabulary, length: 64}]`. `length` は 1 件の長さ,"
+             " `max_tokens` は語彙の上限. 無いと ML-EDA が書き出さない)"),
+}
+
+# README のモデルの作成の, 入力の形の案内 (データの種類ごと. None は表と
+# 時系列か, データを入れていない場合)
+CONTENT_INPUTS = {
+    None: ("入力の形は書き出したデータセットから決まる (ML-EDA の "
+           "`model_inputs(<データセット>)` の `inputs` の `shape`). 表と時系列"
+           "では学習に使う列の数 (`dataset.yaml` の features. ワンホットや"
+           "過去の値の列で元の列より増える), 画像, 文, 点群の列では 1 件の"
+           "配列の形 (`dataset.yaml` の splits の `shape` の 2 つ目から. 列の"
+           "数ではない)"),
+    "image": ("入力の形は書き出したデータセットから決まる (ML-EDA の "
+              "`model_inputs(<データセット>)` の `inputs` の `shape` と "
+              "`dtype`). 画像は `[None, チャンネル, 高さ, 幅]` の float32 "
+              "(値は 0 から 1. 学習に使う列の数ではない)"),
+    "text": ("入力の形は書き出したデータセットから決まる (ML-EDA の "
+             "`model_inputs(<データセット>)` の `inputs` の `shape` と "
+             "`dtype`). 文は `[None, 長さ]` の int64 (語の番号). 埋め込み "
+             "(`nn.Embedding`) の数 `num_embeddings` は語彙の数で, データ"
+             "セットの `recipe.yaml` の `item_steps` の `vocabulary` の "
+             "`state.vocabulary` の長さ (埋め草 `<pad>` と語彙に無い語 "
+             "`<unk>` を含む. `model_inputs` には無い)"),
+}
 
 # 回帰と予測の指標 (step の名前, step の式, テスト用の式, 名前)
 REGRESSION_METRICS = {
@@ -426,6 +473,7 @@ def training_script(
     task = stages["data"]["task"]
     metric = stages["training"]["metric"]
     inference = stages["inference"]
+    kind = content_kind(stages)
     reason = baseline_reason(problem, stages, data_file)
     if reason is None and data_file is not None:
         baseline = baseline_code(problem, stages, data_file, literal)
@@ -433,7 +481,8 @@ def training_script(
                    "止めない)\n    compare_baseline(trainer.model, dataset, "
                    "experiment, center, scale)\n")
     else:
-        baseline = baseline_note(problem, str(reason), comment_lines)
+        baseline = baseline_note(problem, str(reason), comment_lines,
+                                 retry=kind is None)
         compare = ""
 
     # 頭 (比べるときだけ pandas, 元のデータの読み込み, 評価の表の書き出し)
@@ -478,6 +527,7 @@ def training_script(
         scaling=scaling, scale_lines=scale_lines,
         train_target=train_target, valid_target=valid_target,
         target_scale=target_scale, compare=compare,
+        inputs_log=INPUTS_LOG[kind],
     )
     script = head + body + tail
 
@@ -575,6 +625,33 @@ def config_text(problem: dict, stages: dict, name: Optional[str]) -> str:
     return text
 
 
+def column_lines(data: dict) -> list[str]:
+    """
+    README のデータの分析の, 学習に使ってよい列と使わない列の行を作る関数
+
+    Parameters
+    ----------
+    data: dict
+        受け渡しのデータの分析の値
+
+    Returns
+    ----------
+    lines: list[str]
+        字下げした箇条の行 (答えが無ければ空)
+    """
+    # 予測の時点で分かる列と, 分からない列と使ってはいけない列
+    lines = []
+    if data["known"]:
+        lines.append("    - 学習に使ってよい列 (予測の時点で分かる列): "
+                     + ", ".join(f"`{name}`" for name in data["known"]))
+    if data["drop"]:
+        lines.append("    - 学習に使わない列 (予測の時点で分からない列と, "
+                     "使ってはいけない列): "
+                     + ", ".join(f"`{name}`" for name in data["drop"]))
+
+    return lines
+
+
 def project_readme(
     problem: dict, stages: dict, data_file: Optional[Path] = None
 ) -> str:
@@ -637,13 +714,10 @@ def project_readme(
             f"移動平均の gap は {data['min_lag']}). 決める時点で分からない値で"
             "学習すると, 学習のときだけ当たる"
         )
-    if data["known"]:
-        lines.append("    - 学習に使ってよい列 (予測の時点で分かる列): "
-                     + ", ".join(f"`{name}`" for name in data["known"]))
-    if data["drop"]:
-        lines.append("    - 学習に使わない列 (予測の時点で分からない列と, "
-                     "使ってはいけない列): "
-                     + ", ".join(f"`{name}`" for name in data["drop"]))
+    kind = content_kind(stages)
+    lines += column_lines(data) if kind is None else [
+        f"    - {CONTENT_DATA[kind]}"
+    ]
     outputs = ("クラスの数 (softmax を付けない値)"
                if stages["model"]["outputs"] is None else "1")
     horizon = stages["inference"].get("horizon")
@@ -657,13 +731,8 @@ def project_readme(
     )
     lines += [
         "2. **モデルの作成** (ML-CreateArchitecture): 入力 1 つと出力 1 つの"
-        "モデルを組み, `models/model.yaml` に置く. 入力の形は書き出した"
-        "データセットから決まる (ML-EDA の `model_inputs(<データセット>)` の "
-        "`inputs` の `shape`). 表と時系列では学習に使う列の数 (`dataset.yaml`"
-        " の features. ワンホットや過去の値の列で元の列より増える), 画像, "
-        "文, 点群の列では 1 件の配列の形 (`dataset.yaml` の splits の "
-        f"`shape` の 2 つ目から. 列の数ではない). 出力の大きさは {outputs}. "
-        "回帰の目的の値は train.py が標準化する",
+        f"モデルを組み, `models/model.yaml` に置く. {CONTENT_INPUTS[kind]}. "
+        f"出力の大きさは {outputs}. 回帰の目的の値は train.py が標準化する",
         "3. **学習** (ML-Found, ML-Dashboard): `python train.py` "
         "(`python train.py trainer.epochs=10` のように「項目=値」で上書き"
         "できる). 結果は `outputs/<実験の名前>/<日付>/<時刻>/` に残る. "
