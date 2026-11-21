@@ -295,7 +295,7 @@ def test_content_project(tmp_path: Path, kind: str) -> None:
     assert "入れたデータが 1 件の中身で学ぶ画像か文" in script
     assert "答えて骨組みを書き出し直すと" not in script
     assert "evaluation.current" in script and "save_reported" not in script
-    hint = "8 の「今のやり方 (人の目視や今の仕組み) で, この指標は幾つですか」"
+    hint = "8 の「今のやり方 (人の目視や今の仕組み) で, 正解率は幾つですか (分かれば)」"
     assert hint in readme and "BASELINE_REASON = (" in script
     assert "最良を選ぶ指標を" not in readme
     assert "logger.info(f\"今のやり方とは比べません: {BASELINE_REASON}" in (
@@ -385,7 +385,11 @@ def test_content_reported(tmp_path: Path, kind: str) -> None:
         and getattr(node.targets[0], "id", "") == "REPORTED_TEXT")
     assert "差 (accuracy_diff) はモデル − 今のやり方" in text
     assert "大きいほど良い" in text and "今のやり方 (問い合わせ" in text
+    assert "正解率 (テスト用の件のうち当たった割合" in text
+    assert "METRIC_NAME = \"正解率\"" in script
     readme = (project / "README.md").read_text(encoding="utf-8")
+    assert "モデルの正解率 (テスト用の件のうち当たった割合" in readme
+    assert "((" not in readme and "値 (正解率 (" not in readme
     assert ("今のやり方での `accuracy` の値 (0.75. "
             "`ml.parts.0.evaluation.current`)") in readme
     assert "別のデータで数えた値との比べで目安です" in readme

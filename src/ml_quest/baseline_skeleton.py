@@ -6,15 +6,14 @@ from typing import Any, Callable, Optional
 from ml_quest.bridge import recipe_from
 from ml_quest.check import reported_range
 from ml_quest.data import content_kind
-from ml_quest.problem import active_value, applies, get_value
-from ml_quest.questions import BY_ID, PART
+from ml_quest.problem import active_value, applies, get_value, questions
+from ml_quest.questions import BY_ID, METRIC_TITLES, PART
 
 # 比べる相手の評価の名前の頭 (evaluations/baseline_<分割>.json)
 EVALUATION_PREFIX = "baseline_"
 
-# 今のやり方での指標の値の問いの場所と, 案内に出す題
+# 今のやり方での指標の値の問いの場所
 KEY = f"{PART}.evaluation.current"
-QUESTION_TITLE = "今のやり方 (人の目視や今の仕組み) で, この指標は幾つですか"
 
 # 比べる相手の名前を答えていない場合の名前
 DEFAULT_NAME = "今のやり方"
@@ -464,6 +463,10 @@ BASELINE_NAME = $name
 BASELINE_VALUE = $value
 REPORTED_TEXT = $text
 
+# 並べる指標の画面の名前と, 数え方と単位
+METRIC_NAME = $metric_name
+METRIC_COUNTING = $counting
+
 
 def save_reported(experiment: Experiment, key: str, value: float) -> None:
     """
@@ -489,21 +492,21 @@ def save_reported(experiment: Experiment, key: str, value: float) -> None:
     save_evaluation(experiment, "${prefix}test", row, split="test",
                     baseline=BASELINE_NAME, description=REPORTED_TEXT)
     experiment.logger.info(
-        f"テスト用の {key}: モデル {value:.4f}, {BASELINE_NAME} (答えた値) "
-        f"{BASELINE_VALUE:.4f}. 別のデータで数えた値との比べで目安です"
+        f"テスト用の{METRIC_NAME} ({METRIC_COUNTING}): モデル {value:.4f}, "
+        f"{BASELINE_NAME} (答えた値) {BASELINE_VALUE:.4f}. 別のデータで"
+        "数えた値との比べで目安です"
     )
 '''
 
-# 今のやり方での指標の値と並べる指標の, 数え方と単位
+# 今のやり方での指標の値と並べる指標の, 数え方と単位 (名前は METRIC_TITLES)
 REPORTED_METRICS = {
-    "accuracy": "正解率 (テスト用の件のうち当たった割合. 0 から 1)",
-    "mae": "平均絶対誤差 (目的の値の単位)",
-    "rmse": "二乗平均平方根誤差 (目的の値の単位)",
-    "iou": ("IoU (クラスごとの重なりの画素数を和の画素数で割り, 背景を除く"
-            "クラスで平均. 予測にも正解にも無いクラスは 1. 0 から 1)"),
-    "chamfer": ("Chamfer 距離 (予測の点から正解の最も近い点までの距離 (2 乗"
-                "しない) の平均と, 逆向きの平均の和の半分. データセットの座標"
-                "の単位)"),
+    "accuracy": "テスト用の件のうち当たった割合. 0 から 1",
+    "mae": "目的の値の単位",
+    "rmse": "目的の値の単位",
+    "iou": ("クラスごとの重なりの画素数を和の画素数で割り, 背景を除くクラスで"
+            "平均. 予測にも正解にも無いクラスは 1. 0 から 1"),
+    "chamfer": ("予測の点から正解の最も近い点までの 2 乗しない距離の平均と, "
+                "逆向きの平均の和の半分. データセットの座標の単位"),
 }
 
 # 回帰と予測の指標 (名前, 式, 名前の文)
@@ -720,7 +723,7 @@ def reported_hint(problem: dict, metrics: str) -> str:
     """
     # 答えた値の誤り, 答える問い, 並べられる指標
     error = reported_error(problem)
-    title = f"8 の「{QUESTION_TITLE}」({KEY}) "
+    title = f"8 の「{question_title(problem)}」({KEY}) "
     if error:
         hint = (f"答えた今のやり方での指標の値は使えないので並べない ({error})"
                 f". {title}の答えを直して書き出し直すと, テスト用の値と並べる")
@@ -731,6 +734,27 @@ def reported_hint(problem: dict, metrics: str) -> str:
                 "直すと, テスト用の値と並べる")
 
     return hint
+
+
+def question_title(problem: dict) -> str:
+    """
+    今のやり方での指標の値の問いの題を, 画面と同じ文で返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    title: str
+        questions の返す題 (「この指標」を最良を選ぶ指標の名前に)
+    """
+    # 画面の問いの並びと同じ題
+    title = next(item["title"] for item in questions(problem)
+                 if item["id"] == KEY)
+
+    return title
 
 
 def reported_error(problem: dict) -> Optional[str]:
@@ -803,13 +827,16 @@ def reported_code(problem: dict, literal: Callable, metric: str) -> str:
     better = "大きい" if metric in ("accuracy", "iou") else "小さい"
     text = (f"{reported_label(problem)} の値は問題の設定で答えた値 ("
             f"{PART}.evaluation.current) で, モデルの値はテスト用の分割で"
-            f"求めた{REPORTED_METRICS[metric]}. 差 ({metric}_diff) はモデル"
+            f"求めた{METRIC_TITLES[metric]} ({REPORTED_METRICS[metric]})"
+            f". 差 ({metric}_diff) はモデル"
             f" − 今のやり方で, {metric} は{better}ほど良い. 別のデータで"
             "数えた値との比べで目安です")
     code = Template(REPORTED).substitute(
         name=literal(str(name)),
         value=python_value(reported_value(problem)),
         text=literal(text), prefix=EVALUATION_PREFIX,
+        metric_name=literal(METRIC_TITLES[metric]),
+        counting=literal(REPORTED_METRICS[metric]),
     ).strip("\n")
 
     return code
@@ -836,7 +863,8 @@ def reported_sentence(problem: dict, metric: str) -> str:
     sentence = (
         "今のやり方とは同じ件で比べず, 問題の設定で答えた今のやり方での "
         f"`{metric}` の値 ({value:g}. `{PART}.evaluation.current`) と, "
-        f"テスト用の分割のモデルの値 ({REPORTED_METRICS[metric]}) を評価の"
+        f"テスト用の分割のモデルの{METRIC_TITLES[metric]} ("
+        f"{REPORTED_METRICS[metric]}) を評価の"
         f"表 (`evaluations/{EVALUATION_PREFIX}test.json`) に並べる (別の"
         "データで数えた値との比べで目安です. テスト用の分割が無ければ並べず"
         ", `train.log` に書く)"
