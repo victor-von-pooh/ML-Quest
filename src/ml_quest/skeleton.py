@@ -732,7 +732,8 @@ def column_lines(data: dict) -> list[str]:
 
 
 def project_readme(
-    problem: dict, stages: dict, data_file: Optional[Path] = None
+    problem: dict, stages: dict, data_file: Optional[Path] = None,
+    dropped: bool = False
 ) -> str:
     """
     プロジェクトの README (課題の要約と次にすること) を作る関数
@@ -745,6 +746,8 @@ def project_readme(
         受け渡し
     data_file: Optional[Path] = None
         プロジェクトに写すデータ (プロジェクトからの相対. 無ければ None)
+    dropped: bool = False
+        損得と制約に直すところが残り, 意思決定の既定値を付けないか
 
     Returns
     ----------
@@ -817,8 +820,10 @@ def project_readme(
         "できる). 結果は `outputs/<実験の名前>/<日付>/<時刻>/` に残る. "
         f"検証用の `{stages['training']['monitor']}` が最も良いモデルを選ぶ. "
         + compare,
-        "4. **推論** (ML-Provide): 実験の中の `inference/` を登録する. 意思"
-        "決定の既定値は問題の設定の損得と制約"
+        "4. **推論** (ML-Provide): 実験の中の `inference/` を登録する. "
+        + ("意思決定の既定値は付けない (損得と制約に直すところが残るため. 下"
+           "の「書き出した時点で残っていた直すところ」)" if dropped else
+           "意思決定の既定値は問題の設定の損得と制約")
         + (f". {horizon} 期先まで予測するなら「何段も先まで予測する」を使う"
            if horizon and horizon > 1 else ""),
         "", "`train.py` は出発点なので, 課題に合わせて書き足す. 問題の設定を"
@@ -990,7 +995,9 @@ def errors_message(errors: list[dict]) -> str:
     return message
 
 
-def errors_section(errors: list[dict], dropped: bool = False) -> str:
+def errors_section(
+    errors: list[dict], dropped: bool = False, checked: bool = True
+) -> str:
     """
     README の, 書き出した時点で残っていた直すところの節を作る関数
 
@@ -1000,6 +1007,9 @@ def errors_section(errors: list[dict], dropped: bool = False) -> str:
         確かめの error の並び
     dropped: bool = False
         損得と制約に直すところが残り, 意思決定の既定値を付けなかったか
+    checked: bool = True
+        問題の設定の確かめ (check) の直すところが残るか (残れば推論の段階
+        に渡す値を作れない. 入れたデータの確かめだけなら作れる)
 
     Returns
     ----------
@@ -1014,7 +1024,11 @@ def errors_section(errors: list[dict], dropped: bool = False) -> str:
              "まま, 「それでも書き出す」と指定して書き出した. 学習が失敗したり"
              "結果がおかしかったりしたときは, まずこれを見る. 直したら書き出し"
              "直す. 直すまで, 推論の段階 (ML-Provide) で問題の設定につなげない"
-             " (推論の段階に渡す値は, 直すところが残ると作れないため)."]
+             + (" (推論の段階に渡す値は, 問題の設定の確かめの直すところが残る"
+                "と作れないため)." if checked else
+                " (入れたデータの確かめの直すところは, 推論の段階に渡す値を作る"
+                "ときには確かめないので, つなぐと同じ誤りのまま使われるため)."
+                )]
     if dropped:
         lines.append("")
         lines.append("損得と制約 (`action.decision`) に直すところが残るので, "
@@ -1083,7 +1097,8 @@ def project_files(
     kind = skeleton_kind(problem)
     if kind is None:
         files = {
-            "README.md": project_readme(problem, stages, data_file),
+            "README.md": project_readme(problem, stages, data_file,
+                                        dropped),
             "configs/default/train.yaml": config_text(problem, stages, name),
             "train.py": training_script(problem, stages, data_file,
                                         dropped),
@@ -1231,7 +1246,7 @@ def make_project(
         **project_files(problem, stages, name, data_file, info, dropped),
         "configs/experiment/train.yaml": EXPERIMENT,
     }
-    files["README.md"] += errors_section(errors, dropped)
+    files["README.md"] += errors_section(errors, dropped, bool(exportable))
 
     # 既にあるファイルと, ディレクトリを作れない場所の確かめ (全てを確かめ
     # てから書く. 途中で止まって一部だけが残らないように)

@@ -753,8 +753,10 @@ def number_text(value: Any) -> str:
     text: str
         文
     """
-    # 整数は桁区切り, 小数は丸め
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    # 整数は桁区切り, 小数は丸め. 手で書いた真偽値と空は, 数でないと分かる文
+    if isinstance(value, bool) or value is None:
+        text = f"{yaml_name(value)} (数でない値)"
+    elif not isinstance(value, (int, float)):
         text = str(value)
     elif isinstance(value, int):
         text = f"{value:,}"
@@ -762,6 +764,26 @@ def number_text(value: Any) -> str:
         text = f"{value:,.4g}"
 
     return text
+
+
+def yaml_name(value: Any) -> str:
+    """
+    真偽値と空を, 問題の設定のファイルでの書き方にする関数
+
+    Parameters
+    ----------
+    value: Any
+        True, False か None
+
+    Returns
+    ----------
+    name: str
+        true, false か null
+    """
+    # YAML の名前 (Python の True と None を文に出さない)
+    name = {True: "true", False: "false"}.get(value, "null")
+
+    return name
 
 
 def decision_text(decision: dict) -> str:

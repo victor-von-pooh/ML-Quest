@@ -55,6 +55,10 @@ ITEMS_VERSIONS = (2, 3)
 # 1 件の中身で学ぶデータの, ML-EDA の読み込みの名前と種類 (ML-EDA の kind)
 CONTENT_LOADERS = {"image_folder": "image", "text_lines": "text"}
 
+# inspect_key がディレクトリの中で大きさと時刻を見るファイルの数の上限
+# (超えた分は数だけを見る)
+STAT_FILES = 10000
+
 
 
 def import_eda() -> Any:
@@ -1631,9 +1635,9 @@ def inspect_key(problem: dict) -> str:
     Returns
     ----------
     key: str
-        答え (作った時刻と直した時刻, プロジェクトの記録, 元の場所を除く)
-        と, データの場所と大きさと更新の時刻 (ナノ秒. ディレクトリはその
-        ディレクトリの値) から作った 16 進の文字
+        答え (作った時刻と直した時刻, プロジェクトの記録, 元の場所を除く),
+        データの場所と大きさと更新の時刻 (data_stat), ML-EDA が入っている
+        か, から作った 16 進の文字
     """
     # 分析に関わらない値を除いた答えと, データのファイルの値
     upgraded = upgrade_problem(problem)
@@ -1641,15 +1645,51 @@ def inspect_key(problem: dict) -> str:
                if key not in ("created_at", "updated_at", "project",
                               "origin")}
     source = data_location(upgraded)
-    stat = None
-    if source and Path(source).exists():
-        found = Path(source).stat()
-        stat = [found.st_size, found.st_mtime_ns]
-    text = json.dumps([answers, source, stat], sort_keys=True, default=str,
-                      ensure_ascii=False)
+    stat = data_stat(Path(source)) if source else None
+    eda = importlib.util.find_spec("ml_eda") is not None
+    text = json.dumps([answers, source, stat, eda], sort_keys=True,
+                      default=str, ensure_ascii=False)
     key = hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     return key
+
+
+def data_stat(location: Path) -> Optional[list]:
+    """
+    データのファイルかディレクトリの, 大きさと更新の時刻の印を返す関数
+
+    Parameters
+    ----------
+    location: Path
+        データの場所
+
+    Returns
+    ----------
+    stat: Optional[list]
+        ファイルなら [大きさ, 更新の時刻 (ナノ秒)]. ディレクトリなら中の
+        ファイルの [相対パス, 大きさ, 更新の時刻] の並び (名前の順で
+        STAT_FILES まで. 超えた分は数だけ). 無ければ None
+    """
+    # ファイルはその値, ディレクトリは中のファイルの値 (多ければ数だけ)
+    if not location.exists():
+        return None
+    if not location.is_dir():
+        found = location.stat()
+        stat: list = [found.st_size, found.st_mtime_ns]
+        return stat
+    stat = []
+    count = 0
+    for path in sorted(location.rglob("*")):
+        if not path.is_file():
+            continue
+        count += 1
+        if count <= STAT_FILES:
+            found = path.stat()
+            stat.append([path.relative_to(location).as_posix(),
+                         found.st_size, found.st_mtime_ns])
+    stat.append(count)
+
+    return stat
 
 
 def analyze_data(problem: dict) -> Optional[dict]:

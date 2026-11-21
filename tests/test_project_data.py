@@ -7,10 +7,10 @@ import pytest
 import yaml
 
 from ml_quest import (
-    QUESTIONS, answer, apply_recipe, attach_data, check, example_problem,
-    get_value, handoff, inspect_data, load_problem, make_project,
-    open_errors, problem_origin, project_error, prune_copies, recipe_from,
-    record_project, resolve_choice, save_problem
+    QUESTIONS, answer, apply_recipe, attach_data, check, describe,
+    example_problem, get_value, handoff, inspect_data, load_problem,
+    make_project, open_errors, problem_origin, project_error, prune_copies,
+    recipe_from, record_project, resolve_choice, save_problem
 )
 from ml_quest.check import is_exportable
 from ml_quest.data import inspect_key
@@ -519,6 +519,66 @@ def test_exportable_script(tmp_path: Path, case: str) -> None:
         handoff(problem)
 
 
+def test_data_decision_error(tmp_path: Path) -> None:
+    """
+    入れたデータの確かめにだけ損得と制約の error が残ると, 意思決定の既定値
+    を付けず, README がデータの確かめの直すところとして書くことを確かめる
+    関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 問題の設定の確かめには error が無く, 受け渡しの値は作れる
+    problem = example_problem("総菜の作る量")
+    handoff(problem)
+    inspected = {"key": inspect_key(problem), "findings": [
+        {"level": "error", "id": "action.decision",
+         "message": "2 クラスの分類にだけ使えます"},
+    ]}
+    make_project(problem, tmp_path / "project", accept_errors=True,
+                 inspected=inspected)
+    readme = (tmp_path / "project" / "README.md").read_text("utf-8")
+    assert "推論の段階に渡す値を作るときには確かめない" in readme
+    assert "作れないため" not in readme
+    assert "意思決定の既定値は付けない (損得と制約に直すところが" in readme
+    assert "意思決定の既定値は問題の設定の損得と制約" not in readme
+    script = (tmp_path / "project" / "train.py").read_text("utf-8")
+    assert "DECISION = None" in script
+
+
+def test_inspect_key_directory(tmp_path: Path) -> None:
+    """
+    分析の結果の印が, ディレクトリの中のファイルの変化でも変わることを
+    確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # サブディレクトリの中のファイルを足すと印が変わる
+    folder = tmp_path / "images" / "circle"
+    folder.mkdir(parents=True)
+    (folder / "a.png").write_bytes(b"a")
+    problem = example_problem("総菜の作る量")
+    problem["data"] = {"source": str(tmp_path / "images"),
+                       "loader": "image_folder"}
+    before = inspect_key(problem)
+    assert inspect_key(problem) == before
+    (folder / "b.png").write_bytes(b"bb")
+    assert inspect_key(problem) != before
+
+
 def test_unanswered_use() -> None:
     """
     機械学習を使うかに答えていない問題の設定は, 答えるよう知らせることを
@@ -560,6 +620,12 @@ def test_amount_finite() -> None:
         messages = [item["message"] for item in check(problem)
                     if item["level"] == "error"]
         assert any("有限の数" in message for message in messages)
+
+    # 手で書いた真偽値は, 要約に Python の名前で出さない
+    problem = example_problem("総菜の作る量")
+    problem["action"]["decision"]["under_cost"] = True
+    summary = " ".join(describe(problem))
+    assert "true (数でない値)" in summary and "True" not in summary
 
 
 def test_copy_rules(tmp_path: Path) -> None:
