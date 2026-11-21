@@ -3,6 +3,9 @@ from pathlib import Path
 from string import Template
 from typing import Callable, Optional
 
+from ml_quest.baseline_skeleton import (
+    reported_code, reported_sentence, reported_value
+)
 from ml_quest.data import describe_steps, entry_steps
 from ml_quest.handoff import describe
 from ml_quest.problem import active_value, get_value
@@ -501,7 +504,7 @@ def evaluate_test(
     rows.append({"class": "mean",
                  "iou": mean_iou(counts, trainer.foreground)})
     experiment.logger.info(f"テスト用の IoU (背景を除く平均): "
-                           f"{rows[-1]['iou']:.4f}")
+                           f"{rows[-1]['iou']:.4f}")$reported
 
     return rows
 
@@ -956,7 +959,7 @@ def evaluate_test(
         for x, y in loader:
             distances.append(chamfer(model(x), y, False))
     value = torch.cat(distances).mean().item()
-    experiment.logger.info(f"テスト用の Chamfer 距離: {value:.5f}")
+    experiment.logger.info(f"テスト用の Chamfer 距離: {value:.5f}")$reported
     rows = [{"answer": "model", "chamfer": value}]
 
     return rows
@@ -1282,6 +1285,14 @@ if __name__ == "__main__":
 
 # 正解の種類ごとの部分, 出力の形の既定, 書き出しの関数の名前と入力
 PARTS = {"mask": MASK_PART, "point_cloud": CLOUD_PART}
+
+# テスト用の評価で, 答えた今のやり方での指標の値と並べる呼び出し
+REPORTED_CALLS = {
+    "mask": ("\n\n    # 答えた今のやり方での指標の値と並べる (背景を除く平均)"
+             '\n    save_reported(experiment, "iou", rows[-1]["iou"])'),
+    "point_cloud": ("\n\n    # 答えた今のやり方での指標の値と並べる"
+                    '\n    save_reported(experiment, "chamfer", value)'),
+}
 EXPORTERS = {
     "mask": ("export_image_masks", "画像のディレクトリ, 領域のディレクトリ",
              ", classes=<値から名前の辞書>"),
@@ -1366,15 +1377,23 @@ def items_script(
         output=literal(active_value(problem, f"{PART}.output")),
         method=literal(active_value(problem, f"{PART}.method")),
     )
-    baseline = comment_lines(
-        f"比べる相手 ({active_value(problem, f'{PART}.baseline')}): ファイル"
-        "の組の受け持ちには, 今のやり方をデータで書く問いが無いので比べない. "
-        "比べるなら, 相手の出力で求めた値の行を evaluate_test の返す表に足"
-        "し, save_evaluation に baseline (相手の名前) を渡す (ML-Found の評価"
-        "の表の形)",
-        indent=""
-    )
-    body = Template(PARTS[kind]).substitute(baseline_comment=baseline)
+    # 比べる相手: 答えた今のやり方での指標の値があれば並べる部分, 無ければ
+    # 並べるための手の注記
+    reported = ""
+    if reported_value(problem) is not None:
+        baseline = reported_code(problem, literal)
+        reported = REPORTED_CALLS[kind]
+    else:
+        baseline = comment_lines(
+            f"比べる相手 ({active_value(problem, f'{PART}.baseline')}): "
+            "ファイルの組の受け持ちには, 今のやり方をデータで書く問いが無い"
+            "ので, 今のやり方の値とは並べない. 今のやり方での指標の値 "
+            "(evaluation.current) を答えて書き出し直すと, テスト用の値と"
+            "並べる",
+            indent=""
+        )
+    body = Template(PARTS[kind]).substitute(baseline_comment=baseline,
+                                            reported=reported)
     script = head + body + ITEMS_MAIN
 
     return script
@@ -1568,7 +1587,10 @@ def items_readme(
         "`samples/`" + (". 領域は値の名前の凡例付き" if kind == "mask" else
                         ". 点群は正規化を戻した元の座標でも見られる")
         + f"). {every}検証用の "
-        f"`{stages['training']['monitor']}` が最も良いモデルを選ぶ",
+        f"`{stages['training']['monitor']}` が最も良いモデルを選ぶ"
+        + (". " + reported_sentence(
+            problem, "iou" if kind == "mask" else "chamfer"
+        ) if reported_value(problem) is not None else ""),
         "4. **推論** (ML-Inference, ML-Provide): `model.spec` の場所に定義を"
         "置いて学習すると, `train.py` が学習の後に実験の中の "
         "`inference/` に推論の一式 (出力の形 `" + kind + "`) を作る. 1 件"

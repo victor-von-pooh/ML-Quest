@@ -25,6 +25,18 @@ PART = "ml.parts.0"
 COLUMN_TARGET = [USES_ML, {"id": f"{PART}.role", "equals": "predict"},
                  {"id": f"{PART}.target.kind", "equals": "column"}]
 
+# 骨組みが今のやり方をデータの上で作れない場合 (入れたデータが画像か文の
+# 列の予測と, 画像の領域と点群). 読み込みの名前は data.CONTENT_LOADERS と
+# 同じ (食い違いはテストで確かめる)
+REPORTED_BASELINE = [
+    USES_ML, {"id": f"{PART}.role", "equals": "predict"},
+    {"id": f"{PART}.evaluation.metric",
+     "in": ["accuracy", "mae", "rmse", "iou", "chamfer"]},
+    {"any": [{"id": "data.loader", "in": ["image_folder", "text_lines"]},
+             {"id": "data.options.text_column", "filled": True},
+             {"id": f"{PART}.target.kind", "in": ["mask", "point_cloud"]}]},
+]
+
 # 守る指標を書いた場合だけの問い
 HAS_GUARD = {"id": "issue.guard.name", "filled": True}
 
@@ -629,6 +641,14 @@ QUESTIONS: list[dict[str, Any]] = [
      "required": False, "when": USES_ML,
      "title": "その指標が良くなると, 課題の指標はどう良くなりますか",
      "help": "例: 誤差が小さいほど作る量の外れが減り, 廃棄と欠品の損が減る"},
+    {"id": f"{PART}.evaluation.current", "section": 8, "kind": "number",
+     "required": False, "when": REPORTED_BASELINE,
+     "title": "今のやり方で, この指標を数えると幾つですか (分かれば)",
+     "help": "画像と文, 画像の領域と点群では, 今のやり方をデータの上で作れ"
+             "ないので, この値を比べる相手にし, 学習したモデルのテスト用の値"
+             "と並べる (別のデータで数えた値との比べなので目安). 正解率と "
+             "IoU は 0 から 1 の割合で (85 % なら 0.85). 2 の「今の値」は課題"
+             "の指標 (円など) で, これとは別. 分からなければ空のまま"},
 
     # 9. 確かめ方
     {"id": "verification.method", "section": 9, "kind": "choice",

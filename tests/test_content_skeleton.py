@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -6,10 +7,11 @@ import pytest
 import yaml
 
 from ml_quest import (
-    answer, attach_data, check, example_problem, make_project, recipe_from,
-    record_project
+    answer, attach_data, check, example_problem, make_project, questions,
+    recipe_from, record_project
 )
 from ml_quest.data import CONTENT_LOADERS, content_kind
+from ml_quest.questions import REPORTED_BASELINE
 
 # 画像と文の 2 クラスの合成のデータの, クラスの名前と当たりのクラス
 CLASSES = {"image": ["circle", "square"], "text": ["good", "bad"]}
@@ -291,6 +293,7 @@ def test_content_project(tmp_path: Path, kind: str) -> None:
     assert "tuple(x_train.shape[1:])" in script
     assert "入れたデータが 1 件の中身で学ぶ画像か文" in script
     assert "答えて骨組みを書き出し直すと" not in script
+    assert "evaluation.current" in script and "save_reported" not in script
     config = yaml.safe_load(
         (project / "configs/default/train.yaml").read_text(encoding="utf-8")
     )
@@ -309,6 +312,58 @@ def test_content_project(tmp_path: Path, kind: str) -> None:
         assert 2 + 4 < size <= 2 + 4 + sum(len(w) for w in WORDS.values())
         # README の案内どおり, model_inputs の語彙の大きさがレシピの語彙の数
         assert inputs["inputs"][0]["vocabulary"] == size
+
+
+@pytest.mark.parametrize("kind", ["image", "text"])
+def test_content_reported(tmp_path: Path, kind: str) -> None:
+    """
+    画像と文で今のやり方での指標の値を問い, 答えれば骨組みがテスト用の値と
+    並べることを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+    kind: str
+        データの種類
+
+    Returns
+    ----------
+    None
+    """
+    # 画像と文で, 比べられる指標のときだけ問う (表の課題と loss は問わない)
+    key = "ml.parts.0.evaluation.current"
+    problem = content_problem(kind, tmp_path)
+    applies = {item["id"]: item["applies"] for item in questions(problem)}
+    assert applies[key] is True
+    loss = answer(problem, "ml.parts.0.evaluation.metric", "loss")
+    assert {item["id"]: item["applies"]
+            for item in questions(loss)}[key] is False
+    table = {item["id"]: item["applies"]
+             for item in questions(example_problem("総菜の作る量"))}
+    assert table[key] is False
+
+    # 割合の指標は 0 から 1 で, 負と 1 を超える値は誤り
+    for wrong in (85, -0.1):
+        found = check(answer(problem, key, wrong))
+        assert [item["id"] for item in found if item["level"] == "error"] == [
+            key
+        ]
+    problem = answer(problem, key, 0.75)
+    assert [f for f in check(problem) if f["level"] == "error"] == []
+
+    # 骨組み: テスト用の評価で並べ, README に目安と書く
+    project = tmp_path / "project"
+    make_project(problem, project)
+    script = (project / "train.py").read_text(encoding="utf-8")
+    compile(script, "train.py", "exec")
+    assert max(len(line) for line in script.splitlines()) <= 79
+    assert "BASELINE_VALUE = 0.75" in script
+    assert 'save_reported(experiment, "accuracy", accuracy.item())' in script
+    assert "save_evaluation" in script and "compare_baseline" not in script
+    readme = (project / "README.md").read_text(encoding="utf-8")
+    assert "今のやり方での `accuracy` の値 (0.75)" in readme
+    assert "別のデータで数えた値との比べで目安です" in readme
 
 
 @pytest.mark.parametrize("kind", ["image", "text"])
@@ -332,7 +387,8 @@ def test_content_training(tmp_path: Path, kind: str) -> None:
     # 書き出し, データセット, 形と語彙の数とクラスの数を合わせた定義
     for name in TRAINING:
         pytest.importorskip(name)
-    problem = content_problem(kind, tmp_path)
+    problem = answer(content_problem(kind, tmp_path),
+                     "ml.parts.0.evaluation.current", 0.5)
     project = tmp_path / "project"
     make_project(problem, project)
     inputs = export(problem, project, kind)
@@ -364,6 +420,15 @@ def test_content_training(tmp_path: Path, kind: str) -> None:
     assert info["check"]["matches"] is True, info
     log = (runs[0].parent / "train.log").read_text(encoding="utf-8")
     assert "1 件の" in log and "合う: True" in log
+
+    # 答えた今のやり方での指標の値と, テスト用の正解率を並べた表
+    table = json.loads((runs[0].parent / "evaluations" / "baseline_test.json")
+                       .read_text(encoding="utf-8"))
+    assert table["split"] == "test" and "目安" in table["description"]
+    row = table["rows"][0]
+    assert row["accuracy_baseline"] == 0.5
+    assert row["accuracy_diff"] == pytest.approx(row["accuracy"] - 0.5)
+    assert "別のデータで数えた値との比べで目安です" in log
 
 
 def test_content_loaders() -> None:
@@ -398,3 +463,21 @@ def test_content_loaders() -> None:
         if getattr(loader, "kind", None) in ("image", "text")
     }
     assert kinds == CONTENT_LOADERS
+
+
+def test_reported_loaders() -> None:
+    """
+    今のやり方での指標の値の問いが, 写して持つ画像と文の読み込みの名前と
+    同じ名前で要るかを決めることを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 問いの条件の読み込みの名前 (any の 1 つ目)
+    names = REPORTED_BASELINE[-1]["any"][0]["in"]
+    assert sorted(names) == sorted(CONTENT_LOADERS)

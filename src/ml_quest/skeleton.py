@@ -10,7 +10,8 @@ from typing import Any, Optional, Union
 import yaml
 
 from ml_quest.baseline_skeleton import (
-    EVALUATION_PREFIX, baseline_code, baseline_note, baseline_reason
+    EVALUATION_PREFIX, REPORTED_HINT, baseline_code, baseline_note,
+    baseline_reason, reported_code, reported_sentence, reported_value
 )
 from ml_quest.check import is_column_part, split_errors
 from ml_quest.data import (
@@ -133,7 +134,7 @@ def evaluate_test(
         pred = model(x).squeeze(-1) * scale + center
     error = pred - y
     value = $test_expression
-    experiment.logger.info(f"テスト用の$test_label: {value.item():,.4f}")
+    experiment.logger.info(f"テスト用の$test_label: {value.item():,.4f}")$reported
 $baseline
 '''
 
@@ -206,7 +207,7 @@ def evaluate_test(
     x, y = dataset.tensors("test")
     with torch.no_grad():
         accuracy = (model(x).argmax(dim=1) == y).float().mean()
-    experiment.logger.info(f"テスト用の正解率: {accuracy.item():.4f}")
+    experiment.logger.info(f"テスト用の正解率: {accuracy.item():.4f}")$reported
 $baseline
 '''
 
@@ -553,11 +554,21 @@ def training_script(
     inference = stages["inference"]
     kind = content_kind(stages)
     reason = baseline_reason(problem, stages, data_file)
+    reported = reported_value(problem) if kind is not None else None
+    call = ""
     if reason is None and data_file is not None:
         baseline = baseline_code(problem, stages, data_file, literal)
         compare = ("\n    # 今のやり方との比べ (推論の一式の後. 比べられなくても"
                    "止めない)\n    compare_baseline(trainer.model, dataset, "
                    "experiment, center, scale)\n")
+    elif reported is not None:
+        # 画像と文で, 答えた今のやり方での指標の値とテスト用の値を並べる
+        baseline = reported_code(problem, literal)
+        compare = ""
+        key = "accuracy" if task == "classification" else metric
+        value = "accuracy" if task == "classification" else "value"
+        call = ("\n    # 答えた今のやり方での指標の値と並べる\n    "
+                f'save_reported(experiment, "{key}", {value}.item())')
     else:
         baseline = baseline_note(problem, str(reason), comment_lines,
                                  retry=kind is None)
@@ -576,14 +587,16 @@ def training_script(
                    "classification" else "STEPS, Dataset, load_data, "
                    "load_dataset") if compare else "Dataset, load_dataset",
         found_names=("Experiment, Trainer, load_project_config, "
-                     "save_evaluation,\n    start_experiment" if compare
-                     else "Experiment, Trainer, load_project_config, "
-                     "start_experiment"),
+                     "save_evaluation,\n    start_experiment"
+                     if compare or call else "Experiment, Trainer, "
+                     "load_project_config, start_experiment"),
     )
 
     # タスクごとの step と評価
     if task == "classification":
-        body = Template(CLASSIFICATION_STEP).substitute(baseline=baseline)
+        body = Template(CLASSIFICATION_STEP).substitute(
+            baseline=baseline, reported=call
+        )
         scaling = "分類は番号のまま"
         scale_lines = "    center, scale = 0.0, 1.0"
         train_target, valid_target = "y_train", "y_valid"
@@ -593,7 +606,7 @@ def training_script(
         body = Template(REGRESSION_STEP).substitute(
             key=key, expression=expression, metric_label=label
             if key == metric else "二乗誤差", test_expression=test_expression,
-            test_label=label, baseline=baseline
+            test_label=label, baseline=baseline, reported=call
         )
         scaling = "目的の値は学習用の平均と標準偏差で標準化"
         scale_lines = ("    center, scale = y_train.mean().item(), "
@@ -804,13 +817,22 @@ def project_readme(
                if stages["model"]["outputs"] is None else "1")
     horizon = stages["inference"].get("horizon")
     reason = baseline_reason(problem, stages, data_file)
-    compare = (
-        "今のやり方との比べを, 検証用とテスト用の評価の表 "
-        f"(`evaluations/{EVALUATION_PREFIX}valid.json` と "
-        f"`{EVALUATION_PREFIX}test.json`. 元のデータの同じ行が分かる行だけで"
-        "求める) に書く" if reason is None else
-        f"今のやり方とは比べない ({reason} ため)"
-    )
+    if reason is None:
+        compare = (
+            "今のやり方との比べを, 検証用とテスト用の評価の表 "
+            f"(`evaluations/{EVALUATION_PREFIX}valid.json` と "
+            f"`{EVALUATION_PREFIX}test.json`. 元のデータの同じ行が分かる行"
+            "だけで求める) に書く"
+        )
+    elif kind is not None and reported_value(problem) is not None:
+        compare = reported_sentence(
+            problem, "accuracy" if data["task"] == "classification"
+            else stages["training"]["metric"]
+        )
+    elif kind is not None:
+        compare = f"今のやり方とは比べない ({reason} ため). {REPORTED_HINT}"
+    else:
+        compare = f"今のやり方とは比べない ({reason} ため)"
     lines += [
         "2. **モデルの作成** (ML-CreateArchitecture): 入力 1 つと出力 1 つの"
         f"モデルを組み, `models/model.yaml` に置く. {CONTENT_INPUTS[kind]}. "

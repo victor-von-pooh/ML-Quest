@@ -247,6 +247,21 @@ def test_items_project(tmp_path: Path, kind: str) -> None:
     # 見本: 検証用の数件を save_sample で
     assert "save_sample(" in script and "`samples/`" in readme
 
+    # 今のやり方での指標の値: 答えていなければ並べるための手の注記, 答え
+    # ればテスト用の評価で並べる
+    assert "save_reported" not in script and "evaluation.current" in script
+    metric = {"mask": "iou", "point_cloud": "chamfer"}[kind]
+    reported = answer(problem, "ml.parts.0.evaluation.current", 0.5)
+    make_project(reported, tmp_path / "reported")
+    script = (tmp_path / "reported" / "train.py").read_text(encoding="utf-8")
+    compile(script, "train.py", "exec")
+    assert max(len(line) for line in script.splitlines()) <= 79
+    assert "BASELINE_VALUE = 0.5" in script
+    assert f'save_reported(experiment, "{metric}",' in script
+    readme = (tmp_path / "reported" / "README.md").read_text("utf-8")
+    assert f"今のやり方での `{metric}` の値 (0.5)" in readme
+    assert "目安" in readme
+
 
 def test_items_refused() -> None:
     """
@@ -299,7 +314,10 @@ def test_items_with_data(tmp_path: Path) -> None:
     paths = write_datasets(tmp_path / "datasets")
     trainable = all(importlib.util.find_spec(name) for name in TRAINING)
     for kind, path in paths.items():
+        # 領域だけ今のやり方での指標の値を答える (テスト用の値と並べる)
         before = kind_problem(kind)
+        if kind == "mask":
+            before = answer(before, "ml.parts.0.evaluation.current", 0.25)
         problem = attach_data(before, str(path),
                               copy_to=str(tmp_path / "store"))
         assert problem["data"]["loader"] == "items"
@@ -322,6 +340,9 @@ def test_items_with_data(tmp_path: Path) -> None:
                 "train.py", "exec")
         readme = (project / "README.md").read_text(encoding="utf-8")
         assert "入れた版 2 のデータセット" in readme
+        assert ("答えた今のやり方での `iou` の値 (0.25)" in readme) == (
+            kind == "mask"
+        )
         if not trainable:
             continue
 
@@ -333,8 +354,14 @@ def test_items_with_data(tmp_path: Path) -> None:
         assert task["target"]["kind"] == kind
         assert task["output"] == {"mask": "region",
                                   "point_cloud": "shape"}[kind]
-        evaluations = list(runs[0].parent.glob("evaluations/*.json"))
-        assert len(evaluations) == 1
+        evaluations = sorted(path.name for path in runs[0].parent.glob(
+            "evaluations/*.json"
+        ))
+        assert evaluations == ({"mask": ["baseline_test.json",
+                                         "test_iou.json"],
+                                "point_cloud": ["test_chamfer.json"]}[kind])
+        if kind == "mask":
+            check_reported(runs[0].parent, "iou", 0.25)
         assert not (runs[0].parent / "inference").exists()
         assert not (runs[0].parent / "model_spec.yaml").exists()
         log = (runs[0].parent / "train.log").read_text(encoding="utf-8")
@@ -427,6 +454,34 @@ def test_items_newer_version(tmp_path: Path) -> None:
                                         encoding="utf-8")
     message = project_error(problem)
     assert message is not None and "版が True" in message
+
+
+def check_reported(run: Path, key: str, value: float) -> None:
+    """
+    答えた今のやり方での指標の値とテスト用の値を並べた評価の表を確かめる
+    関数
+
+    Parameters
+    ----------
+    run: Path
+        実験のディレクトリ
+    key: str
+        指標の名前
+    value: float
+        答えた値
+
+    Returns
+    ----------
+    None
+    """
+    # ML-Found の比べる相手の表の形 (1 行に指標, 相手, 差) と目安の説明
+    table = json.loads((run / "evaluations" / "baseline_test.json")
+                       .read_text(encoding="utf-8"))
+    assert table["split"] == "test" and table["baseline"] == "今のやり方"
+    assert "目安" in table["description"]
+    row = table["rows"][0]
+    assert row[f"{key}_baseline"] == value
+    assert row[f"{key}_diff"] == pytest.approx(row[key] - value)
 
 
 def check_bundle(project: Path, kind: str) -> None:

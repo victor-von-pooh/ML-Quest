@@ -324,11 +324,18 @@ def applies(problem: dict, question: dict) -> bool:
     needed: bool
         要るか (when の条件が無いか, 満たすか)
     """
-    # 条件の並びの全てで, 項目の値が等しいか, 並びに入るか, 答えたか
+    # 条件の並びの全てで, 項目の値が等しいか, 並びに入るか, 答えたか.
+    # any はその中のどれかを満たすか
     when = question.get("when") or []
     conditions = when if isinstance(when, list) else [when]
     needed = True
     for condition in conditions:
+        if "any" in condition:
+            needed = needed and any(
+                applies(problem, {"when": [item]})
+                for item in condition["any"]
+            )
+            continue
         value = get_value(problem, condition["id"])
         if "equals" in condition:
             needed = needed and value == condition["equals"]

@@ -448,6 +448,52 @@ def scores(
     return result
 '''
 
+# 今のやり方をデータの上で作れない骨組み (画像と文, 画像の領域と点群) で,
+# 答えた今のやり方での指標の値とテスト用の値を並べる部分
+REPORTED = '''
+
+# 比べる相手 (今のやり方). 今のやり方をデータの上で作れないので, 問題の設定
+# で答えた今のやり方での指標の値 (evaluation.current) と, テスト用の分割の
+# モデルの値を並べる. 別のデータで数えた値との比べで目安
+BASELINE_NAME = $name
+BASELINE_VALUE = $value
+REPORTED_TEXT = $text
+
+
+def save_reported(experiment: Experiment, key: str, value: float) -> None:
+    """
+    テスト用の分割のモデルの値を, 答えた今のやり方の値と並べて評価の表
+    (evaluations/${prefix}test.json) に書く関数
+
+    Parameters
+    ----------
+    experiment: Experiment
+        実験 (train.log と evaluations/ に書く)
+    key: str
+        指標の名前
+    value: float
+        テスト用の分割のモデルの値
+
+    Returns
+    ----------
+    None
+    """
+    # モデル, 今のやり方 (答えた値), 差 (モデル - 今のやり方)
+    row = {key: value, f"{key}_baseline": BASELINE_VALUE,
+           f"{key}_diff": value - BASELINE_VALUE}
+    save_evaluation(experiment, "${prefix}test", row, split="test",
+                    baseline=BASELINE_NAME, description=REPORTED_TEXT)
+    experiment.logger.info(
+        f"テスト用の {key}: モデル {value:.4f}, {BASELINE_NAME} (答えた値) "
+        f"{BASELINE_VALUE:.4f}. 別のデータで数えた値との比べで目安です"
+    )
+'''
+
+# 画像と文で, 今のやり方での指標の値を答えれば並べられることの文
+REPORTED_HINT = ("最良を選ぶ指標が accuracy, mae, rmse なら, 今のやり方での"
+                 "指標の値 (evaluation.current) を答えて書き出し直すと, テスト"
+                 "用の値と並べる")
+
 # 回帰と予測の指標 (名前, 式, 名前の文)
 METRIC_EXPRESSIONS = {
     "mae": ("error.abs().mean()", "平均絶対誤差"),
@@ -539,7 +585,8 @@ def baseline_note(
     comment_lines: Callable
         文を 1 行ずつのコメントにする関数 (skeleton.comment_lines)
     retry: bool = True
-        答えて書き出し直せば比べることも書くか (画像と文では False)
+        答えて書き出し直せば比べることを書くか (画像と文では False で,
+        代わりに今のやり方での指標の値を答えれば並べることを書く)
 
     Returns
     ----------
@@ -553,6 +600,8 @@ def baseline_note(
         text += (". 答えて骨組みを書き出し直すと, 検証用とテスト用で今のやり方"
                  "と比べた評価の表 (evaluations/"
                  f"{EVALUATION_PREFIX}<分割>.json) を書く")
+    else:
+        text += f". {REPORTED_HINT}"
     note = "\n" + comment_lines(text, indent="")
 
     return note
@@ -609,3 +658,86 @@ def baseline_code(
     )
 
     return code
+
+
+def reported_value(problem: dict) -> Optional[float]:
+    """
+    答えた今のやり方での指標の値を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    value: Optional[float]
+        値 (問いが要らないか, 答えていなければ None)
+    """
+    # 要る問いの数の答えだけ (確かめで数でない値は誤り)
+    value = active_value(problem, f"{PART}.evaluation.current")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        value = None
+    else:
+        value = float(value)
+
+    return value
+
+
+def reported_code(problem: dict, literal: Callable) -> str:
+    """
+    答えた今のやり方での指標の値とテスト用の値を並べる部分の学習の
+    スクリプトを作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 今のやり方での指標の値を答えたもの)
+    literal: Callable
+        文字を Python の式にする関数 (skeleton.literal)
+
+    Returns
+    ----------
+    code: str
+        定数と, 評価の表に書く関数
+    """
+    # 相手の名前, 答えた値, 表の説明
+    name = active_value(problem, f"{PART}.baseline") or DEFAULT_NAME
+    text = (f"今のやり方 ({name}) の値は問題の設定で答えた値 (evaluation."
+            "current) で, モデルの値はテスト用の分割で求めた. 別のデータで"
+            "数えた値との比べで目安です")
+    code = Template(REPORTED).substitute(
+        name=literal(str(name)),
+        value=python_value(reported_value(problem)),
+        text=literal(text), prefix=EVALUATION_PREFIX,
+    )
+
+    return code
+
+
+def reported_sentence(problem: dict, metric: str) -> str:
+    """
+    README の, 答えた今のやり方での指標の値と並べることの文を作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 今のやり方での指標の値を答えたもの)
+    metric: str
+        並べる指標の名前
+
+    Returns
+    ----------
+    sentence: str
+        文 (句点なし)
+    """
+    # 何と並べ, どこに書き, どれだけ確かか
+    value = reported_value(problem)
+    sentence = (
+        "今のやり方とは同じ件で比べず, 問題の設定で答えた今のやり方での "
+        f"`{metric}` の値 ({value:g}) と, テスト用の分割のモデルの値を評価の"
+        f"表 (`evaluations/{EVALUATION_PREFIX}test.json`) に並べる (別の"
+        "データで数えた値との比べで目安です. テスト用の分割が要る)"
+    )
+
+    return sentence

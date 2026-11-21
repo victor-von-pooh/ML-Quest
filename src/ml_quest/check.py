@@ -793,6 +793,9 @@ def check_evaluation(problem: dict) -> list[dict]:
             "(学習の記録の名前 valid/<名前> と, 曲線のファイルの名前にする"
             "ため)"
         ))
+    found += reported_range(
+        metric, active_value(problem, f"{PART}.evaluation.current")
+    )
     if metric and not get_value(problem, f"{PART}.evaluation.link"):
         found.append(finding(
             "warning", f"{PART}.evaluation.link",
@@ -814,6 +817,44 @@ def check_evaluation(problem: dict) -> list[dict]:
             "warning", "operation.stop",
             "止める条件が空です. 効かなかった場合に今のやり方へ戻す基準を"
             "決めておくと, 試しやすくなります"
+        ))
+
+    return found
+
+
+def reported_range(metric: Any, value: Any) -> list[dict]:
+    """
+    今のやり方での指標の値が, 指標の取りうる値かを確かめる関数
+
+    Parameters
+    ----------
+    metric: Any
+        最良を選ぶ指標
+    value: Any
+        今のやり方での指標の値 (evaluation.current. 答えていなければ None)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (数でない, 負, 割合の指標で 1 より大きい場合に error)
+    """
+    # 割合の指標 (正解率と IoU) は 0 から 1, 誤差は 0 以上
+    found: list[dict] = []
+    key = f"{PART}.evaluation.current"
+    if value is None:
+        return found
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or (
+        value != value or value in (float("inf"), float("-inf"))
+    ):
+        found.append(finding("error", key,
+                             "今のやり方での指標の値は数にしてください"))
+    elif value < 0:
+        found.append(finding("error", key,
+                             "今のやり方での指標の値が負です"))
+    elif metric in ("accuracy", "iou") and value > 1:
+        found.append(finding(
+            "error", key,
+            f"{metric} は 0 から 1 の割合で書いてください (85 % なら 0.85)"
         ))
 
     return found
