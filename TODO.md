@@ -13,6 +13,12 @@
 
 ## 優先度 低
 
+### データの場所の型を確かめる
+- 何を: `check` で `data.source` (と `data.origin`) が文字列かを確かめ, 違えば error (「データの場所は文字の場所で書いてください」など) にする. `inspect_key`, `inspect_data`, `open_errors`, `make_project`, `handoff` (`data_location` で `data.origin` を `Path` にする所), `recipe_from` (ファイルの組の `pair_dirs` で場所を `Path` にする所) は, その場合に Python の例外 (`TypeError`) で止まらずに確かめの error で返す
+- なぜ: 手で書いたファイルで場所が数などになると, 今は確かめに出ず, 分析と書き出しが英語の例外で止まり, 画面 (ML-Pathfinder) が自分で型を確かめて日本語の文にしているため
+- 終わりの条件: 場所が文字列でない問題の設定で, `check` に error があり, 分析と書き出しの関数が例外を投げない
+- つながり: ML-Pathfinder (詳しい画面と書き出しで, 場所の型を自分で確かめている)
+
 ### 後ろの段階のアプリに値を渡す
 - 何を: 受け渡し (`handoff`) の値のうち, 今は利用者が見て各段階の画面で選んでいるもの (モデルの作成の受け持ち, 骨組みの外の学習の監視する指標と向き) を, 後ろの段階のアプリがそのまま受け取れる形で返す
 - なぜ: 写す手間と写し間違いを無くすため. データの分析 (ML-Fathom), モデルの定義の保存先 (ML-CreateArchitecture), 推論 (ML-Provide) はつないである. 出力の大きさは ML-CreateArchitecture がデータセットから入れる
