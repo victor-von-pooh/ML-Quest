@@ -1,4 +1,5 @@
 import copy
+import importlib.util
 from pathlib import Path
 import re
 import shutil
@@ -1127,8 +1128,9 @@ def binary_message(
         message = (
             f"{DECISION_NAMES[kind]}意思決定は 2 クラスの分類にだけ使えます"
             f" (目的の列の値は {len(values)} 種類: "
-            f"{', '.join(values[:10])}). 目的の列を 2 つの値にまとめるか, "
-            "意思決定を見直してください"
+            f"{', '.join(values[:10])}). 目的の列を 2 つの値 (当たりと, それ"
+            "以外) にまとめた列に答え直すか, 意思決定を「意思決定しない (人"
+            "が予測を見て決める)」にしてください"
         )
 
     return message
@@ -1624,8 +1626,12 @@ def inspect_data(problem: dict) -> Optional[dict]:
             data, target=target if target in columns else None
         )
     except Exception as error:
+        # ML-EDA が無いだけなら, 入れれば消えることも
+        message = f"データを読めません: {error}"
+        if importlib.util.find_spec("ml_eda") is None:
+            message += ". ML-EDA を入れると, この直すところは消えます"
         result = {"overview": None, "suggestions": [], "findings": [
-            finding("error", "data.source", f"データを読めません: {error}")
+            finding("error", "data.source", message)
         ]}
         return result
 

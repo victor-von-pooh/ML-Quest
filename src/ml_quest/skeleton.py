@@ -11,12 +11,12 @@ import yaml
 from ml_quest.baseline_skeleton import (
     EVALUATION_PREFIX, baseline_code, baseline_note, baseline_reason
 )
-from ml_quest.check import is_column_part
+from ml_quest.check import is_column_part, split_errors
 from ml_quest.data import (
     ITEMS_KINDS, content_kind, copy_data, dataset_info, inspect_data,
     items_message
 )
-from ml_quest.handoff import describe, handoff
+from ml_quest.handoff import NO_ML, build_stages, describe, errors_text
 from ml_quest.items_skeleton import (
     ITEMS_LIBRARIES, dataset_place, items_config, items_name, items_readme,
     items_script
@@ -756,8 +756,10 @@ def project_error(problem: dict) -> Optional[str]:
     """
     骨組みを書き出せない理由を, make_project が出す誤りの文で返す関数
 
-    受け渡し, 書き出せる受け持ちと正解の種類か, 指標がその他でないか,
-    入れたデータセットが受け持ちに合うか, の順に確かめる
+    受け渡しの値を作れるか (骨組みを組めない確かめの error が無いか),
+    書き出せる受け持ちと正解の種類か, 指標がその他でないか, 入れたデータ
+    セットが受け持ちに合うか, の順に確かめる. 「それでも書き出す」と指定
+    すれば書き出せる error (open_errors) は含めない
 
     Parameters
     ----------
@@ -769,11 +771,18 @@ def project_error(problem: dict) -> Optional[str]:
     message: Optional[str]
         誤りの文 (書き出せるなら None. 書き出し先のファイルは見ない)
     """
-    # 受け渡し (渡せない理由は ValueError の文のまま)
+    # 受け渡しの値を作れるか (機械学習を使い, 骨組みを組めない確かめの
+    # error が無い. 組める error は open_errors で, 「それでも書き出す」と
+    # 指定すれば書き出せる). 渡せない理由は ValueError の文のまま
     message: Optional[str] = None
     try:
         upgraded = upgrade_problem(problem)
-        handoff(upgraded)
+        if get_value(upgraded, "ml.use") is not True:
+            raise ValueError(NO_ML)
+        blocking = split_errors(upgraded)[0]
+        if blocking:
+            raise ValueError(errors_text(blocking))
+        build_stages(upgraded)
     except ValueError as error:
         message = str(error)
         return message
@@ -800,27 +809,35 @@ def project_error(problem: dict) -> Optional[str]:
     return message
 
 
-def open_errors(problem: dict) -> list[dict]:
+def open_errors(
+    problem: dict, inspected: Optional[dict] = None
+) -> list[dict]:
     """
-    書き出しを止めずに残っている確かめの error を返す関数
+    「それでも書き出す」と指定すれば書き出せる確かめの error を返す関数
 
-    問題の設定の確かめ (check) の error は受け渡しで止まるので, 入れた
-    データの確かめ (inspect_data) の error だけ
+    問題の設定の確かめ (check) の, 骨組みを組める error と, 入れたデータの
+    確かめ (inspect_data の findings) の error
 
     Parameters
     ----------
     problem: dict
         問題の設定 (版 1 も)
+    inspected: Optional[dict] = None
+        同じ問題の設定の inspect_data の結果 (画面が覚えておいたもの. 省く
+        と求める. データを入れていなければ None のまま)
 
     Returns
     ----------
     errors: list[dict]
-        check と同じ形の確かめの並び (データを入れていなければ空)
+        check と同じ形の確かめの並び (問題の設定の確かめの後に, 入れた
+        データの確かめ)
     """
-    # 入れたデータの確かめのうち, 重さが error のもの
-    found = inspect_data(problem)
-    errors = [item for item in (found or {}).get("findings", [])
-              if item["level"] == "error"]
+    # 問題の設定の確かめの組める error と, 入れたデータの確かめの error
+    found = inspected if inspected is not None else inspect_data(problem)
+    errors = split_errors(problem)[1] + [
+        item for item in (found or {}).get("findings", [])
+        if item["level"] == "error"
+    ]
 
     return errors
 
@@ -842,9 +859,9 @@ def errors_message(errors: list[dict]) -> str:
     # 初めの 3 つと残りの数
     shown = " / ".join(item["message"] for item in errors[:3])
     rest = f" (ほか {len(errors) - 3} 件)" if len(errors) > 3 else ""
-    message = (f"入れたデータの確かめに直すところが残っています: {shown}"
-               f"{rest}. 直してから書き出すか, 残ったまま書き出すなら "
-               "accept_errors=True を渡してください (README に一覧を残す)")
+    message = (f"確かめに直すところが残っています: {shown}{rest}. 直して"
+               "から書き出すか, 残ったまま書き出すなら accept_errors=True "
+               "を渡してください (README に一覧を残す)")
 
     return message
 
@@ -867,11 +884,12 @@ def errors_section(errors: list[dict]) -> str:
     if not errors:
         return ""
     lines = ["", "## 書き出した時点で残っていた直すところ", "",
-             "入れたデータの確かめで直すところ (error) が残ったまま, 確かめて"
-             "書き出した. 学習が失敗したり結果がおかしかったりしたときは, まず"
-             "これを見る. 直したら, 問題の設定で確かめ直して書き出し直す.",
-             ""]
-    lines += [f"- `{item['id']}`: {item['message']}" for item in errors]
+             "問題の設定と入れたデータの確かめで直すところ (error) が残った"
+             "まま, 「それでも書き出す」と指定して書き出した. 学習が失敗したり"
+             "結果がおかしかったりしたときは, まずこれを見る. 直したら書き出し"
+             "直す.", ""]
+    lines += [f"- `{item['id']}`: {' '.join(str(item['message']).split())}"
+              for item in errors]
     text = "\n".join(lines) + "\n"
 
     return text
@@ -993,7 +1011,7 @@ def origin_file(origin: Union[str, Path], path: Path) -> str:
 def make_project(
     problem: dict, path: Union[str, Path], name: Optional[str] = None,
     overwrite: bool = False, origin: Optional[Union[str, Path]] = None,
-    accept_errors: bool = False
+    accept_errors: bool = False, inspected: Optional[dict] = None
 ) -> list[str]:
     """
     問題の設定から, ML-Found のプロジェクトの骨組みを書き出す関数
@@ -1013,8 +1031,10 @@ def make_project(
         origin に絶対パスで残す (省略すると, 渡した問題の設定の origin を
         そのまま残す)
     accept_errors: bool = False
-        入れたデータの確かめの error (open_errors) が残ったまま書き出すか
-        (書き出すなら README に一覧を残す)
+        「それでも書き出す」. 書き出せる確かめの error (open_errors) が
+        残ったまま書き出すか (書き出すなら README に一覧を残す)
+    inspected: Optional[dict] = None
+        同じ問題の設定の inspect_data の結果 (省くと求める)
 
     Returns
     ----------
@@ -1025,8 +1045,8 @@ def make_project(
     ----------
     ValueError
         渡せない問題の設定の場合, 書き出せない受け持ちか指標がその他の
-        場合, 入れたデータセットが受け持ちに合わない場合, 入れたデータの
-        確かめに error が残り accept_errors でない場合, 上書きしない既に
+        場合, 入れたデータセットが受け持ちに合わない場合, 確かめの error
+        (open_errors) が残り accept_errors でない場合, 上書きしない既に
         あるファイルがある場合と, 元の場所が書き出す写しそのものの場合
     """
     # 書き出せるか (project_error と同じ決まり). 受け渡しの値 (版 1 は先に
@@ -1038,15 +1058,15 @@ def make_project(
     if error is not None:
         raise ValueError(error)
 
-    # 入れたデータの確かめの error は, 確かめたときだけ残ったまま書き出す
-    errors = open_errors(problem)
+    # 書き出せる確かめの error は, 「それでも書き出す」のときだけ残ったまま
+    errors = open_errors(problem, inspected)
     if errors and not accept_errors:
         raise ValueError(errors_message(errors))
     problem = upgrade_problem(problem)
     if "project" in problem:
         problem = {key: value for key, value in problem.items()
                    if key != "project"}
-    stages = handoff(problem)
+    stages = build_stages(problem)
     path = Path(path)
     if origin is not None:
         problem = {**problem, "origin": origin_file(origin, path)}

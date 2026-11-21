@@ -15,6 +15,19 @@ from ml_quest.questions import (
 # その他の指標の名前 (学習の記録の名前と曲線のファイルの名前)
 METRIC_NAME = re.compile(r"[A-Za-z0-9_.@-]+")
 
+# 骨組みを組める error の項目の場所 (頭が合えば). 課題, 分解, 決めることの
+# 文, 損得と制約, 確かめ方, 運用, 受け持ちの文の答えは, 受け渡しの値の形と
+# 学習のスクリプトの組み立てに使わないので, 「それでも書き出す」と指定すれ
+# ば書き出せる. 損得と制約は推論の一式の既定値になるので, 直さないと学習の
+# 後の一式づくりで止まりうる
+EXPORTABLE_ERRORS = (
+    "issue.", "decomposition", "action.who", "action.when", "action.what",
+    "action.basis", "action.decision", "verification.", "operation.",
+    "ml.reason", "ml.constraints", f"{PART}.what", f"{PART}.item",
+    f"{PART}.baseline", f"{PART}.consumer", f"{PART}.downstream",
+    f"{PART}.evaluation.link"
+)
+
 # 列の予測の出力の形
 COLUMN_OUTPUTS = ["class", "value", "distribution"]
 
@@ -832,6 +845,37 @@ def check(problem: dict) -> list[dict]:
              for item in found if item["level"] == level]
 
     return found
+
+
+def split_errors(problem: dict) -> tuple[list[dict], list[dict]]:
+    """
+    確かめの error を, 骨組みを組めないものと組めるものに分ける関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+
+    Returns
+    ----------
+    blocking: list[dict]
+        骨組みを組めない error (受け渡しの値の形か, 学習のスクリプトの組み
+        立てに使う答えの誤り. 版, 形の崩れ, 受け持ちの数の誤りは全て)
+    exportable: list[dict]
+        骨組みを組める error (EXPORTABLE_ERRORS の項目の場所)
+    """
+    # 版と形の誤りがあれば, 他の確かめをしていないので全てを組めないものに
+    errors = [item for item in check(problem) if item["level"] == "error"]
+    if version_message(problem, "この問題の設定"):
+        return errors, []
+    upgraded = upgrade_problem(problem)
+    if check_v1(upgraded) + check_parts(upgraded) + check_shape(upgraded):
+        return errors, []
+    blocking = [item for item in errors
+                if not str(item["id"]).startswith(EXPORTABLE_ERRORS)]
+    exportable = [item for item in errors if item not in blocking]
+
+    return blocking, exportable
 
 
 def is_column_part(problem: dict) -> bool:

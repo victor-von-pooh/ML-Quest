@@ -11,6 +11,9 @@ from ml_quest.questions import (
 )
 from ml_quest.requirements import required_features
 
+# 機械学習を使わない問題の設定を渡せない理由の文
+NO_ML = "機械学習を使わない問題の設定は, 後ろの段階に渡すものがありません"
+
 # 方策の守りの項目 (ML-Found の make_guards と safety_key に渡す答え)
 POLICY_KEYS = ["action_limits", "stop", "fallback", "fallback_action",
                "safety_key", "approver"]
@@ -106,15 +109,53 @@ def handoff(problem: dict) -> dict:
     # 渡せる問題の設定か (版 1 は先に版 2 へ移行)
     problem = upgrade_problem(problem)
     if get_value(problem, "ml.use") is not True:
-        raise ValueError("機械学習を使わない問題の設定は, 後ろの段階に渡す"
-                         "ものがありません")
+        raise ValueError(NO_ML)
     errors = [item for item in check(problem) if item["level"] == "error"]
     if errors:
-        raise ValueError(
-            "問題の設定に直すところがあります: "
-            + " / ".join(item["message"] for item in errors[:3])
-        )
+        raise ValueError(errors_text(errors))
+    stages = build_stages(problem)
 
+    return stages
+
+
+def errors_text(errors: list[dict]) -> str:
+    """
+    問題の設定の確かめの error で渡せない理由の文を作る関数
+
+    Parameters
+    ----------
+    errors: list[dict]
+        確かめの error の並び (空でない)
+
+    Returns
+    ----------
+    message: str
+        誤りの文 (初めの 3 つ)
+    """
+    # 初めの 3 つの文
+    message = ("問題の設定に直すところがあります: "
+               + " / ".join(item["message"] for item in errors[:3]))
+
+    return message
+
+
+def build_stages(problem: dict) -> dict:
+    """
+    確かめずに, 後ろの段階ごとの値を作る関数
+
+    handoff と, 「それでも書き出す」と指定した骨組みの書き出しが使う
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 機械学習を使い, 骨組みを組めない error が無い
+        もの)
+
+    Returns
+    ----------
+    stages: dict
+        handoff と同じ形の値
+    """
     # 受け持ちの答えと, 最良を選ぶ指標 (その他は名前と向き)
     value = active_value
     part = part_of(problem)

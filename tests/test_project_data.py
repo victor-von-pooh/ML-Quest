@@ -9,8 +9,8 @@ import yaml
 from ml_quest import (
     answer, apply_recipe, attach_data, check, example_problem, get_value,
     handoff, inspect_data, load_problem, make_project, open_errors,
-    problem_origin, prune_copies, recipe_from, record_project,
-    resolve_choice, save_problem
+    problem_origin, project_error, prune_copies, recipe_from,
+    record_project, resolve_choice, save_problem
 )
 
 
@@ -321,6 +321,57 @@ def test_make_project_open_errors(tmp_path: Path) -> None:
     assert "\n## " not in section
     for item in errors:
         assert f"- `{item['id']}`: {item['message']}" in section
+
+
+def test_make_project_check_errors(tmp_path: Path) -> None:
+    """
+    問題の設定の確かめの error のうち, 骨組みを組めるもの (確かめ方, 損得
+    など) は「それでも書き出す」で書き出せ, 組めないもの (目的の列など) は
+    止まることと, 覚えておいた分析の結果を渡せることを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 組める error: 受け渡しは止まり, 書き出しは指定すれば通る
+    problem = answer(example_problem("総菜の作る量"),
+                     "verification.success", None)
+    with pytest.raises(ValueError, match="直すところ"):
+        handoff(problem)
+    assert project_error(problem) is None
+    errors = open_errors(problem)
+    assert [item["id"] for item in errors] == ["verification.success"]
+    with pytest.raises(ValueError, match="accept_errors"):
+        make_project(problem, tmp_path / "blocked")
+    make_project(problem, tmp_path / "accepted", accept_errors=True)
+    readme = (tmp_path / "accepted" / "README.md").read_text("utf-8")
+    assert "- `verification.success`: " in readme
+
+    # 覚えておいた分析の結果 (改行のある文も 1 行の箇条に)
+    inspected = {"findings": [
+        {"level": "error", "id": "data.source", "message": "読めない\n行"},
+        {"level": "warning", "id": "data.source", "message": "少ない"},
+    ]}
+    assert [item["message"] for item in open_errors(problem, inspected)] == [
+        errors[0]["message"], "読めない\n行"
+    ]
+    make_project(problem, tmp_path / "given", accept_errors=True,
+                 inspected=inspected)
+    readme = (tmp_path / "given" / "README.md").read_text("utf-8")
+    assert "- `data.source`: 読めない 行\n" in readme
+    assert "少ない" not in readme
+
+    # 組めない error: 指定しても止まる
+    broken = answer(problem, "ml.parts.0.target.column", None)
+    assert "直すところ" in str(project_error(broken))
+    with pytest.raises(ValueError, match="直すところ"):
+        make_project(broken, tmp_path / "broken", accept_errors=True)
+    assert not (tmp_path / "broken").exists()
 
 
 def test_copy_rules(tmp_path: Path) -> None:
