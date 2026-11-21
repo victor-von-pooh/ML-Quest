@@ -7,10 +7,13 @@ import pytest
 import yaml
 
 from ml_quest import (
-    answer, apply_recipe, attach_data, check, example_problem, get_value,
-    handoff, inspect_data, load_problem, make_project, problem_origin,
-    prune_copies, recipe_from, record_project, resolve_choice, save_problem
+    QUESTIONS, answer, apply_recipe, attach_data, check, describe,
+    example_problem, get_value, handoff, inspect_data, load_problem,
+    make_project, open_errors, problem_origin, project_error, prune_copies,
+    recipe_from, record_project, resolve_choice, save_problem
 )
+from ml_quest.check import is_exportable
+from ml_quest.data import inspect_key
 
 
 def daily_csv(tmp_path: Path) -> Path:
@@ -278,6 +281,351 @@ def test_make_project_data_checks(tmp_path: Path) -> None:
         (tmp_path / "fresh" / "data" / "sozai.csv").resolve()
     )
     assert copied["data"]["origin"] == get_value(problem, "data.source")
+
+
+def test_make_project_open_errors(tmp_path: Path) -> None:
+    """
+    入れたデータの確かめに error が残ると, 確かめ (accept_errors) 無しでは
+    書き出さず, 確かめて書き出すと README に一覧を残すことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 直すところが無ければ, 今のまま書き出し, README に節を書かない
+    pytest.importorskip("ml_eda")
+    path = daily_csv(tmp_path)
+    problem = attach_data(example_problem("総菜の作る量"), path)
+    assert open_errors(problem) == []
+    make_project(problem, tmp_path / "clean")
+    readme = (tmp_path / "clean" / "README.md").read_text("utf-8")
+    assert "残っていた直すところ" not in readme
+
+    # 入れた後に消えたデータは, 問題の設定の確かめ (check) では分からず,
+    # 入れたデータの確かめの error
+    path.unlink()
+    errors = open_errors(problem)
+    assert errors and all(item["level"] == "error" for item in errors)
+    assert not [item for item in check(problem) if item["level"] == "error"]
+    with pytest.raises(ValueError, match="accept_errors"):
+        make_project(problem, tmp_path / "blocked")
+    assert not (tmp_path / "blocked").exists()
+
+    # 確かめて書き出すと, README の最後の節に一覧
+    make_project(problem, tmp_path / "accepted", accept_errors=True)
+    readme = (tmp_path / "accepted" / "README.md").read_text("utf-8")
+    section = readme.split("## 書き出した時点で残っていた直すところ")[1]
+    assert "\n## " not in section
+    for item in errors:
+        assert f"- `{item['id']}`: {item['message']}" in section
+
+
+def test_make_project_check_errors(tmp_path: Path) -> None:
+    """
+    問題の設定の確かめの error のうち, 骨組みを組めるもの (確かめ方, 損得
+    など) は「それでも書き出す」で書き出せ, 組めないもの (目的の列など) は
+    止まることと, 覚えておいた分析の結果を渡せることを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 組める error: 受け渡しは止まり, 書き出しは指定すれば通る
+    problem = answer(example_problem("総菜の作る量"),
+                     "verification.success", None)
+    with pytest.raises(ValueError, match="直すところ"):
+        handoff(problem)
+    assert project_error(problem) is None
+    errors = open_errors(problem)
+    assert [item["id"] for item in errors] == ["verification.success"]
+    with pytest.raises(ValueError, match="accept_errors"):
+        make_project(problem, tmp_path / "blocked")
+    make_project(problem, tmp_path / "accepted", accept_errors=True)
+    readme = (tmp_path / "accepted" / "README.md").read_text("utf-8")
+    assert "- `verification.success`: " in readme
+
+    # 覚えておいた分析の結果 (改行のある文も 1 行の箇条に)
+    inspected = {"key": inspect_key(problem), "findings": [
+        {"level": "error", "id": "data.source", "message": "読めない\n行"},
+        {"level": "warning", "id": "data.source", "message": "少ない"},
+    ]}
+    assert [item["message"] for item in open_errors(problem, inspected)] == [
+        errors[0]["message"], "読めない\n行"
+    ]
+    make_project(problem, tmp_path / "given", accept_errors=True,
+                 inspected=inspected)
+    readme = (tmp_path / "given" / "README.md").read_text("utf-8")
+    assert "- `data.source`: 読めない 行\n" in readme
+    assert "少ない" not in readme
+    assert "推論の段階 (ML-Provide) で問題の設定につなげない" in readme
+
+    # 古いか別の問題の設定の結果と, 形の崩れた結果は使わず求め直す
+    for stale in ({**inspected, "key": "old"}, [1],
+                  {"key": inspect_key(problem), "findings": "x"}):
+        assert open_errors(problem, stale) == errors
+
+    # 組めない error: 指定しても止まる
+    broken = answer(problem, "ml.parts.0.target.column", None)
+    assert "直すところ" in str(project_error(broken))
+    with pytest.raises(ValueError, match="直すところ"):
+        make_project(broken, tmp_path / "broken", accept_errors=True)
+    assert not (tmp_path / "broken").exists()
+
+
+# 問いと確かめの項目の場所ごとの, 骨組みを組める error か (新しい問いや
+# 確かめの場所は, ここに足さないとテストが落ちる)
+EXPORTABLE_IDS = {
+    "issue.owner", "issue.pain", "issue.current", "issue.kpi.name",
+    "issue.kpi.unit", "issue.kpi.current", "issue.kpi.target",
+    "issue.kpi.better", "issue.guard.name", "issue.guard.unit",
+    "issue.guard.better", "issue.guard.line", "issue.guard.measure",
+    "decomposition", "action.who", "action.when", "action.what",
+    "action.decision", "action.basis", "ml.constraints",
+    "ml.parts.0.what", "ml.parts.0.item", "ml.parts.0.baseline",
+    "ml.parts.0.consumer", "ml.parts.0.downstream",
+    "ml.parts.0.evaluation.link", "verification.method",
+    "verification.backtest", "verification.trial", "verification.success",
+    "operation.review", "operation.approver", "operation.stop",
+    "operation.remeasure",
+}
+BLOCKING_IDS = {
+    "format_version", "ml.parts", "ml.use", "ml.reason", "ml.gpu",
+    "ml.parts.0.role", "ml.parts.0.unit", "ml.parts.0.output",
+    "ml.parts.0.target.source", "ml.parts.0.target.process.name",
+    "ml.parts.0.target.process.settings", "ml.parts.0.target.kind",
+    "ml.parts.0.target.column", "ml.parts.0.method", "ml.parts.0.task",
+    "ml.parts.0.positive", "ml.parts.0.group_column",
+    "ml.parts.0.split_time_column", "ml.parts.0.time_column",
+    "ml.parts.0.series_by", "ml.parts.0.available_lag",
+    "ml.parts.0.horizon", "ml.parts.0.autonomous", "ml.parts.0.ros2",
+    "ml.parts.0.collect", "ml.parts.0.simulator",
+    "ml.parts.0.evaluation.metric", "ml.parts.0.evaluation.name",
+    "ml.parts.0.evaluation.better", "ml.parts.0.policy.action_limits",
+    "ml.parts.0.policy.stop", "ml.parts.0.policy.fallback",
+    "ml.parts.0.policy.fallback_action", "ml.parts.0.policy.safety_key",
+    "ml.parts.0.policy.approver", "information.columns",
+    "information.known", "information.unknown", "information.forbidden",
+    "data.source", "data.missing", "action.current",
+}
+
+
+def test_exportable_ids() -> None:
+    """
+    全ての問いの項目の場所が, 骨組みを組める error か組めない error かの
+    どちらかに決まっていることを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 問いの場所は全て, 2 つの組のどちらか 1 つにある
+    ids = {question["id"] for question in QUESTIONS}
+    assert not ids - EXPORTABLE_IDS - BLOCKING_IDS, (
+        ids - EXPORTABLE_IDS - BLOCKING_IDS
+    )
+    assert not EXPORTABLE_IDS & BLOCKING_IDS
+    for key in EXPORTABLE_IDS:
+        assert is_exportable(key), key
+    for key in BLOCKING_IDS:
+        assert not is_exportable(key), key
+
+    # 頭の文字だけでは合わせない
+    assert not is_exportable("action.decisions")
+    assert not is_exportable("issues")
+
+
+# 骨組みを組める error の種類ごとの, 問題の設定の直し方 (量を決める見本)
+EXPORTABLE_CASES = {
+    "verification": [("verification.success", None)],
+    "issue": [("issue.kpi.target", 1500000)],
+    "decision_true": [("action.decision",
+                       {"type": "quantity", "under_cost": True,
+                        "over_cost": 150})],
+    "decision_negative": [("action.decision",
+                           {"type": "quantity", "under_cost": -1,
+                            "over_cost": 150})],
+    "decision_select": [("action.decision",
+                         {"type": "select", "value": 100, "cost": 10,
+                          "effect": 0.3})],
+}
+
+
+@pytest.mark.parametrize("case", sorted(EXPORTABLE_CASES))
+def test_exportable_script(tmp_path: Path, case: str) -> None:
+    """
+    骨組みを組める error の種類ごとに, 「それでも書き出す」で書いた
+    train.py の定数が Python の値として読め, 損得と制約の error では
+    意思決定の既定値を付けないことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+    case: str
+        EXPORTABLE_CASES の名前
+
+    Returns
+    ----------
+    None
+    """
+    # 手で書いた値も含めて直接入れ, 組める error だけが残る
+    problem = example_problem("総菜の作る量")
+    for key, value in EXPORTABLE_CASES[case]:
+        if key == "action.decision":
+            problem["action"]["decision"] = value
+        else:
+            problem = answer(problem, key, value)
+    errors = [item for item in check(problem) if item["level"] == "error"]
+    assert errors and all(is_exportable(item["id"]) for item in errors)
+    assert project_error(problem) is None
+    make_project(problem, tmp_path / "project", accept_errors=True)
+
+    # 頭の大文字の定数は全て Python の値として読める (JSON の true など
+    # の名前が残らない)
+    script = (tmp_path / "project" / "train.py").read_text("utf-8")
+    tree = ast.parse(script)
+    constants = {
+        node.targets[0].id: node.value for node in tree.body
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0],
+                                                       ast.Name)
+        and node.targets[0].id.isupper()
+    }
+    for name in ("PROBLEM_NAME", "PREDICT", "DECISION", "CONCLUSION"):
+        ast.literal_eval(constants[name])
+    dropped = case.startswith("decision")
+    assert (ast.literal_eval(constants["DECISION"]) is None) == dropped
+    assert ("既定値は付けずに推論の一式" in script) == dropped
+    readme = (tmp_path / "project" / "README.md").read_text("utf-8")
+    assert ("意思決定の既定値を付けずに" in readme) == dropped
+
+    # データの分析の段階のレシピの下書きは止めず, 知らせに
+    start = recipe_from(problem)
+    assert any("直すところが残っています" in note for note in start["notes"])
+    with pytest.raises(ValueError):
+        handoff(problem)
+
+
+def test_data_decision_error(tmp_path: Path) -> None:
+    """
+    入れたデータの確かめにだけ損得と制約の error が残ると, 意思決定の既定値
+    を付けず, README がデータの確かめの直すところとして書くことを確かめる
+    関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 問題の設定の確かめには error が無く, 受け渡しの値は作れる
+    problem = example_problem("総菜の作る量")
+    handoff(problem)
+    inspected = {"key": inspect_key(problem), "findings": [
+        {"level": "error", "id": "action.decision",
+         "message": "2 クラスの分類にだけ使えます"},
+    ]}
+    make_project(problem, tmp_path / "project", accept_errors=True,
+                 inspected=inspected)
+    readme = (tmp_path / "project" / "README.md").read_text("utf-8")
+    assert "推論の段階に渡す値を作るときには確かめない" in readme
+    assert "作れないため" not in readme
+    assert "意思決定の既定値は付けない (損得と制約に直すところが" in readme
+    assert "意思決定の既定値は問題の設定の損得と制約" not in readme
+    script = (tmp_path / "project" / "train.py").read_text("utf-8")
+    assert "DECISION = None" in script
+
+
+def test_inspect_key_directory(tmp_path: Path) -> None:
+    """
+    分析の結果の印が, ディレクトリの中のファイルの変化でも変わることを
+    確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # サブディレクトリの中のファイルを足すと印が変わる
+    folder = tmp_path / "images" / "circle"
+    folder.mkdir(parents=True)
+    (folder / "a.png").write_bytes(b"a")
+    problem = example_problem("総菜の作る量")
+    problem["data"] = {"source": str(tmp_path / "images"),
+                       "loader": "image_folder"}
+    before = inspect_key(problem)
+    assert inspect_key(problem) == before
+    (folder / "b.png").write_bytes(b"bb")
+    assert inspect_key(problem) != before
+
+
+def test_unanswered_use() -> None:
+    """
+    機械学習を使うかに答えていない問題の設定は, 答えるよう知らせることを
+    確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 答えていないときと, 使わないと答えたとき
+    problem = answer(example_problem("総菜の作る量"), "ml.use", None)
+    assert "「機械学習を使いますか」に答えてください" in str(
+        project_error(problem)
+    )
+    problem = answer(problem, "ml.use", False)
+    assert "機械学習を使わない" in str(project_error(problem))
+
+
+def test_amount_finite() -> None:
+    """
+    損得の値の非数と無限大を誤りにすることを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 手で書いた非数と無限大
+    for value in (float("nan"), float("inf")):
+        problem = example_problem("総菜の作る量")
+        problem["action"]["decision"]["under_cost"] = value
+        messages = [item["message"] for item in check(problem)
+                    if item["level"] == "error"]
+        assert any("有限の数" in message for message in messages)
+
+    # 手で書いた真偽値は, 要約に Python の名前で出さない
+    problem = example_problem("総菜の作る量")
+    problem["action"]["decision"]["under_cost"] = True
+    summary = " ".join(describe(problem))
+    assert "true (数でない値)" in summary and "True" not in summary
 
 
 def test_copy_rules(tmp_path: Path) -> None:

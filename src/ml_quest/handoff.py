@@ -1,7 +1,9 @@
 from pathlib import PurePath
 from typing import Any, Optional
 
-from ml_quest.check import check, is_column_part, is_items_part
+from ml_quest.check import (
+    check, is_column_part, is_items_part, split_errors
+)
 from ml_quest.problem import (
     DECISION_NAMES, DECISION_OPTIONS, FIELD_NAMES, OPTION_NAMES,
     active_value, data_location, get_value, upgrade_problem
@@ -10,6 +12,9 @@ from ml_quest.questions import (
     CONSUMERS, FALLBACKS, METRICS, PART, ROLES, TASKS
 )
 from ml_quest.requirements import required_features
+
+# 機械学習を使わないと答えた問題の設定を渡せない理由の文
+NO_ML = "機械学習を使わない問題の設定は, 後ろの段階に渡すものがありません"
 
 # 方策の守りの項目 (ML-Found の make_guards と safety_key に渡す答え)
 POLICY_KEYS = ["action_limits", "stop", "fallback", "fallback_action",
@@ -106,15 +111,116 @@ def handoff(problem: dict) -> dict:
     # 渡せる問題の設定か (版 1 は先に版 2 へ移行)
     problem = upgrade_problem(problem)
     if get_value(problem, "ml.use") is not True:
-        raise ValueError("機械学習を使わない問題の設定は, 後ろの段階に渡す"
-                         "ものがありません")
+        raise ValueError(no_ml_message(problem))
     errors = [item for item in check(problem) if item["level"] == "error"]
     if errors:
-        raise ValueError(
-            "問題の設定に直すところがあります: "
-            + " / ".join(item["message"] for item in errors[:3])
-        )
+        raise ValueError(errors_text(errors))
+    stages = build_stages(problem)
 
+    return stages
+
+
+def no_ml_message(problem: dict) -> str:
+    """
+    機械学習を使わないか, 使うかに答えていない問題の設定を渡せない理由の文
+    を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. ml.use が true でないもの)
+
+    Returns
+    ----------
+    message: str
+        誤りの文 (答えていなければ, 答えるよう知らせる)
+    """
+    # 答えていないか, 使わないと答えたか
+    message = (NO_ML if get_value(problem, "ml.use") is False
+               else "「機械学習を使いますか」に答えてください")
+
+    return message
+
+
+def export_stages(
+    problem: dict, found: Optional[list[dict]] = None
+) -> tuple[dict, list[dict]]:
+    """
+    骨組みを組めない error が無ければ, 確かめを除いた後ろの段階ごとの値と,
+    残っている組める error を返す関数
+
+    骨組みの書き出しと, データの分析の段階のレシピの下書きが使う (推論の
+    段階に渡す値は handoff で, 全ての error で止まる)
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+    found: Optional[list[dict]] = None
+        同じ問題の設定の check の結果 (省くと求める)
+
+    Returns
+    ----------
+    stages: dict
+        handoff と同じ形の値
+    exportable: list[dict]
+        骨組みを組める確かめの error (無ければ空)
+
+    Raises
+    ----------
+    ValueError
+        機械学習を使わない場合と, 骨組みを組めない error がある場合
+    """
+    # 組めない error で止め, 組める error は返す
+    problem = upgrade_problem(problem)
+    if get_value(problem, "ml.use") is not True:
+        raise ValueError(no_ml_message(problem))
+    blocking, exportable = split_errors(problem, found)
+    if blocking:
+        raise ValueError(errors_text(blocking))
+    stages = build_stages(problem)
+
+    return stages, exportable
+
+
+def errors_text(errors: list[dict]) -> str:
+    """
+    問題の設定の確かめの error で渡せない理由の文を作る関数
+
+    Parameters
+    ----------
+    errors: list[dict]
+        確かめの error の並び (空でない)
+
+    Returns
+    ----------
+    message: str
+        誤りの文 (初めの 3 つ)
+    """
+    # 初めの 3 つの文
+    message = ("問題の設定に直すところがあります: "
+               + " / ".join(item["message"] for item in errors[:3]))
+
+    return message
+
+
+def build_stages(problem: dict) -> dict:
+    """
+    確かめずに, 後ろの段階ごとの値を作る関数
+
+    handoff と, 「それでも書き出す」と指定した骨組みの書き出しが使う
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 機械学習を使い, 骨組みを組めない error が無い
+        もの)
+
+    Returns
+    ----------
+    stages: dict
+        handoff と同じ形の値
+    """
     # 受け持ちの答えと, 最良を選ぶ指標 (その他は名前と向き)
     value = active_value
     part = part_of(problem)
@@ -647,8 +753,10 @@ def number_text(value: Any) -> str:
     text: str
         文
     """
-    # 整数は桁区切り, 小数は丸め
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    # 整数は桁区切り, 小数は丸め. 手で書いた真偽値と空は, 数でないと分かる文
+    if isinstance(value, bool) or value is None:
+        text = f"{yaml_name(value)} (数でない値)"
+    elif not isinstance(value, (int, float)):
         text = str(value)
     elif isinstance(value, int):
         text = f"{value:,}"
@@ -656,6 +764,26 @@ def number_text(value: Any) -> str:
         text = f"{value:,.4g}"
 
     return text
+
+
+def yaml_name(value: Any) -> str:
+    """
+    真偽値と空を, 問題の設定のファイルでの書き方にする関数
+
+    Parameters
+    ----------
+    value: Any
+        True, False か None
+
+    Returns
+    ----------
+    name: str
+        true, false か null
+    """
+    # YAML の名前 (Python の True と None を文に出さない)
+    name = {True: "true", False: "false"}.get(value, "null")
+
+    return name
 
 
 def decision_text(decision: dict) -> str:

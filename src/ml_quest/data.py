@@ -1,4 +1,7 @@
 import copy
+import hashlib
+import importlib.util
+import json
 from pathlib import Path
 import re
 import shutil
@@ -51,6 +54,10 @@ ITEMS_VERSIONS = (2, 3)
 
 # 1 件の中身で学ぶデータの, ML-EDA の読み込みの名前と種類 (ML-EDA の kind)
 CONTENT_LOADERS = {"image_folder": "image", "text_lines": "text"}
+
+# inspect_key がディレクトリの中で大きさと時刻を見るファイルの数の上限
+# (超えた分は数だけを見る)
+STAT_FILES = 10000
 
 
 
@@ -1127,8 +1134,9 @@ def binary_message(
         message = (
             f"{DECISION_NAMES[kind]}意思決定は 2 クラスの分類にだけ使えます"
             f" (目的の列の値は {len(values)} 種類: "
-            f"{', '.join(values[:10])}). 目的の列を 2 つの値にまとめるか, "
-            "意思決定を見直してください"
+            f"{', '.join(values[:10])}). 目的の列を 2 つの値 (当たりと, それ"
+            "以外) にまとめた列に答え直すか, 意思決定を「意思決定しない (人"
+            "が予測を見て決める)」にしてください"
         )
 
     return message
@@ -1592,6 +1600,102 @@ def inspect_data(problem: dict) -> Optional[dict]:
     """
     入れたデータを読み直して分析し, 概要, 答えの候補, 確かめを返す関数
 
+    結果の key に, どの問題の設定とデータから求めたかの印 (inspect_key)
+    を入れる (覚えておいた結果が今のものかを確かめられるように)
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+
+    Returns
+    ----------
+    result: Optional[dict]
+        analyze_data の結果に key を足したもの (データを入れていなければ
+        None)
+    """
+    # 分析と, 求めた元の印
+    result = analyze_data(problem)
+    if result is not None:
+        result["key"] = inspect_key(problem)
+
+    return result
+
+
+def inspect_key(problem: dict) -> str:
+    """
+    inspect_data の結果が, どの問題の設定とデータから求めたかの印を返す
+    関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+
+    Returns
+    ----------
+    key: str
+        答え (作った時刻と直した時刻, プロジェクトの記録, 元の場所を除く),
+        データの場所と大きさと更新の時刻 (data_stat), ML-EDA が入っている
+        か, から作った 16 進の文字
+    """
+    # 分析に関わらない値を除いた答えと, データのファイルの値
+    upgraded = upgrade_problem(problem)
+    answers = {key: value for key, value in upgraded.items()
+               if key not in ("created_at", "updated_at", "project",
+                              "origin")}
+    source = data_location(upgraded)
+    stat = data_stat(Path(source)) if source else None
+    eda = importlib.util.find_spec("ml_eda") is not None
+    text = json.dumps([answers, source, stat, eda], sort_keys=True,
+                      default=str, ensure_ascii=False)
+    key = hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    return key
+
+
+def data_stat(location: Path) -> Optional[list]:
+    """
+    データのファイルかディレクトリの, 大きさと更新の時刻の印を返す関数
+
+    Parameters
+    ----------
+    location: Path
+        データの場所
+
+    Returns
+    ----------
+    stat: Optional[list]
+        ファイルなら [大きさ, 更新の時刻 (ナノ秒)]. ディレクトリなら中の
+        ファイルの [相対パス, 大きさ, 更新の時刻] の並び (名前の順で
+        STAT_FILES まで. 超えた分は数だけ). 無ければ None
+    """
+    # ファイルはその値, ディレクトリは中のファイルの値 (多ければ数だけ)
+    if not location.exists():
+        return None
+    if not location.is_dir():
+        found = location.stat()
+        stat: list = [found.st_size, found.st_mtime_ns]
+        return stat
+    stat = []
+    count = 0
+    for path in sorted(location.rglob("*")):
+        if not path.is_file():
+            continue
+        count += 1
+        if count <= STAT_FILES:
+            found = path.stat()
+            stat.append([path.relative_to(location).as_posix(),
+                         found.st_size, found.st_mtime_ns])
+    stat.append(count)
+
+    return stat
+
+
+def analyze_data(problem: dict) -> Optional[dict]:
+    """
+    入れたデータを読み直して分析し, 概要, 答えの候補, 確かめを返す関数
+
     Parameters
     ----------
     problem: dict
@@ -1624,8 +1728,12 @@ def inspect_data(problem: dict) -> Optional[dict]:
             data, target=target if target in columns else None
         )
     except Exception as error:
+        # ML-EDA が無いだけなら, 入れれば消えることも
+        message = f"データを読めません: {error}"
+        if importlib.util.find_spec("ml_eda") is None:
+            message += ". ML-EDA を入れると, この直すところは消えます"
         result = {"overview": None, "suggestions": [], "findings": [
-            finding("error", "data.source", f"データを読めません: {error}")
+            finding("error", "data.source", message)
         ]}
         return result
 
