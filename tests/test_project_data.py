@@ -13,7 +13,8 @@ from ml_quest import (
     recipe_from, record_project, resolve_choice, save_problem
 )
 from ml_quest.check import is_exportable
-from ml_quest.data import inspect_key
+from ml_quest import data as data_module
+from ml_quest.data import data_stat, inspect_key
 
 
 def daily_csv(tmp_path: Path) -> Path:
@@ -578,6 +579,166 @@ def test_inspect_key_directory(tmp_path: Path) -> None:
     assert inspect_key(problem) == before
     (folder / "b.png").write_bytes(b"bb")
     assert inspect_key(problem) != before
+
+
+class VanishingEntry:
+    def __init__(self, entry: os.DirEntry, vanish: bool):
+        # 元の項目と, 大きさを見る前に消えた扱いにするかを保存
+        self.entry = entry
+        self.vanish = vanish
+        self.name = entry.name
+        self.path = entry.path
+
+    def is_dir(self, follow_symlinks: bool = True) -> bool:
+        """
+        ディレクトリかを返す関数
+
+        Parameters
+        ----------
+        follow_symlinks: bool = True
+            リンクをたどるか
+
+        Returns
+        ----------
+        found: bool
+            ディレクトリか
+        """
+        # 元の項目のまま
+        found = self.entry.is_dir(follow_symlinks=follow_symlinks)
+
+        return found
+
+    def is_file(self) -> bool:
+        """
+        ファイルかを返す関数
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        ----------
+        found: bool
+            ファイルか
+        """
+        # 元の項目のまま
+        found = self.entry.is_file()
+
+        return found
+
+    def stat(self) -> os.stat_result:
+        """
+        大きさと時刻を返す関数 (消えた扱いなら誤り). 呼んだ数を数える
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        ----------
+        found: os.stat_result
+            元の項目の値
+        """
+        # 呼んだ数と, 消えた扱いの誤り
+        STAT_CALLS.append(self.name)
+        if self.vanish:
+            raise FileNotFoundError(self.path)
+        found = self.entry.stat()
+
+        return found
+
+
+class VanishingScan:
+    def __init__(self, folder: str):
+        # 元の項目を, gone で始まる名前は消えた扱いにして保存
+        with SCANDIR(folder) as found:
+            self.entries = [VanishingEntry(entry,
+                                           entry.name.startswith("gone"))
+                            for entry in found]
+
+    def __enter__(self) -> list:
+        """
+        項目の並びを返す関数
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        ----------
+        entries: list
+            項目の並び
+        """
+        # 保存した並び
+        entries = self.entries
+
+        return entries
+
+    def __exit__(self, *args: object) -> None:
+        """
+        何もしない関数
+
+        Parameters
+        ----------
+        *args: object
+            誤りの情報 (使わない)
+
+        Returns
+        ----------
+        None
+        """
+        # 閉じるものは無し
+        return None
+
+
+# VanishingEntry.stat を呼んだ項目の名前と, 置き換える前の os.scandir
+STAT_CALLS: list = []
+SCANDIR = os.scandir
+
+
+def test_data_stat_vanished_and_many(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    データの印で, たどった後に消えたファイルを飛ばし, 上限を超えるファイル
+    は大きさと時刻を見ずに打ち切ることを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+    monkeypatch: pytest.MonkeyPatch
+        os.scandir と上限の置き換え
+
+    Returns
+    ----------
+    None
+    """
+    # たどった後に消えたファイルは飛ばし, 無い場所は None
+    folder = tmp_path / "images"
+    (folder / "sub").mkdir(parents=True)
+    for name in ("a.png", "gone.png", "sub/b.png"):
+        (folder / name).write_bytes(b"x")
+    monkeypatch.setattr(data_module.os, "scandir", VanishingScan)
+    stat = data_stat(folder)
+    assert [row[0] for row in stat[:-1]] == ["a.png", "sub/b.png"]
+    assert stat[-1] == 2
+    assert data_stat(tmp_path / "nothing") is None
+
+    # 上限を超えたら, 上限 + 1 件で大きさと時刻を見るのを止める
+    for index in range(20):
+        (folder / f"f{index:02d}.png").write_bytes(b"x")
+    monkeypatch.setattr(data_module, "STAT_FILES", 3)
+    STAT_CALLS.clear()
+    stat = data_stat(folder)
+    assert [row[0] for row in stat[:-1]] == ["a.png", "f00.png", "f01.png"]
+    assert stat[-1] == 4
+    assert STAT_CALLS == ["a.png", "f00.png", "f01.png", "f02.png"]
+    problem = example_problem("総菜の作る量")
+    problem["data"] = {"source": str(folder), "loader": "image_folder"}
+    before = inspect_key(problem)
+    (folder / "f10.png").write_bytes(b"xx")
+    assert inspect_key(problem) == before
 
 
 def test_unanswered_use() -> None:
