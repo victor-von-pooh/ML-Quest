@@ -425,6 +425,8 @@ def test_make_project(tmp_path: Path) -> None:
         stages = handoff(problem)
         assert config["trainer"]["monitor"] == stages["training"]["monitor"]
         assert config["trainer"]["mode"] == stages["training"]["mode"]
+        # 列の予測は定義が無いと止まるので, 仮のモデルの目印を書かない
+        assert "placeholder" not in config["model"]
         assert load_problem(project) == yaml.safe_load(
             yaml.safe_dump(problem, allow_unicode=True)
         )
