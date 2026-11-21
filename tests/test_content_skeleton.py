@@ -1,4 +1,5 @@
 import ast
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -532,6 +533,19 @@ def test_content_training(tmp_path: Path, kind: str) -> None:
     log = (runs[0].parent / "train.log").read_text(encoding="utf-8")
     assert "1 件の" in log and "合う: True" in log
 
+    # 定義は ML-Found が写し (記録の sha256 と同じ中身), 一式も写しから
+    copied = (runs[0].parent / "model_spec.yaml").read_bytes()
+    source = yaml.safe_load((runs[0].parent / "source.yaml")
+                            .read_text(encoding="utf-8"))
+    assert source["model_spec"]["status"] == "copied"
+    assert source["model_spec"]["sha256"] == hashlib.sha256(
+        copied
+    ).hexdigest()
+    assert yaml.safe_load((runs[0] / "model_spec.yaml").read_bytes()) == (
+        yaml.safe_load(copied)
+    )
+    assert "写せなかった" not in log
+
     # 答えた今のやり方での指標の値と, テスト用の正解率を並べた表
     table = json.loads((runs[0].parent / "evaluations" / "baseline_test.json")
                        .read_text(encoding="utf-8"))
@@ -543,6 +557,68 @@ def test_content_training(tmp_path: Path, kind: str) -> None:
                                "accuracy_baseline": "higher",
                                "accuracy_diff": "higher"}
     assert "別のデータで数えた値との比べで目安です" in log
+    if kind == "image":
+        check_spec_weights(project, place, inputs)
+
+
+def check_spec_weights(project: Path, place: Path, inputs: dict) -> None:
+    """
+    外部の重みを相対パスで持つ定義でも ML-Found の写しから組み立てて学習
+    でき, 誤りのある定義は実験の出力先を作る前に止まることを確かめる関数
+
+    Parameters
+    ----------
+    project: Path
+        学習した画像のプロジェクト
+    place: Path
+        モデルの定義の場所
+    inputs: dict
+        ML-EDA の model_inputs の結果
+
+    Returns
+    ----------
+    None
+    """
+    # 定義の隣の重み (相対パス) を畳み込みに読む版 2 の定義
+    import torch
+    from torch import nn
+
+    spec = model_spec("image", inputs, 0)
+    channels = spec["inputs"]["image"]["shape"][1]
+    (place.parent / "weights").mkdir()
+    torch.save(nn.Conv2d(channels, 8, 3, padding=1).state_dict(),
+               place.parent / "weights" / "base.pt")
+    spec["format_version"] = 2
+    spec["nodes"]["conv"]["weights"] = {"path": "weights/base.pt"}
+    place.write_text(yaml.safe_dump(spec, allow_unicode=True),
+                     encoding="utf-8")
+    before = set((project / "outputs").glob("*/*/*"))
+    done = subprocess.run(
+        [sys.executable, "train.py", "trainer.epochs=1",
+         "experiment.device=cpu"],
+        cwd=project, capture_output=True, text=True, timeout=600
+    )
+
+    # 学習, 評価の表, 推論の一式まで済む
+    assert done.returncode == 0, done.stderr[-2000:]
+    runs = set((project / "outputs").glob("*/*/*")) - before
+    assert len(runs) == 1
+    run = runs.pop()
+    assert (run / "evaluations" / "baseline_test.json").is_file()
+    assert (run / "inference" / "inference.yaml").is_file()
+
+    # 誤りのある定義は, 実験の出力先を作る前に止まる
+    spec["nodes"]["conv"]["repeat"] = 2
+    place.write_text(yaml.safe_dump(spec, allow_unicode=True),
+                     encoding="utf-8")
+    before = set((project / "outputs").glob("*/*/*"))
+    done = subprocess.run(
+        [sys.executable, "train.py", "experiment.device=cpu"],
+        cwd=project, capture_output=True, text=True, timeout=600
+    )
+    assert done.returncode == 1
+    assert "定義に誤りがあります" in done.stdout and "repeat" in done.stdout
+    assert set((project / "outputs").glob("*/*/*")) == before
 
 
 def test_content_loaders() -> None:

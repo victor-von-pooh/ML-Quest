@@ -39,6 +39,7 @@ HEAD = '''"""
 from pathlib import Path
 import shutil
 import sys
+from typing import Optional
 $pandas
 import torch
 from torch import nn
@@ -49,7 +50,7 @@ from ml_found import (
     $found_names
 )
 from ml_inference import make_bundle
-from ml_modelcontrol import build_model
+from ml_modelcontrol import build_model, validate
 
 # このプロジェクトのディレクトリ (ML-Found のプロジェクト)
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -215,6 +216,69 @@ $baseline
 # 学習の流れ (データセット, モデル, 学習, 評価, 推論の一式)
 MAIN = '''
 
+def spec_errors(spec: Path) -> list[str]:
+    """
+    ML-ModelControl の定義の誤りを, 実験の出力先を作る前に確かめる関数
+
+    Parameters
+    ----------
+    spec: Path
+        config の model.spec の, プロジェクトの定義
+
+    Returns
+    ----------
+    errors: list[str]
+        誤りの文 (無ければ空. 外部の重みのファイルが読めるかは, 組み立てる
+        ときに分かる)
+    """
+    # 読めない定義も誤りとして返る (例外にならない)
+    errors = [issue["message"] for issue in validate(spec)
+              if issue["severity"] == "error"]
+
+    return errors
+
+
+def model_file(
+    spec: Path, experiment: Experiment
+) -> tuple[Path, Optional[Path]]:
+    """
+    モデルを組み立てる ML-ModelControl の定義のファイルと, 定義の中の相対
+    の参照 (外部の重みなど) の起点を返す関数
+
+    Parameters
+    ----------
+    spec: Path
+        config の model.spec の, プロジェクトの定義
+    experiment: Experiment
+        実験 (ML-Found が実験に写した定義の場所 model_spec_path と, 写した
+        元の定義 model_spec_source)
+
+    Returns
+    ----------
+    path: Path
+        ML-Found が実験に写した定義 (学習を始めたときの定義で, source.yaml
+        の sha256 と同じ中身). 写せなければプロジェクトの定義
+    base_dir: Optional[Path]
+        相対の参照の起点 (写しなら元の定義のディレクトリ. プロジェクトの
+        定義なら None で, 定義のディレクトリ)
+    """
+    # 写しの相対の参照は元の定義の場所から (写しの隣には重みが無い)
+    if experiment.model_spec_path is not None:
+        path = Path(experiment.model_spec_path)
+        base_dir = Path(experiment.model_spec_source).parent
+        return path, base_dir
+
+    # 写しが無ければ理由を知らせて, プロジェクトの定義
+    experiment.logger.warning(
+        "モデルの定義を実験に写せなかったので, プロジェクトの定義から"
+        "組み立てます (理由は source.yaml の model_spec の status)"
+    )
+    path = spec
+    base_dir = None
+
+    return path, base_dir
+
+
 def main() -> None:
     """
     データセットとモデルの定義から学習し, 推論の一式を作る関数
@@ -239,6 +303,12 @@ def main() -> None:
         print(f"{spec} がありません. README の「次にすること」の 2 で, "
               "モデルの定義を置いてください")
         sys.exit(1)
+    errors = spec_errors(spec)
+    if errors:
+        print(f"{spec} の定義に誤りがあります. README の「次にすること」の "
+              "2 で直してください")
+        print("\\n".join(f"- {message}" for message in errors))
+        sys.exit(1)
     dataset = load_dataset(path)
     if "valid" not in dataset.frames:
         print("データセットに検証用の分割がありません. 最も良いモデルを選ぶ"
@@ -258,20 +328,20 @@ $scale_lines
         batch_size=cfg.data.batch_size
     )
 
-    # モデルの定義からの組み立てと学習
-    model = build_model(spec, seed=cfg.experiment.seed)
+    # 実験に写したモデルの定義からの組み立てと学習
     experiment = start_experiment(cfg, diff, str(PROJECT_DIR))
+    spec, base_dir = model_file(spec, experiment)
+    model = build_model(spec, seed=cfg.experiment.seed, base_dir=base_dir)
     experiment.logger.info(
         f"問題: {PROBLEM_NAME}. ${predict_log}$inputs_log"
     )
     trainer = Trainer(model, experiment, Step(scale))
     trainer.fit(train_loader, valid_loader)
 
-    # 実験だけで見直せるように, 問題の設定とモデルの定義の写し (元の問題の
-    # 設定の場所 origin も残る)
+    # 実験だけで見直せるように, 問題の設定の写し (元の問題の設定の場所
+    # origin も残る. モデルの定義は ML-Found が start_experiment で写す)
     run_dir = Path(experiment.run_dir)
     shutil.copy(PROJECT_DIR / "problem.yaml", run_dir / "problem.yaml")
-    shutil.copy(spec, run_dir / "model_spec.yaml")
 
     # 結果の表示とテスト用の評価
     best_epoch = trainer.checkpoint.best_epoch
@@ -280,7 +350,7 @@ $scale_lines
     print(f"ベストモデルのエポック: {best_epoch}")
     print(f"ベストの {cfg.trainer.monitor}: {best_value}")
     evaluate_test(trainer.model, dataset, experiment, center, scale)
-
+$compare
     # 実験の中に推論の一式 (問題の設定の意思決定と結論を既定値に)
     info = make_bundle(
         run_dir / "inference", spec, path, run_dir,
@@ -300,7 +370,7 @@ $scale_lines
             f"{check['value']:,.4f} (記録 {check['recorded']}, 合う: "
             f"{check['matches']})"
         )
-$compare
+
 
 if __name__ == "__main__":
     main()
@@ -559,8 +629,9 @@ def training_script(
     call = ""
     if reason is None and data_file is not None:
         baseline = baseline_code(problem, stages, data_file, literal)
-        compare = ("\n    # 今のやり方との比べ (推論の一式の後. 比べられなくても"
-                   "止めない)\n    compare_baseline(trainer.model, dataset, "
+        compare = ("\n    # 今のやり方との比べ (一式づくりで止まっても表が残る"
+                   "ように, 推論の一式の前.\n    # 比べられなくても止めない)"
+                   "\n    compare_baseline(trainer.model, dataset, "
                    "experiment, center, scale)\n")
     elif reported is not None:
         # 画像と文の, 答えた今のやり方での指標の値とテスト用の値の並べ (テスト
