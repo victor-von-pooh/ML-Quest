@@ -557,6 +557,69 @@ def test_content_training(tmp_path: Path, kind: str) -> None:
                                "accuracy_baseline": "higher",
                                "accuracy_diff": "higher"}
     assert "別のデータで数えた値との比べで目安です" in log
+    if kind == "image":
+        check_spec_weights(project, place, inputs)
+
+
+def check_spec_weights(project: Path, place: Path, inputs: dict) -> None:
+    """
+    外部の重みを相対パスで持つ定義でも ML-Found の写しから組み立てて学習
+    でき, 誤りのある定義は実験の出力先を作る前に止まることを確かめる関数
+
+    Parameters
+    ----------
+    project: Path
+        学習した画像のプロジェクト
+    place: Path
+        モデルの定義の場所
+    inputs: dict
+        ML-EDA の model_inputs の結果
+
+    Returns
+    ----------
+    None
+    """
+    # 定義の隣の重み (相対パス) を畳み込みに読む版 2 の定義
+    import torch
+    from torch import nn
+
+    spec = model_spec("image", inputs, 0)
+    channels = spec["inputs"]["image"]["shape"][1]
+    (place.parent / "weights").mkdir()
+    torch.save(nn.Conv2d(channels, 8, 3, padding=1).state_dict(),
+               place.parent / "weights" / "base.pt")
+    spec["format_version"] = 2
+    spec["nodes"]["conv"]["weights"] = {"path": "weights/base.pt"}
+    place.write_text(yaml.safe_dump(spec, allow_unicode=True),
+                     encoding="utf-8")
+    before = set((project / "outputs").glob("*/*/*"))
+    done = subprocess.run(
+        [sys.executable, "train.py", "trainer.epochs=1",
+         "experiment.device=cpu"],
+        cwd=project, capture_output=True, text=True, timeout=600
+    )
+
+    # 学習は済む (一式づくりは ML-Inference が写しの場所から重みを辿るので
+    # 止まりうる. ML-Quest の DESIGN.md の 11 節)
+    runs = set((project / "outputs").glob("*/*/*")) - before
+    assert len(runs) == 1
+    assert (runs.pop() / "evaluations" / "baseline_test.json").is_file()
+    assert done.returncode == 0 or "make_bundle" in done.stderr, (
+        done.stderr[-2000:]
+    )
+
+    # 誤りのある定義は, 実験の出力先を作る前に止まる
+    spec["nodes"]["conv"]["repeat"] = 2
+    place.write_text(yaml.safe_dump(spec, allow_unicode=True),
+                     encoding="utf-8")
+    before = set((project / "outputs").glob("*/*/*"))
+    done = subprocess.run(
+        [sys.executable, "train.py", "experiment.device=cpu"],
+        cwd=project, capture_output=True, text=True, timeout=600
+    )
+    assert done.returncode == 1
+    assert "定義に誤りがあります" in done.stdout and "repeat" in done.stdout
+    assert set((project / "outputs").glob("*/*/*")) == before
 
 
 def test_content_loaders() -> None:
