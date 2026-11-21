@@ -1156,6 +1156,9 @@ def test_baseline_in_skeleton(tmp_path: Path) -> None:
     script = (project / "train.py").read_text("utf-8")
     assert "TODO" not in script and "compare_baseline" not in script
     assert "今のやり方をデータで書いていない" in script
+    assert '"model_spec.yaml"' not in script
+    assert "spec, base_dir = model_file(spec, experiment)" in script
+    assert "spec_errors(spec)" in script
     readme = (project / "README.md").read_text("utf-8")
     assert "今のやり方とは比べない" in readme and "TODO" not in readme
     assert "model_inputs" in readme
@@ -1179,6 +1182,10 @@ def test_baseline_in_skeleton(tmp_path: Path) -> None:
         assert {"current_values", "matched_current",
                 "compare_baseline"} <= names
         assert "compare_baseline(trainer.model" in script
+        # 一式づくりで止まっても比べの表が残るように, 一式の前に比べる
+        assert script.index("compare_baseline(trainer.model") < (
+            script.index("info = make_bundle(")
+        )
         assert 'DATA_FILE = PROJECT_DIR / "data/sozai.csv"' in script
         readme = (tmp_path / name / "README.md").read_text("utf-8")
         assert "evaluations/baseline_valid.json" in readme

@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -197,6 +198,10 @@ def test_items_project(tmp_path: Path, kind: str) -> None:
     written = make_project(problem, project)
     assert "train.py" in written
     script = (project / "train.py").read_text(encoding="utf-8")
+
+    # 定義は写さず, ML-Found の写しから組み立てる
+    assert '"model_spec.yaml"' not in script
+    assert "experiment.model_spec_path" in script
     compile(script, "train.py", "exec")
     assert "load_items" in script and "task_from_dataset" in script
     assert "PlaceholderModel" in script and "TODO" in script
@@ -548,7 +553,36 @@ def check_bundle(project: Path, kind: str) -> None:
         "masks" if kind == "mask" else "clouds"
     ))
     assert (frame["status"] == "ok").all()
-    assert (runs[0].parent / "model_spec.yaml").is_file()
+
+    # 定義は ML-Found が写し (記録の sha256 と同じ中身), 一式も写しから
+    run = runs[0].parent
+    copied = (run / "model_spec.yaml").read_bytes()
+    source = yaml.safe_load((run / "source.yaml").read_text("utf-8"))
+    assert source["model_spec"]["status"] == "copied"
+    assert source["model_spec"]["sha256"] == hashlib.sha256(
+        copied
+    ).hexdigest()
+    assert yaml.safe_load((runs[0] / "model_spec.yaml").read_bytes()) == (
+        yaml.safe_load(copied)
+    )
+
+    # 写せない定義 (リンク) は, プロジェクトの定義から組み立てて知らせる
+    if kind != "mask":
+        return
+    (models / "real.yaml").write_bytes((models / "model.yaml").read_bytes())
+    (models / "model.yaml").unlink()
+    (models / "model.yaml").symlink_to("real.yaml")
+    shutil.rmtree(run)
+    train(project)
+    runs = sorted((project / "outputs").glob("*/*/*/inference"))
+    assert len(runs) == 1
+    source = yaml.safe_load((runs[0].parent / "source.yaml")
+                            .read_text("utf-8"))
+    assert source["model_spec"]["status"] == "link"
+    assert not (runs[0].parent / "model_spec.yaml").exists()
+    log = (runs[0].parent / "train.log").read_text(encoding="utf-8")
+    assert "モデルの定義を実験に写せなかったので" in log
+    assert (runs[0] / "model_spec.yaml").is_file()
 
 
 def check_samples(run: Path, kind: str) -> None:
@@ -716,3 +750,69 @@ def test_mask_background(tmp_path: Path) -> None:
     assert foreground == [1]
     assert unnamed == [2]
     assert lookup.tolist() == [0, 1]
+
+
+def test_items_spec_weights(tmp_path: Path) -> None:
+    """
+    外部の重みを相対パスで持つ定義でも, ML-Found の写しから組み立てて
+    学習でき, 誤りのある定義は実験の出力先を作る前に止まることを確かめる
+    関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 領域の骨組みと, 定義の隣の重み (相対パス)
+    for name in (*TRAINING, *BUNDLING):
+        pytest.importorskip(name)
+    import torch
+    from torch import nn
+
+    paths = write_datasets(tmp_path / "datasets")
+    problem = attach_data(kind_problem("mask"), str(paths["mask"]),
+                          copy_to=str(tmp_path / "store"))
+    project = tmp_path / "project"
+    make_project(problem, project)
+    models = project / "models"
+    (models / "weights").mkdir(parents=True)
+    torch.save(nn.Conv2d(3, 16, 3, padding=1).state_dict(),
+               models / "weights" / "base.pt")
+    spec = dict(SPECS["mask"], format_version=2)
+    spec["nodes"] = dict(spec["nodes"])
+    spec["nodes"]["conv1"] = dict(spec["nodes"]["conv1"],
+                                  weights={"path": "weights/base.pt"})
+    (models / "model.yaml").write_text(
+        yaml.safe_dump(spec, allow_unicode=True), encoding="utf-8"
+    )
+
+    # 写しから組み立てて学習し, 推論の一式まで作る (重みは元の定義の場所
+    # から辿る)
+    done = subprocess.run(
+        [sys.executable, "train.py", "trainer.epochs=2",
+         "experiment.device=cpu"],
+        cwd=project, capture_output=True, text=True, timeout=600
+    )
+    assert done.returncode == 0, done.stderr[-2000:]
+    runs = sorted((project / "outputs").glob("*/*/*/train.log"))
+    assert len(runs) == 1
+    assert (runs[0].parent / "evaluations" / "test_iou.json").is_file()
+    assert (runs[0].parent / "model_spec.yaml").is_file()
+    assert (runs[0].parent / "inference" / "inference.yaml").is_file()
+
+    # 誤りのある定義は, 実験の出力先を作る前に止まる
+    spec["nodes"]["conv1"] = dict(spec["nodes"]["conv1"], repeat=2)
+    (models / "model.yaml").write_text(
+        yaml.safe_dump(spec, allow_unicode=True), encoding="utf-8"
+    )
+    done = subprocess.run(
+        [sys.executable, "train.py", "experiment.device=cpu"],
+        cwd=project, capture_output=True, text=True, timeout=600
+    )
+    assert done.returncode == 1
+    assert "定義に誤りがあります" in done.stdout and "repeat" in done.stdout
+    assert len(list((project / "outputs").glob("*/*/*"))) == 1

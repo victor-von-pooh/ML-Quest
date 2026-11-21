@@ -1068,9 +1068,9 @@ def entry_names(dataset: ItemDataset) -> tuple[str, str]:
     return names
 
 
-def spec_file(cfg: object) -> Optional[Path]:
+def project_spec(cfg: object) -> Optional[Path]:
     """
-    config の model.spec の, ML-ModelControl の定義のファイルを返す関数
+    config の model.spec の, プロジェクトの ML-ModelControl の定義を返す関数
 
     Parameters
     ----------
@@ -1090,8 +1090,81 @@ def spec_file(cfg: object) -> Optional[Path]:
     return spec
 
 
+def spec_errors(spec: Optional[Path]) -> list[str]:
+    """
+    ML-ModelControl の定義の誤りを, 実験の出力先を作る前に確かめる関数
+
+    Parameters
+    ----------
+    spec: Optional[Path]
+        プロジェクトの定義 (無ければ None)
+
+    Returns
+    ----------
+    errors: list[str]
+        誤りの文 (定義が無いか誤りが無ければ空. 外部の重みのファイルが
+        読めるかは, 組み立てるときに分かる)
+    """
+    # 定義の無いうちは ML-ModelControl を読まない. 読めない定義も誤りと
+    # して返る (例外にならない)
+    if spec is None:
+        return []
+    from ml_modelcontrol import validate
+    errors = [issue["message"] for issue in validate(spec)
+              if issue["severity"] == "error"]
+
+    return errors
+
+
+def spec_file(
+    spec: Optional[Path], experiment: Experiment
+) -> tuple[Optional[Path], Optional[Path]]:
+    """
+    モデルを組み立てる ML-ModelControl の定義のファイルと, 定義の中の相対
+    の参照 (外部の重みなど) の起点を返す関数
+
+    Parameters
+    ----------
+    spec: Optional[Path]
+        プロジェクトの定義 (無ければ None)
+    experiment: Experiment
+        実験 (ML-Found が実験に写した定義の場所 model_spec_path と, 写した
+        元の定義 model_spec_source)
+
+    Returns
+    ----------
+    path: Optional[Path]
+        ML-Found が実験に写した定義 (学習を始めたときの定義で, source.yaml
+        の sha256 と同じ中身). 写せなければプロジェクトの定義. 定義が無け
+        れば None
+    base_dir: Optional[Path]
+        相対の参照の起点 (写しなら元の定義のディレクトリ. 他は None で,
+        定義のディレクトリ)
+    """
+    # 定義が無いうちは仮のモデル
+    if spec is None:
+        return None, None
+
+    # 写しの相対の参照は元の定義の場所から (写しの隣には重みが無い)
+    if experiment.model_spec_path is not None:
+        path = Path(experiment.model_spec_path)
+        base_dir = Path(experiment.model_spec_source).parent
+        return path, base_dir
+
+    # 写しが無ければ理由を知らせて, プロジェクトの定義
+    experiment.logger.warning(
+        "モデルの定義を実験に写せなかったので, プロジェクトの定義から"
+        "組み立てます (理由は source.yaml の model_spec の status)"
+    )
+    path = spec
+    base_dir = None
+
+    return path, base_dir
+
+
 def make_model(
-    dataset: ItemDataset, cfg: object, spec: Optional[Path]
+    dataset: ItemDataset, cfg: object, spec: Optional[Path],
+    base_dir: Optional[Path]
 ) -> nn.Module:
     """
     モデルを作る関数
@@ -1104,6 +1177,8 @@ def make_model(
         config (仮のモデルの大きさと乱数の種)
     spec: Optional[Path]
         ML-ModelControl の定義のファイル (無ければ None)
+    base_dir: Optional[Path]
+        定義の中の相対の参照の起点 (None なら定義のディレクトリ)
 
     Returns
     ----------
@@ -1113,7 +1188,8 @@ def make_model(
     # 定義があれば組み立て (定義の無いうちは ML-ModelControl を読まない)
     if spec is not None:
         from ml_modelcontrol import build_model
-        model = build_model(spec, seed=cfg.experiment.seed)
+        model = build_model(spec, seed=cfg.experiment.seed,
+                            base_dir=base_dir)
         return model
     model = placeholder(dataset, cfg)
 
@@ -1214,6 +1290,13 @@ def main() -> None:
     # TODO: 既製のモデルを元にするなら, 元にした実験か重みを task["base"]
     task = task_from_dataset(cfg.data.dataset, project_dir=str(PROJECT_DIR))
     task.update({"output": OUTPUT, "what": PREDICT, "method": METHOD})
+    spec = project_spec(cfg)
+    errors = spec_errors(spec)
+    if errors:
+        print(f"{spec} の定義に誤りがあります. README の「次にすること」の "
+              "2 で直してください")
+        print("\\n".join(f"- {message}" for message in errors))
+        sys.exit(1)
     experiment = start_experiment(cfg, diff, str(PROJECT_DIR))
     task = write_task(experiment, task)
     experiment.logger.info(
@@ -1232,23 +1315,21 @@ def main() -> None:
 
     # モデルの組み立てと学習 (定義がまだ無ければ仮のモデル. 検証は
     # trainer.valid_every_n_epochs ごとと最後のエポック)
-    spec = spec_file(cfg)
+    spec, base_dir = spec_file(spec, experiment)
     if spec is None:
         experiment.logger.info(
             f"モデルの定義 ({cfg.model.spec or '場所なし'}) が無いので, "
             "仮のモデル (PlaceholderModel) で学習します. ML-CreateArchitecture"
             " で組んだ定義をその場所に置くと, 定義のモデルで学習します"
         )
-    model = make_model(dataset, cfg, spec)
+    model = make_model(dataset, cfg, spec, base_dir)
     trainer = make_trainer(model, experiment, dataset)
     trainer.fit(loaders["train"], loaders["valid"])
 
-    # 実験だけで見直せるように, 問題の設定とモデルの定義の写し (元の問題の
-    # 設定の場所 origin も残る)
+    # 実験だけで見直せるように, 問題の設定の写し (元の問題の設定の場所
+    # origin も残る. モデルの定義は ML-Found が start_experiment で写す)
     run_dir = Path(experiment.run_dir)
     shutil.copy(PROJECT_DIR / "problem.yaml", run_dir / "problem.yaml")
-    if spec is not None:
-        shutil.copy(spec, run_dir / "model_spec.yaml")
 
     # 結果の表示と, 指標が何との一致か. 学習した後の重みは, 最良のモデル
     # に戻した場合だけ最良のエポック (select_best: false などは最後)
