@@ -4,6 +4,7 @@ from string import Template
 from typing import Any, Callable, Optional
 
 from ml_quest.bridge import recipe_from
+from ml_quest.data import content_kind
 from ml_quest.problem import active_value, get_value
 from ml_quest.questions import PART
 
@@ -494,11 +495,14 @@ def baseline_reason(
     reason: Optional[str]
         理由の文 (比べられるなら None)
     """
-    # 今のやり方をデータで書いたか, データを入れたか
+    # 画像と文か, 今のやり方をデータで書いたか, データを入れたか
     current = active_value(problem, "action.current")
     task = stages["data"]["task"]
     reason: Optional[str] = None
-    if not isinstance(current, dict) or "type" not in current:
+    if content_kind(stages) is not None:
+        reason = ("入れたデータが 1 件の中身で学ぶ画像か文 (データセットに"
+                  "学習に使う列が無く, 元のデータの同じ行が分からない)")
+    elif not isinstance(current, dict) or "type" not in current:
         reason = ("問題の設定に今のやり方をデータで書いていない (今のやり方"
                   "をデータで書く問い, action.current)")
     elif data_file is None:
@@ -520,7 +524,9 @@ def baseline_reason(
     return reason
 
 
-def baseline_note(problem: dict, reason: str, comment_lines: Callable) -> str:
+def baseline_note(
+    problem: dict, reason: str, comment_lines: Callable, retry: bool = True
+) -> str:
     """
     今のやり方と比べない理由を, 学習のスクリプトのコメントにする関数
 
@@ -532,6 +538,8 @@ def baseline_note(problem: dict, reason: str, comment_lines: Callable) -> str:
         比べない理由
     comment_lines: Callable
         文を 1 行ずつのコメントにする関数 (skeleton.comment_lines)
+    retry: bool = True
+        答えて書き出し直せば比べることも書くか (画像と文では False)
 
     Returns
     ----------
@@ -540,12 +548,12 @@ def baseline_note(problem: dict, reason: str, comment_lines: Callable) -> str:
     """
     # 比べる相手の名前と理由と, 比べるための手
     name = active_value(problem, f"{PART}.baseline") or DEFAULT_NAME
-    note = "\n" + comment_lines(
-        f"比べる相手 ({name}): {reason} ので, 今のやり方とは比べない. "
-        "答えて骨組みを書き出し直すと, 検証用とテスト用で今のやり方と比べた"
-        f"評価の表 (evaluations/{EVALUATION_PREFIX}<分割>.json) を書く",
-        indent=""
-    )
+    text = f"比べる相手 ({name}): {reason} ので, 今のやり方とは比べない"
+    if retry:
+        text += (". 答えて骨組みを書き出し直すと, 検証用とテスト用で今のやり方"
+                 "と比べた評価の表 (evaluations/"
+                 f"{EVALUATION_PREFIX}<分割>.json) を書く")
+    note = "\n" + comment_lines(text, indent="")
 
     return note
 
