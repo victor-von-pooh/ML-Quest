@@ -161,9 +161,12 @@ def content_kind(stages: dict) -> Optional[str]:
     kind: Optional[str]
         image か text (表と時系列と, データを入れていなければ None)
     """
-    # 入れたデータの読み込みの名前
+    # 入れたデータの読み込みの名前. 表の中の文の列 (text_column) で読んだ
+    # ものも ML-EDA では文
     source = stages["data"].get("source") or {}
     kind = CONTENT_LOADERS.get(source.get("loader"))
+    if kind is None and (source.get("options") or {}).get("text_column"):
+        kind = "text"
 
     return kind
 

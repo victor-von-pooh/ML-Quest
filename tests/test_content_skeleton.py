@@ -9,6 +9,7 @@ from ml_quest import (
     answer, attach_data, check, example_problem, make_project, recipe_from,
     record_project
 )
+from ml_quest.data import CONTENT_LOADERS, content_kind
 
 # 画像と文の 2 クラスの合成のデータの, クラスの名前と当たりのクラス
 CLASSES = {"image": ["circle", "square"], "text": ["good", "bad"]}
@@ -360,3 +361,37 @@ def test_content_training(tmp_path: Path, kind: str) -> None:
     assert info["check"]["matches"] is True, info
     log = (runs[0].parent / "train.log").read_text(encoding="utf-8")
     assert "1 件の" in log and "合う: True" in log
+
+
+def test_content_loaders() -> None:
+    """
+    写して持つ画像と文の読み込みの名前が, ML-EDA の読み込みの登録簿の
+    kind と合い, 表の中の文の列も文とすることを確かめる関数 (ML-EDA が
+    無ければ登録簿との突き合わせだけ飛ばす)
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 読み込みの名前と表の中の文の列から決まる種類
+    sources = [
+        ({"loader": "image_folder"}, "image"),
+        ({"loader": "text_lines"}, "text"),
+        ({"loader": "csv"}, None),
+        ({"loader": "csv", "options": {"text_column": "review"}}, "text"),
+    ]
+    for source, expected in sources:
+        assert content_kind({"data": {"source": source}}) == expected
+    assert content_kind({"data": {}}) is None
+
+    # ML-EDA の登録簿で kind が画像か文の読み込みと, 写した対応が同じ
+    eda = pytest.importorskip("ml_eda")
+    kinds = {
+        name: loader.kind for name, loader in eda.LOADERS.items()
+        if getattr(loader, "kind", None) in ("image", "text")
+    }
+    assert kinds == CONTENT_LOADERS

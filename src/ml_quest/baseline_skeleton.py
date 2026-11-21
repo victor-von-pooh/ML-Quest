@@ -500,8 +500,8 @@ def baseline_reason(
     task = stages["data"]["task"]
     reason: Optional[str] = None
     if content_kind(stages) is not None:
-        reason = ("入れたデータが 1 件の中身で学ぶ画像か文 (データセットに"
-                  "学習に使う列が無く, 元のデータの同じ行が分からない)")
+        reason = ("入れたデータが 1 件の中身で学ぶ画像か文で, データセット"
+                  "に学習に使う列が無く, 元のデータの同じ行が分からない")
     elif not isinstance(current, dict) or "type" not in current:
         reason = ("問題の設定に今のやり方をデータで書いていない (今のやり方"
                   "をデータで書く問い, action.current)")

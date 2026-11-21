@@ -317,7 +317,8 @@ CONTENT_DATA = {
     "image": ("学ぶのは 1 件の画像の中身で, 読み込みが作る表の列 (`path`, "
               "`width`, `height` など) は学習に使わない. 画像の大きさがそろ"
               "わないなら, レシピの中身の手順 (`item_steps`) に `resize` "
-              "(`width`, `height`) を足してそろえる"),
+              "(`width`, `height`) を足してそろえる (そろわないまま ML-EDA は"
+              "書き出さない)"),
     "text": ("学ぶのは 1 件の文の中身で, 読み込みが作る表の列 (`file`, "
              "`length`, `words` など) は学習に使わない. 文はレシピの中身の"
              "手順 (`item_steps`) の `vocabulary` で語の番号の並びにする "
