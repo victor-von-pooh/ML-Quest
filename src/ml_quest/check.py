@@ -24,8 +24,12 @@ EXPORTABLE_ERRORS = (
     "issue", "decomposition", "action.who", "action.when", "action.what",
     "action.basis", "action.decision", "verification", "operation",
     "ml.constraints", f"{PART}.what", f"{PART}.item", f"{PART}.baseline",
-    f"{PART}.consumer", f"{PART}.downstream", f"{PART}.evaluation.link"
+    f"{PART}.consumer", f"{PART}.downstream", f"{PART}.evaluation.link",
+    f"{PART}.evaluation.current"
 )
+
+# 0 から 1 の割合の指標の, 画面の呼び方
+RATE_NAMES = {"accuracy": "正解率", "iou": "IoU "}
 
 # 列の予測の出力の形
 COLUMN_OUTPUTS = ["class", "value", "distribution"]
@@ -629,7 +633,7 @@ def is_finite(value: Any) -> bool:
     finite: bool
         int か float で, 非数と無限大でなければ True
     """
-    # 真偽値は int の仲間なので除く
+    # int の仲間の真偽値の除外
     finite = (isinstance(value, (int, float)) and not isinstance(value, bool)
               and math.isfinite(value))
 
@@ -793,6 +797,9 @@ def check_evaluation(problem: dict) -> list[dict]:
             "(学習の記録の名前 valid/<名前> と, 曲線のファイルの名前にする"
             "ため)"
         ))
+    found += reported_range(
+        metric, active_value(problem, f"{PART}.evaluation.current")
+    )
     if metric and not get_value(problem, f"{PART}.evaluation.link"):
         found.append(finding(
             "warning", f"{PART}.evaluation.link",
@@ -814,6 +821,43 @@ def check_evaluation(problem: dict) -> list[dict]:
             "warning", "operation.stop",
             "止める条件が空です. 効かなかった場合に今のやり方へ戻す基準を"
             "決めておくと, 試しやすくなります"
+        ))
+
+    return found
+
+
+def reported_range(metric: Any, value: Any) -> list[dict]:
+    """
+    今のやり方での指標の値が, 指標の取りうる値かを確かめる関数
+
+    Parameters
+    ----------
+    metric: Any
+        最良を選ぶ指標
+    value: Any
+        今のやり方での指標の値 (evaluation.current. 答えていなければ None)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (数でない, 負, 割合の指標で 1 より大きい場合に error)
+    """
+    # 割合の指標 (正解率と IoU) は 0 から 1, 誤差は 0 以上
+    found: list[dict] = []
+    key = f"{PART}.evaluation.current"
+    if value is None:
+        return found
+    if not is_finite(value):
+        found.append(finding("error", key,
+                             "今のやり方での指標の値は有限の数にしてください"))
+    elif value < 0:
+        found.append(finding("error", key,
+                             "今のやり方での指標の値が負です"))
+    elif metric in RATE_NAMES and value > 1:
+        found.append(finding(
+            "error", key,
+            f"{RATE_NAMES[metric]}は 0 から 1 の割合で書いてください (85 % "
+            "なら 0.85)"
         ))
 
     return found

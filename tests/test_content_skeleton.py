@@ -1,3 +1,5 @@
+import ast
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -6,10 +8,11 @@ import pytest
 import yaml
 
 from ml_quest import (
-    answer, attach_data, check, example_problem, make_project, recipe_from,
-    record_project
+    answer, attach_data, check, example_problem, make_project, open_errors,
+    project_error, questions, recipe_from, record_project
 )
 from ml_quest.data import CONTENT_LOADERS, content_kind
+from ml_quest.questions import REPORTED_BASELINE
 
 # 画像と文の 2 クラスの合成のデータの, クラスの名前と当たりのクラス
 CLASSES = {"image": ["circle", "square"], "text": ["good", "bad"]}
@@ -291,6 +294,14 @@ def test_content_project(tmp_path: Path, kind: str) -> None:
     assert "tuple(x_train.shape[1:])" in script
     assert "入れたデータが 1 件の中身で学ぶ画像か文" in script
     assert "答えて骨組みを書き出し直すと" not in script
+    assert "evaluation.current" in script and "save_reported" not in script
+    hint = "8 の「今のやり方 (人の目視や今の仕組み) で, 正解率は幾つですか (分かれば)」"
+    assert hint in readme and "BASELINE_REASON = (" in script
+    assert "最良を選ぶ指標を" not in readme
+    assert "logger.info(f\"今のやり方とは比べません: {BASELINE_REASON}" in (
+        script
+    )
+    assert "分からない ため" not in readme
     config = yaml.safe_load(
         (project / "configs/default/train.yaml").read_text(encoding="utf-8")
     )
@@ -309,6 +320,161 @@ def test_content_project(tmp_path: Path, kind: str) -> None:
         assert 2 + 4 < size <= 2 + 4 + sum(len(w) for w in WORDS.values())
         # README の案内どおり, model_inputs の語彙の大きさがレシピの語彙の数
         assert inputs["inputs"][0]["vocabulary"] == size
+
+
+@pytest.mark.parametrize("kind", ["image", "text"])
+def test_content_reported(tmp_path: Path, kind: str) -> None:
+    """
+    画像と文で今のやり方での指標の値を問い, 答えれば骨組みがテスト用の値と
+    並べることを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+    kind: str
+        データの種類
+
+    Returns
+    ----------
+    None
+    """
+    # 画像と文で, 比べられる指標のときだけ問う (表の課題と loss は問わない)
+    key = "ml.parts.0.evaluation.current"
+    problem = content_problem(kind, tmp_path)
+    applies = {item["id"]: item["applies"] for item in questions(problem)}
+    assert applies[key] is True
+    loss = answer(problem, "ml.parts.0.evaluation.metric", "loss")
+    assert {item["id"]: item["applies"]
+            for item in questions(loss)}[key] is False
+    table = {item["id"]: item["applies"]
+             for item in questions(example_problem("総菜の作る量"))}
+    assert table[key] is False
+
+    # 割合の指標は 0 から 1 で, 負と 1 を超える値は誤り
+    for wrong in (85, -0.1):
+        wrong_problem = answer(problem, key, wrong)
+        found = check(wrong_problem)
+        assert [item["id"] for item in found if item["level"] == "error"] == [
+            key
+        ]
+        # 骨組みは組めるので, 「それでも書き出す」の対象
+        assert project_error(wrong_problem) is None
+        assert [item["id"] for item in open_errors(wrong_problem)] == [key]
+    assert "正解率は 0 から 1" in check(answer(problem, key, 85))[0]["message"]
+    problem = answer(problem, key, 0.75)
+    assert [f for f in check(problem) if f["level"] == "error"] == []
+
+    # 骨組み: テスト用の評価で並べ, README に目安と書く
+    project = tmp_path / "project"
+    make_project(problem, project)
+    script = (project / "train.py").read_text(encoding="utf-8")
+    compile(script, "train.py", "exec")
+    assert max(len(line) for line in script.splitlines()) <= 79
+    assert "BASELINE_VALUE = 0.75" in script
+    call = ('\n\n    # 答えた今のやり方での指標の値と並べる\n'
+            '    save_reported(experiment, "accuracy", accuracy.item())')
+    assert call in script
+    assert "テスト用の件のうち当たった割合" in script
+    assert "今のやり方 (今のやり方)" not in script
+    assert "テスト用の分割が無いので, 評価せず, 答えた値とも並べません" in script
+    assert "save_evaluation" in script and "compare_baseline" not in script
+    text = next(ast.literal_eval(node.value) for node in ast.parse(
+        script
+    ).body if isinstance(node, ast.Assign)
+        and getattr(node.targets[0], "id", "") == "REPORTED_TEXT")
+    assert "差 (accuracy_diff) はモデル − 今のやり方" in text
+    assert "大きいほど良い" in text and "今のやり方 (問い合わせ" in text
+    assert "正解率 (テスト用の件のうち当たった割合" in text
+    assert "METRIC_NAME = \"正解率\"" in script
+    readme = (project / "README.md").read_text(encoding="utf-8")
+    assert "モデルの正解率 (テスト用の件のうち当たった割合" in readme
+    assert "((" not in readme and "値 (正解率 (" not in readme
+    assert ("今のやり方での `accuracy` の値 (0.75. "
+            "`ml.parts.0.evaluation.current`)") in readme
+    assert "別のデータで数えた値との比べで目安です" in readme
+
+
+def test_content_questions(tmp_path: Path) -> None:
+    """
+    画像と文では予測の時点で分かる列を問わず, 今のやり方での指標の値の問い
+    の題が指標を名指すことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 表の列を学習に使わないので, 分かる列は要らない (答えなくても誤りなし)
+    problem = answer(content_problem("image", tmp_path),
+                     "information.known", None)
+    items = {item["id"]: item for item in questions(problem)}
+    assert items["information.known"]["applies"] is False
+    assert [f for f in check(problem) if f["level"] == "error"] == []
+    table = {item["id"]: item for item in questions(
+        example_problem("総菜の作る量")
+    )}
+    assert table["information.known"]["applies"] is True
+
+    # 題は最良を選ぶ指標の名前で
+    title = items["ml.parts.0.evaluation.current"]["title"]
+    assert "正解率は幾つですか" in title and "この指標" not in title
+
+
+@pytest.mark.parametrize("value", [85, -1, float("nan"), float("inf")])
+def test_content_reported_wrong(tmp_path: Path, value: float) -> None:
+    """
+    今のやり方での指標の値に誤りがあれば並べず, 理由をコメント, README,
+    train.log に書くことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+    value: float
+        誤りのある値 (非数と無限大は手で書いたもの)
+
+    Returns
+    ----------
+    None
+    """
+    # 骨組みを組める error なので, 「それでも書き出す」で書き出せる
+    problem = content_problem("image", tmp_path)
+    problem["ml"]["parts"][0]["evaluation"]["current"] = value
+    assert project_error(problem) is None
+    make_project(problem, tmp_path / "project", accept_errors=True)
+    script = (tmp_path / "project" / "train.py").read_text(encoding="utf-8")
+    compile(script, "train.py", "exec")
+    assert "save_reported" not in script and "BASELINE_VALUE" not in script
+    assert "BASELINE_REASON" in script
+    readme = (tmp_path / "project" / "README.md").read_text("utf-8")
+    assert "答えた今のやり方での指標の値は使えないので並べない" in readme
+
+
+def test_content_predict_log(tmp_path: Path) -> None:
+    """
+    何を出すかが空なら, train.log の初めの行の「予測すること」の句を省く
+    ことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 何を出すかを消した骨組み
+    problem = answer(content_problem("image", tmp_path), "ml.parts.0.what",
+                     None)
+    make_project(problem, tmp_path / "project", accept_errors=True)
+    script = (tmp_path / "project" / "train.py").read_text(encoding="utf-8")
+    assert "予測すること: {PREDICT}" not in script
 
 
 @pytest.mark.parametrize("kind", ["image", "text"])
@@ -332,7 +498,8 @@ def test_content_training(tmp_path: Path, kind: str) -> None:
     # 書き出し, データセット, 形と語彙の数とクラスの数を合わせた定義
     for name in TRAINING:
         pytest.importorskip(name)
-    problem = content_problem(kind, tmp_path)
+    problem = answer(content_problem(kind, tmp_path),
+                     "ml.parts.0.evaluation.current", 0.5)
     project = tmp_path / "project"
     make_project(problem, project)
     inputs = export(problem, project, kind)
@@ -364,6 +531,15 @@ def test_content_training(tmp_path: Path, kind: str) -> None:
     assert info["check"]["matches"] is True, info
     log = (runs[0].parent / "train.log").read_text(encoding="utf-8")
     assert "1 件の" in log and "合う: True" in log
+
+    # 答えた今のやり方での指標の値と, テスト用の正解率を並べた表
+    table = json.loads((runs[0].parent / "evaluations" / "baseline_test.json")
+                       .read_text(encoding="utf-8"))
+    assert table["split"] == "test" and "目安" in table["description"]
+    row = table["rows"][0]
+    assert row["accuracy_baseline"] == 0.5
+    assert row["accuracy_diff"] == pytest.approx(row["accuracy"] - 0.5)
+    assert "別のデータで数えた値との比べで目安です" in log
 
 
 def test_content_loaders() -> None:
@@ -398,3 +574,21 @@ def test_content_loaders() -> None:
         if getattr(loader, "kind", None) in ("image", "text")
     }
     assert kinds == CONTENT_LOADERS
+
+
+def test_reported_loaders() -> None:
+    """
+    今のやり方での指標の値の問いが, 写して持つ画像と文の読み込みの名前と
+    同じ名前で要るかを決めることを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 問いの条件の読み込みの名前 (any の 1 つ目)
+    names = REPORTED_BASELINE[-1]["any"][0]["in"]
+    assert sorted(names) == sorted(CONTENT_LOADERS)

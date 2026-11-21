@@ -10,7 +10,9 @@ from typing import Any, Optional, Union
 import yaml
 
 from ml_quest.baseline_skeleton import (
-    EVALUATION_PREFIX, baseline_code, baseline_note, baseline_reason
+    EVALUATION_PREFIX, baseline_code, baseline_note, baseline_reason,
+    predict_log, reported_code, reported_hint, reported_sentence,
+    reported_value
 )
 from ml_quest.check import is_column_part, split_errors
 from ml_quest.data import (
@@ -125,7 +127,7 @@ def evaluate_test(
     """
     # テスト用の分割が無い場合は知らせだけ
     if "test" not in dataset.frames:
-        experiment.logger.info("テスト用の分割が無いので, 評価しません")
+        experiment.logger.info("テスト用の分割が無いので, 評価$no_test")
         return
     model = model.cpu().eval()
     x, y = dataset.tensors("test")
@@ -133,7 +135,7 @@ def evaluate_test(
         pred = model(x).squeeze(-1) * scale + center
     error = pred - y
     value = $test_expression
-    experiment.logger.info(f"テスト用の$test_label: {value.item():,.4f}")
+    experiment.logger.info(f"テスト用の$test_label: {value.item():,.4f}")$reported
 $baseline
 '''
 
@@ -200,13 +202,13 @@ def evaluate_test(
     """
     # テスト用の分割が無い場合は知らせだけ
     if "test" not in dataset.frames:
-        experiment.logger.info("テスト用の分割が無いので, 評価しません")
+        experiment.logger.info("テスト用の分割が無いので, 評価$no_test")
         return
     model = model.cpu().eval()
     x, y = dataset.tensors("test")
     with torch.no_grad():
         accuracy = (model(x).argmax(dim=1) == y).float().mean()
-    experiment.logger.info(f"テスト用の正解率: {accuracy.item():.4f}")
+    experiment.logger.info(f"テスト用の正解率: {accuracy.item():.4f}")$reported
 $baseline
 '''
 
@@ -260,7 +262,7 @@ $scale_lines
     model = build_model(spec, seed=cfg.experiment.seed)
     experiment = start_experiment(cfg, diff, str(PROJECT_DIR))
     experiment.logger.info(
-        f"問題: {PROBLEM_NAME}. 予測すること: {PREDICT}. $inputs_log"
+        f"問題: {PROBLEM_NAME}. ${predict_log}$inputs_log"
     )
     trainer = Trainer(model, experiment, Step(scale))
     trainer.fit(train_loader, valid_loader)
@@ -450,7 +452,7 @@ def expression(value: Any) -> str:
         式 (文字は JSON の文字列. 真偽値と None は Python の名前. 有限で
         ない数は float の式. 他の値は文字にする)
     """
-    # JSON の true, null は Python では名前の誤りになるので, 型ごとに書く
+    # 型ごとの式 (JSON の true, null は Python では名前の誤りになるため)
     if value is None or isinstance(value, bool):
         text = repr(value)
     elif isinstance(value, int):
@@ -553,15 +555,37 @@ def training_script(
     inference = stages["inference"]
     kind = content_kind(stages)
     reason = baseline_reason(problem, stages, data_file)
+    reported = reported_value(problem) if kind is not None else None
+    call = ""
     if reason is None and data_file is not None:
         baseline = baseline_code(problem, stages, data_file, literal)
         compare = ("\n    # 今のやり方との比べ (推論の一式の後. 比べられなくても"
                    "止めない)\n    compare_baseline(trainer.model, dataset, "
                    "experiment, center, scale)\n")
-    else:
-        baseline = baseline_note(problem, str(reason), comment_lines,
-                                 retry=kind is None)
+    elif reported is not None:
+        # 画像と文の, 答えた今のやり方での指標の値とテスト用の値の並べ (テスト
+        # 用の分割が無ければ, 並べないことを train.log に)
+        key = "accuracy" if task == "classification" else metric
+        value = "accuracy" if task == "classification" else "value"
+        baseline = "\n\n" + reported_code(problem, literal, key)
+        call = ("\n\n    # 答えた今のやり方での指標の値と並べる\n    "
+                f'save_reported(experiment, "{key}", {value}.item())')
         compare = ""
+    elif kind is not None:
+        # 画像と文で答えていなければ, 比べない理由をコメントと train.log に
+        hint = content_hint(problem, task)
+        baseline = "\n" + baseline_note(problem, str(reason), comment_lines,
+                                        retry=False, hint=hint)
+        baseline += ("\n\n# 今のやり方と比べない理由 (train.log に書く)\n"
+                     f"BASELINE_REASON = {literal(f'{reason}. {hint}')}")
+        compare = ("\n    # 今のやり方と比べない理由\n    experiment.logger."
+                   "info(f\"今のやり方とは比べません: {BASELINE_REASON}\")\n")
+    else:
+        baseline = baseline_note(problem, str(reason), comment_lines)
+        compare = ""
+
+    # テスト用の分割が無いときの記録 (答えた値と並べるなら, それも)
+    no_test = "せず, 答えた値とも並べません" if call else "しません"
 
     # 頭 (比べるときだけ pandas, 元のデータの読み込み, 評価の表の書き出し)
     head = Template(HEAD).substitute(
@@ -576,14 +600,16 @@ def training_script(
                    "classification" else "STEPS, Dataset, load_data, "
                    "load_dataset") if compare else "Dataset, load_dataset",
         found_names=("Experiment, Trainer, load_project_config, "
-                     "save_evaluation,\n    start_experiment" if compare
-                     else "Experiment, Trainer, load_project_config, "
-                     "start_experiment"),
+                     "save_evaluation,\n    start_experiment"
+                     if compare or call else "Experiment, Trainer, "
+                     "load_project_config, start_experiment"),
     )
 
     # タスクごとの step と評価
     if task == "classification":
-        body = Template(CLASSIFICATION_STEP).substitute(baseline=baseline)
+        body = Template(CLASSIFICATION_STEP).substitute(
+            baseline=baseline, reported=call, no_test=no_test
+        )
         scaling = "分類は番号のまま"
         scale_lines = "    center, scale = 0.0, 1.0"
         train_target, valid_target = "y_train", "y_valid"
@@ -593,7 +619,8 @@ def training_script(
         body = Template(REGRESSION_STEP).substitute(
             key=key, expression=expression, metric_label=label
             if key == metric else "二乗誤差", test_expression=test_expression,
-            test_label=label, baseline=baseline
+            test_label=label, baseline=baseline, reported=call,
+            no_test=no_test
         )
         scaling = "目的の値は学習用の平均と標準偏差で標準化"
         scale_lines = ("    center, scale = y_train.mean().item(), "
@@ -606,11 +633,35 @@ def training_script(
         train_target=train_target, valid_target=valid_target,
         target_scale=target_scale, compare=compare,
         inputs_log=INPUTS_LOG[kind], decision_log=DECISION_LOG if dropped
-        else "",
+        else "", predict_log=predict_log(problem),
     )
     script = head + body + tail
 
     return script
+
+
+def content_hint(problem: dict, task: Optional[str]) -> str:
+    """
+    画像と文で, 今のやり方での指標の値を答えれば並べられることの文を作る
+    関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+    task: Optional[str]
+        タスク
+
+    Returns
+    ----------
+    hint: str
+        文 (分類は正解率, 回帰と予測は誤差の指標と並べる)
+    """
+    # 骨組みのテスト用の評価が求める指標
+    hint = reported_hint(problem, "accuracy (正解率)" if task ==
+                         "classification" else "mae か rmse")
+
+    return hint
 
 
 def experiment_name(problem: dict, name: Optional[str]) -> str:
@@ -804,13 +855,23 @@ def project_readme(
                if stages["model"]["outputs"] is None else "1")
     horizon = stages["inference"].get("horizon")
     reason = baseline_reason(problem, stages, data_file)
-    compare = (
-        "今のやり方との比べを, 検証用とテスト用の評価の表 "
-        f"(`evaluations/{EVALUATION_PREFIX}valid.json` と "
-        f"`{EVALUATION_PREFIX}test.json`. 元のデータの同じ行が分かる行だけで"
-        "求める) に書く" if reason is None else
-        f"今のやり方とは比べない ({reason} ため)"
-    )
+    if reason is None:
+        compare = (
+            "今のやり方との比べを, 検証用とテスト用の評価の表 "
+            f"(`evaluations/{EVALUATION_PREFIX}valid.json` と "
+            f"`{EVALUATION_PREFIX}test.json`. 元のデータの同じ行が分かる行"
+            "だけで求める) に書く"
+        )
+    elif kind is not None and reported_value(problem) is not None:
+        compare = reported_sentence(
+            problem, "accuracy" if data["task"] == "classification"
+            else stages["training"]["metric"]
+        )
+    elif kind is not None:
+        compare = (f"今のやり方とは比べない ({reason}ため). "
+                   f"{content_hint(problem, data['task'])}")
+    else:
+        compare = f"今のやり方とは比べない ({reason}ため)"
     lines += [
         "2. **モデルの作成** (ML-CreateArchitecture): 入力 1 つと出力 1 つの"
         f"モデルを組み, `models/model.yaml` に置く. {CONTENT_INPUTS[kind]}. "
@@ -850,7 +911,7 @@ def project_error(problem: dict) -> Optional[str]:
     message: Optional[str]
         誤りの文 (書き出せるなら None. 書き出し先のファイルは見ない)
     """
-    # 骨組みを組める error は返さない
+    # 骨組みを組めない理由の文だけ
     message = project_check(problem)[0]
 
     return message
@@ -957,7 +1018,7 @@ def data_errors(problem: dict, inspected: Optional[dict]) -> list[dict]:
     errors: list[dict]
         確かめの並び (データを入れていなければ空)
     """
-    # 古いか別の問題の設定の結果と, 形の崩れた結果は使わず求め直す
+    # 古いか別の問題の設定の結果と, 形の崩れた結果の求め直し
     fresh = (
         isinstance(inspected, dict)
         and inspected.get("key") == inspect_key(problem)
@@ -1016,7 +1077,7 @@ def errors_section(
     text: str
         Markdown の節 (残っていなければ空)
     """
-    # 無ければ節を書かない
+    # 無ければ節は無し
     if not errors:
         return ""
     lines = ["", "## 書き出した時点で残っていた直すところ", "",
@@ -1209,9 +1270,9 @@ def make_project(
     if error is not None:
         raise ValueError(error)
 
-    # 書き出せる確かめの error は, 「それでも書き出す」のときだけ残ったまま.
-    # 損得と制約の error が残れば, 推論の一式の既定値を付けない (学習と
-    # 一式が最後まで通るように)
+    # 書き出せる確かめの error は「それでも書き出す」のときだけ残したまま.
+    # 損得と制約の error が残れば, 推論の一式の既定値は無し (学習と一式が
+    # 最後まで通るように)
     errors = exportable + data_errors(problem, inspected)
     if errors and not accept_errors:
         raise ValueError(errors_message(errors))

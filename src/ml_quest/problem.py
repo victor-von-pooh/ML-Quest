@@ -9,7 +9,9 @@ import uuid
 import pandas as pd
 import yaml
 
-from ml_quest.questions import BY_ID, PART, QUESTIONS, V1_METRICS
+from ml_quest.questions import (
+    BY_ID, METRIC_TITLES, PART, QUESTIONS, V1_METRICS
+)
 
 # 問題の設定の形の版
 FORMAT_VERSION = 2
@@ -324,11 +326,17 @@ def applies(problem: dict, question: dict) -> bool:
     needed: bool
         要るか (when の条件が無いか, 満たすか)
     """
-    # 条件の並びの全てで, 項目の値が等しいか, 並びに入るか, 答えたか
+    # 条件の並びの全てで, 項目の値が等しいか, 並びに入るか, 答えたか.
+    # any はその中のどれかを満たすか, none はどれも満たさないか
     when = question.get("when") or []
     conditions = when if isinstance(when, list) else [when]
     needed = True
     for condition in conditions:
+        if "any" in condition or "none" in condition:
+            hit = any(applies(problem, {"when": [item]})
+                      for item in condition.get("any", condition.get("none")))
+            needed = needed and hit == ("any" in condition)
+            continue
         value = get_value(problem, condition["id"])
         if "equals" in condition:
             needed = needed and value == condition["equals"]
@@ -505,7 +513,12 @@ def questions(problem: dict) -> list[dict]:
     for question in QUESTIONS:
         value = get_value(problem, question["id"])
         item = {key: item for key, item in question.items()
-                if key not in ("when", "choices")}
+                if key not in ("when", "choices", "title_metric")}
+        metric = METRIC_TITLES.get(str(get_value(
+            problem, f"{PART}.evaluation.metric"
+        )))
+        if question.get("title_metric") and metric:
+            item["title"] = item["title"].replace("この指標", metric)
         item["choices"] = choices_of(problem, question)
         item["value"] = copy.deepcopy(value)
         item["answered"] = is_answered(value)
