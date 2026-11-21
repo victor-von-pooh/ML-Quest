@@ -63,10 +63,11 @@ SAMPLES = 3
 
 # 画像の領域: 画素ごとの交差エントロピーと, 背景を除いた IoU の平均
 MASK_PART = '''
-# テスト用の評価の名前と説明 (evaluations/<名前>.json)
+# テスト用の評価の名前, 説明, 指標の向き (evaluations/<名前>.json)
 EVALUATION = "test_iou"
 EVALUATION_TEXT = ("テスト用の分割のクラスごとの IoU ({weights}). mean は"
                    "背景 (値 0) を除いた平均. 予測にも正解にも無いクラスは 1")
+EVALUATION_BETTER = {"iou": "higher"}
 
 
 class MaskDataset(Dataset):
@@ -560,10 +561,11 @@ $baseline_comment
 
 # 点群: 2 乗の Chamfer で学び, 検証したエポックだけ Chamfer 距離を記録
 CLOUD_PART = '''
-# テスト用の評価の名前と説明 (evaluations/<名前>.json)
+# テスト用の評価の名前, 説明, 指標の向き (evaluations/<名前>.json)
 EVALUATION = "test_chamfer"
 EVALUATION_TEXT = ("テスト用の分割の Chamfer 距離 ({weights}. 単位は"
                    "データセットのまま)")
+EVALUATION_BETTER = {"chamfer": "lower"}
 
 
 class CloudDataset(Dataset):
@@ -1265,7 +1267,7 @@ def main() -> None:
         rows = evaluate_test(trainer, loaders["test"], experiment)
         save_evaluation(experiment, EVALUATION, rows, "test",
                         description=EVALUATION_TEXT.format(weights=weights),
-                        epoch=epoch)
+                        epoch=epoch, better=EVALUATION_BETTER)
     else:
         experiment.logger.info("テスト用の分割が無いので, 評価$no_test")$reason_log
 

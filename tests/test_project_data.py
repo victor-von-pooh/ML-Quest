@@ -1025,6 +1025,14 @@ def test_baseline_in_skeleton(tmp_path: Path) -> None:
         tmp_path / "lag" / "train.py"
     ).read_text("utf-8")
 
+    # 評価の表に, 最良を選ぶ指標の向きを書く (分類は正解率で比べる)
+    assert "BETTER = {'mae': 'lower'}" in (
+        tmp_path / "lag" / "train.py"
+    ).read_text("utf-8")
+    assert "better=BETTER" in (tmp_path / "lag" / "train.py").read_text(
+        "utf-8"
+    )
+
     # 分類で, 今のやり方を列で書いてもデータが無ければ比べない
     churn = answer(example_problem("解約の引き止め"), "action.current",
                    {"type": "column", "column": "inquiries"})

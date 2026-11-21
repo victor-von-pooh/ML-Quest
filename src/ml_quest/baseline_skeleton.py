@@ -7,7 +7,7 @@ from ml_quest.bridge import recipe_from
 from ml_quest.check import reported_range
 from ml_quest.data import content_kind
 from ml_quest.problem import active_value, applies, get_value, questions
-from ml_quest.questions import BY_ID, METRIC_TITLES, PART
+from ml_quest.questions import BY_ID, METRICS, METRIC_TITLES, PART
 
 # 比べる相手の評価の名前の頭 (evaluations/baseline_<分割>.json)
 EVALUATION_PREFIX = "baseline_"
@@ -34,6 +34,10 @@ SERIES_BY = $series_by
 TIME_COLUMN = $time_column
 INTERVAL_SECONDS = $interval
 POSITIVE = $positive
+
+# 評価の表の列ごとの指標の向き (ML-Found が同じ指標の _baseline と _diff の
+# 列にも広げる)
+BETTER = $better
 
 # 前処理した値を同じ行とみなす桁 (小数の誤差の除外)
 DIGITS = 6
@@ -188,7 +192,7 @@ def compare_baseline(
                **scores(output, y[keep], base, center, scale)}
         save_evaluation(
             experiment, f"$prefix{split}", row, split=split,
-            baseline=BASELINE_NAME,
+            baseline=BASELINE_NAME, better=BETTER,
             description=(
                 f"今のやり方 ({BASELINE_NAME}. 書き方 {CURRENT}) との比べ. "
                 f"元のデータの同じ行が分かる {row['rows']} 行 ({len(found)} "
@@ -467,6 +471,10 @@ REPORTED_TEXT = $text
 METRIC_NAME = $metric_name
 METRIC_COUNTING = $counting
 
+# 評価の表の列ごとの指標の向き (ML-Found が同じ指標の _baseline と _diff の
+# 列にも広げる)
+BETTER = $better
+
 
 def save_reported(experiment: Experiment, key: str, value: float) -> None:
     """
@@ -490,7 +498,8 @@ def save_reported(experiment: Experiment, key: str, value: float) -> None:
     row = {key: value, f"{key}_baseline": BASELINE_VALUE,
            f"{key}_diff": value - BASELINE_VALUE}
     save_evaluation(experiment, "${prefix}test", row, split="test",
-                    baseline=BASELINE_NAME, description=REPORTED_TEXT)
+                    baseline=BASELINE_NAME, better=BETTER,
+                    description=REPORTED_TEXT)
     experiment.logger.info(
         f"テスト用の{METRIC_NAME} ({METRIC_COUNTING}): モデル {value:.4f}, "
         f"{BASELINE_NAME} (答えた値) {BASELINE_VALUE:.4f}. 別のデータで"
@@ -514,6 +523,27 @@ METRIC_EXPRESSIONS = {
     "mae": ("error.abs().mean()", "平均絶対誤差"),
     "rmse": ("error.pow(2).mean().sqrt()", "二乗平均平方根誤差"),
 }
+
+
+def metric_better(metric: str) -> str:
+    """
+    最良を選ぶ指標の候補の向きを返す関数
+
+    Parameters
+    ----------
+    metric: str
+        指標の名前 (METRICS の値)
+
+    Returns
+    ----------
+    better: str
+        lower (小さいほど良い) か higher (大きいほど良い)
+    """
+    # 候補の表の向き (loss は 2 つあるがどちらも lower)
+    better = next(item["better"] for item in METRICS
+                  if item["value"] == metric)
+
+    return better
 
 
 def python_value(value: Any) -> str:
@@ -648,11 +678,12 @@ def baseline_code(
     code: str
         定数, 今のやり方の値, 行のそろえ, 比べる関数
     """
-    # 今のやり方の値と比べ方 (タスクごと)
+    # 今のやり方の値と比べ方 (タスクごと. 分類は正解率で比べる)
     data = stages["data"]
     metric = stages["training"]["metric"]
     if data["task"] == "classification":
         values = CLASSIFICATION_VALUES
+        metric = "accuracy"
     else:
         expression, label = METRIC_EXPRESSIONS[metric]
         values = Template(REGRESSION_VALUES).substitute(
@@ -674,6 +705,7 @@ def baseline_code(
         interval=python_value(get_value(problem, "data.interval_seconds")),
         positive=python_value(active_value(problem, f"{PART}.positive")),
         values=values, prefix=EVALUATION_PREFIX,
+        better=python_value({metric: metric_better(metric)}),
     )
 
     return code
@@ -824,7 +856,7 @@ def reported_code(problem: dict, literal: Callable, metric: str) -> str:
     """
     # 相手の名前, 答えた値, 表の説明 (数え方と単位)
     name = active_value(problem, f"{PART}.baseline") or DEFAULT_NAME
-    better = "大きい" if metric in ("accuracy", "iou") else "小さい"
+    better = "大きい" if metric_better(metric) == "higher" else "小さい"
     text = (f"{reported_label(problem)} の値は問題の設定で答えた値 ("
             f"{PART}.evaluation.current) で, モデルの値はテスト用の分割で"
             f"求めた{METRIC_TITLES[metric]} ({REPORTED_METRICS[metric]})"
@@ -837,6 +869,7 @@ def reported_code(problem: dict, literal: Callable, metric: str) -> str:
         text=literal(text), prefix=EVALUATION_PREFIX,
         metric_name=literal(METRIC_TITLES[metric]),
         counting=literal(REPORTED_METRICS[metric]),
+        better=python_value({metric: metric_better(metric)}),
     ).strip("\n")
 
     return code
