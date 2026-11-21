@@ -345,7 +345,8 @@ CONTENT_INPUTS = {
              "(`nn.Embedding`) の数 `num_embeddings` は語彙の大きさで, "
              "`model_inputs` の `inputs` の `vocabulary` (埋め草 `<pad>` と"
              "語彙に無い語 `<unk>` を含む. ML-CreateArchitecture の「データ"
-             "セットから入力と出力を作る」はこれを埋め込みの数にする)"),
+             "セットから入力と出力を作る」は, 入力に直につながる埋め込みの数"
+             "をこれにする)"),
 }
 
 # 回帰と予測の指標 (step の名前, step の式, テスト用の式, 名前)
