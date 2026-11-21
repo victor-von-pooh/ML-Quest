@@ -13,7 +13,8 @@ from ml_quest.baseline_skeleton import (
 )
 from ml_quest.check import is_column_part
 from ml_quest.data import (
-    ITEMS_KINDS, content_kind, copy_data, dataset_info, items_message
+    ITEMS_KINDS, content_kind, copy_data, dataset_info, inspect_data,
+    items_message
 )
 from ml_quest.handoff import describe, handoff
 from ml_quest.items_skeleton import (
@@ -799,6 +800,83 @@ def project_error(problem: dict) -> Optional[str]:
     return message
 
 
+def open_errors(problem: dict) -> list[dict]:
+    """
+    書き出しを止めずに残っている確かめの error を返す関数
+
+    問題の設定の確かめ (check) の error は受け渡しで止まるので, 入れた
+    データの確かめ (inspect_data) の error だけ
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 1 も)
+
+    Returns
+    ----------
+    errors: list[dict]
+        check と同じ形の確かめの並び (データを入れていなければ空)
+    """
+    # 入れたデータの確かめのうち, 重さが error のもの
+    found = inspect_data(problem)
+    errors = [item for item in (found or {}).get("findings", [])
+              if item["level"] == "error"]
+
+    return errors
+
+
+def errors_message(errors: list[dict]) -> str:
+    """
+    残っている確かめの error で書き出さない理由の文を作る関数
+
+    Parameters
+    ----------
+    errors: list[dict]
+        確かめの error の並び (空でない)
+
+    Returns
+    ----------
+    message: str
+        誤りの文 (初めの 3 つと, 書き出すための手)
+    """
+    # 初めの 3 つと残りの数
+    shown = " / ".join(item["message"] for item in errors[:3])
+    rest = f" (ほか {len(errors) - 3} 件)" if len(errors) > 3 else ""
+    message = (f"入れたデータの確かめに直すところが残っています: {shown}"
+               f"{rest}. 直してから書き出すか, 残ったまま書き出すなら "
+               "accept_errors=True を渡してください (README に一覧を残す)")
+
+    return message
+
+
+def errors_section(errors: list[dict]) -> str:
+    """
+    README の, 書き出した時点で残っていた直すところの節を作る関数
+
+    Parameters
+    ----------
+    errors: list[dict]
+        確かめの error の並び
+
+    Returns
+    ----------
+    text: str
+        Markdown の節 (残っていなければ空)
+    """
+    # 無ければ節を書かない
+    if not errors:
+        return ""
+    lines = ["", "## 書き出した時点で残っていた直すところ", "",
+             "入れたデータの確かめで直すところ (error) が残ったまま, 確かめて"
+             "書き出した. 学習が失敗したり結果がおかしかったりしたときは, まず"
+             "これを見る. 直したら, 問題の設定で確かめ直して書き出し直す.",
+             ""]
+    lines += [f"- `{item['id']}`: {item['message']}" for item in errors]
+    text = "\n".join(lines) + "\n"
+
+    return text
+
+
 def skeleton_kind(problem: dict) -> Optional[str]:
     """
     ファイルの組の骨組みを書き出す正解の種類を返す関数
@@ -914,7 +992,8 @@ def origin_file(origin: Union[str, Path], path: Path) -> str:
 
 def make_project(
     problem: dict, path: Union[str, Path], name: Optional[str] = None,
-    overwrite: bool = False, origin: Optional[Union[str, Path]] = None
+    overwrite: bool = False, origin: Optional[Union[str, Path]] = None,
+    accept_errors: bool = False
 ) -> list[str]:
     """
     問題の設定から, ML-Found のプロジェクトの骨組みを書き出す関数
@@ -933,6 +1012,9 @@ def make_project(
         元の問題の設定 (problem.yaml か, それを持つディレクトリ). 写しの
         origin に絶対パスで残す (省略すると, 渡した問題の設定の origin を
         そのまま残す)
+    accept_errors: bool = False
+        入れたデータの確かめの error (open_errors) が残ったまま書き出すか
+        (書き出すなら README に一覧を残す)
 
     Returns
     ----------
@@ -943,9 +1025,9 @@ def make_project(
     ----------
     ValueError
         渡せない問題の設定の場合, 書き出せない受け持ちか指標がその他の
-        場合, 入れたデータセットが受け持ちに合わない場合, 上書きしない
-        既にあるファイルがある場合と, 元の場所が書き出す写しそのものの
-        場合
+        場合, 入れたデータセットが受け持ちに合わない場合, 入れたデータの
+        確かめに error が残り accept_errors でない場合, 上書きしない既に
+        あるファイルがある場合と, 元の場所が書き出す写しそのものの場合
     """
     # 書き出せるか (project_error と同じ決まり). 受け渡しの値 (版 1 は先に
     # 版 2 へ移行). データはプロジェクトの data に写し, 写した問題の設定は
@@ -955,6 +1037,11 @@ def make_project(
     error = project_error(problem)
     if error is not None:
         raise ValueError(error)
+
+    # 入れたデータの確かめの error は, 確かめたときだけ残ったまま書き出す
+    errors = open_errors(problem)
+    if errors and not accept_errors:
+        raise ValueError(errors_message(errors))
     problem = upgrade_problem(problem)
     if "project" in problem:
         problem = {key: value for key, value in problem.items()
@@ -980,6 +1067,7 @@ def make_project(
         **project_files(problem, stages, name, data_file, info),
         "configs/experiment/train.yaml": EXPERIMENT,
     }
+    files["README.md"] += errors_section(errors)
 
     # 既にあるファイルと, ディレクトリを作れない場所の確かめ (全てを確かめ
     # てから書く. 途中で止まって一部だけが残らないように)

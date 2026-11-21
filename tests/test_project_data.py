@@ -8,8 +8,9 @@ import yaml
 
 from ml_quest import (
     answer, apply_recipe, attach_data, check, example_problem, get_value,
-    handoff, inspect_data, load_problem, make_project, problem_origin,
-    prune_copies, recipe_from, record_project, resolve_choice, save_problem
+    handoff, inspect_data, load_problem, make_project, open_errors,
+    problem_origin, prune_copies, recipe_from, record_project,
+    resolve_choice, save_problem
 )
 
 
@@ -278,6 +279,48 @@ def test_make_project_data_checks(tmp_path: Path) -> None:
         (tmp_path / "fresh" / "data" / "sozai.csv").resolve()
     )
     assert copied["data"]["origin"] == get_value(problem, "data.source")
+
+
+def test_make_project_open_errors(tmp_path: Path) -> None:
+    """
+    入れたデータの確かめに error が残ると, 確かめ (accept_errors) 無しでは
+    書き出さず, 確かめて書き出すと README に一覧を残すことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 直すところが無ければ, 今のまま書き出し, README に節を書かない
+    pytest.importorskip("ml_eda")
+    path = daily_csv(tmp_path)
+    problem = attach_data(example_problem("総菜の作る量"), path)
+    assert open_errors(problem) == []
+    make_project(problem, tmp_path / "clean")
+    readme = (tmp_path / "clean" / "README.md").read_text("utf-8")
+    assert "残っていた直すところ" not in readme
+
+    # 入れた後に消えたデータは, 問題の設定の確かめ (check) では分からず,
+    # 入れたデータの確かめの error
+    path.unlink()
+    errors = open_errors(problem)
+    assert errors and all(item["level"] == "error" for item in errors)
+    assert not [item for item in check(problem) if item["level"] == "error"]
+    with pytest.raises(ValueError, match="accept_errors"):
+        make_project(problem, tmp_path / "blocked")
+    assert not (tmp_path / "blocked").exists()
+
+    # 確かめて書き出すと, README の最後の節に一覧
+    make_project(problem, tmp_path / "accepted", accept_errors=True)
+    readme = (tmp_path / "accepted" / "README.md").read_text("utf-8")
+    section = readme.split("## 書き出した時点で残っていた直すところ")[1]
+    assert "\n## " not in section
+    for item in errors:
+        assert f"- `{item['id']}`: {item['message']}" in section
 
 
 def test_copy_rules(tmp_path: Path) -> None:

@@ -90,6 +90,8 @@ problem = example_problem("総菜の作る量")
 
 骨組みを書き出せるのは, 列の予測 (分類, 回帰, 時系列の予測. 表と時系列のほか, 画像と文のデータの分類も. 画像と文では README が 1 件の中身で学ぶ案内になる) と, 予測するで正解の種類が画像の領域か点群の受け持ち. 後の 2 つは ML-EDA のファイルの組のデータセット (版 2 か, 中身の手順をかけた版 3. `export_image_masks`, `export_capture_clouds`) で学習する骨組みで, 入れたデータセットをプロジェクトに写し, 仮のモデル (印 TODO) と, 損失と指標 (領域は交差エントロピーと IoU, 点群は Chamfer) を書く. config の `model.spec` は `models/model.yaml` で, そこに ML-ModelControl の定義を置けばそのモデルで学習し, 学習の後に ML-Inference の推論の一式も実験の中に作る (置くまでは仮のモデルで学習する). 学習の後に, 検証用の数件の入力, 予測, 正解を ML-Found の見本 (`samples/`) に書く. 書き出せない理由は `project_error(problem)` で分かる.
 
+入れたデータの確かめ (`inspect_data`) に直すところ (`error`) が残っていると, `make_project` は書き出さない. 残ったまま書き出すなら `accept_errors=True` を渡す. そのときは README の最後に, 書き出した時点で残っていた直すところの一覧を書く. 残っているものは `open_errors(problem)` で分かる.
+
 ## 文書
 
 - [docs/DESIGN.md](docs/DESIGN.md): 今の設計と決まり, 他のリポジトリとの約束 (問題の設定の形と版)
