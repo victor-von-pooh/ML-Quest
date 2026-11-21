@@ -368,6 +368,11 @@ def test_items_with_data(tmp_path: Path) -> None:
         assert evaluations == ({"mask": ["baseline_test.json",
                                          "test_iou.json"],
                                 "point_cloud": ["test_chamfer.json"]}[kind])
+        metric = {"mask": "iou", "point_cloud": "chamfer"}[kind]
+        table = json.loads((runs[0].parent / "evaluations"
+                            / f"test_{metric}.json").read_text("utf-8"))
+        assert table["better"] == {metric: {"mask": "higher",
+                                            "point_cloud": "lower"}[kind]}
         if kind == "mask":
             check_reported(runs[0].parent, "iou", 0.25)
         log = (runs[0].parent / "train.log").read_text(encoding="utf-8")
@@ -492,6 +497,11 @@ def check_reported(run: Path, key: str, value: float) -> None:
     row = table["rows"][0]
     assert row[f"{key}_baseline"] == value
     assert row[f"{key}_diff"] == pytest.approx(row[key] - value)
+
+    # 列ごとの指標の向き (ML-Found が _baseline と _diff の列にも広げる)
+    better = {"iou": "higher", "chamfer": "lower"}[key]
+    assert table["better"] == {key: better, f"{key}_baseline": better,
+                               f"{key}_diff": better}
 
 
 def check_bundle(project: Path, kind: str) -> None:

@@ -539,6 +539,9 @@ def test_content_training(tmp_path: Path, kind: str) -> None:
     row = table["rows"][0]
     assert row["accuracy_baseline"] == 0.5
     assert row["accuracy_diff"] == pytest.approx(row["accuracy"] - 0.5)
+    assert table["better"] == {"accuracy": "higher",
+                               "accuracy_baseline": "higher",
+                               "accuracy_diff": "higher"}
     assert "別のデータで数えた値との比べで目安です" in log
 
 
