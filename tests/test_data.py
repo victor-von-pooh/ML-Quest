@@ -376,15 +376,32 @@ def test_decision_needs_two_classes(tmp_path: Path) -> None:
             "months": rng.integers(1, 30, rows),
             "inquiries": rng.integers(0, 5, rows),
             "monthly_fee": rng.integers(1000, 3000, rows)}
-    for name, labels in (("three", ["yes", "no", "maybe"]),
-                         ("two", ["yes", "no"])):
+    # 欠損と 1 と 1.0 は 2 種類に数える
+    labels = {"three": ["yes", "no", "maybe"], "two": ["yes", "no"],
+              "numbers": [1, 1.0, 0, None]}
+    decisions = {
+        "select": {"type": "select", "value": 24000, "cost": 1500,
+                   "effect": 0.2, "budget": 300},
+        "triage": {"type": "triage", "miss_cost": 3000,
+                   "false_alarm_cost": 500, "capacity": 300},
+        "none": {"type": "none"},
+    }
+    for name, values in labels.items():
         path = tmp_path / f"{name}.csv"
-        pd.DataFrame({**base, "churned": rng.choice(labels, rows)}).to_csv(
-            path, index=False
-        )
-        problem = attach_data(example_problem("解約の引き止め"), str(path))
-        errors = [f for f in inspect_data(problem)["findings"]
-                  if f["id"] == "action.decision" and f["level"] == "error"]
-        assert bool(errors) is (name == "three")
-        if errors:
-            assert "2 クラス" in errors[0]["message"]
+        churned = rng.choice(np.array(values, dtype=object), rows)
+        pd.DataFrame({**base, "churned": churned}).to_csv(path, index=False)
+        for kind, decision in decisions.items():
+            problem = answer(example_problem("解約の引き止め"),
+                             "action.decision", decision)
+            if name == "numbers":
+                problem = answer(problem, "ml.parts.0.positive", "1")
+            problem = attach_data(problem, str(path))
+            errors = [f for f in inspect_data(problem)["findings"]
+                      if f["id"] == "action.decision"
+                      and f["level"] == "error"]
+            # 意思決定しないは推論の段階に渡らないので見ない
+            assert bool(errors) is (name == "three" and kind != "none"), (
+                name, kind
+            )
+            if errors:
+                assert "2 クラスの分類にだけ" in errors[0]["message"]
