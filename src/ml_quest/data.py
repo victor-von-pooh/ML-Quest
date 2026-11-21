@@ -2,6 +2,8 @@ import copy
 import hashlib
 import importlib.util
 import json
+from operator import attrgetter
+import os
 from pathlib import Path
 import re
 import shutil
@@ -1667,29 +1669,76 @@ def data_stat(location: Path) -> Optional[list]:
     ----------
     stat: Optional[list]
         ファイルなら [大きさ, 更新の時刻 (ナノ秒)]. ディレクトリなら中の
-        ファイルの [相対パス, 大きさ, 更新の時刻] の並び (名前の順で
-        STAT_FILES まで. 超えた分は数だけ). 無ければ None
+        ファイルの [相対パス, 大きさ, 更新の時刻] の並び (ディレクトリごとに
+        名前の順にたどり, STAT_FILES まで) と, 最後にファイルの数
+        (STAT_FILES を超えたら STAT_FILES + 1 で打ち切り). 無ければ None
     """
-    # ファイルはその値, ディレクトリは中のファイルの値 (多ければ数だけ)
-    if not location.exists():
-        return None
+    # ファイルはその値 (見た後に消えたら無い扱い)
     if not location.is_dir():
-        found = location.stat()
+        try:
+            found = location.stat()
+        except OSError:
+            return None
         stat: list = [found.st_size, found.st_mtime_ns]
         return stat
+
+    # ディレクトリは中のファイルの値 (多ければ STAT_FILES で打ち切り)
     stat = []
-    count = 0
-    for path in sorted(location.rglob("*")):
-        if not path.is_file():
-            continue
-        count += 1
-        if count <= STAT_FILES:
-            found = path.stat()
-            stat.append([path.relative_to(location).as_posix(),
-                         found.st_size, found.st_mtime_ns])
-    stat.append(count)
+    pending = [location]
+    while pending and len(stat) <= STAT_FILES:
+        files, folders = directory_entries(pending.pop(),
+                                           STAT_FILES - len(stat))
+        stat += [[Path(entry.path).relative_to(location).as_posix(), size,
+                  time] for entry, size, time in files]
+        pending += reversed(folders)
+    stat = stat[:STAT_FILES] + [min(len(stat), STAT_FILES + 1)]
 
     return stat
+
+
+def directory_entries(folder: Path, limit: int) -> tuple[list, list]:
+    """
+    ディレクトリの直下のファイルの大きさと更新の時刻と, 直下のディレクトリ
+    を名前の順に返す関数
+
+    Parameters
+    ----------
+    folder: Path
+        ディレクトリ
+    limit: int
+        大きさと時刻を見るファイルの数の上限 (超えたら 1 つ多く見て止める)
+
+    Returns
+    ----------
+    files: list
+        ファイルの (os.DirEntry, 大きさ, 更新の時刻 (ナノ秒)) の並び
+        (limit + 1 件まで)
+    folders: list
+        ディレクトリの Path の並び (リンクのディレクトリはたどらない.
+        ファイルが上限を超えたら, そこまで)
+    """
+    # 名前は全て読んで並べ, 大きさと時刻は上限まで見る (たどる間に消えた
+    # ディレクトリとファイルは飛ばす)
+    files: list = []
+    folders: list = []
+    try:
+        with os.scandir(folder) as found:
+            entries = sorted(found, key=attrgetter("name"))
+    except OSError:
+        return files, folders
+    for entry in entries:
+        if len(files) > limit:
+            break
+        try:
+            if entry.is_dir(follow_symlinks=False):
+                folders.append(Path(entry.path))
+            elif entry.is_file():
+                info = entry.stat()
+                files.append((entry, info.st_size, info.st_mtime_ns))
+        except OSError:
+            continue
+
+    return files, folders
 
 
 def analyze_data(problem: dict) -> Optional[dict]:
