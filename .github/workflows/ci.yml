@@ -73,6 +73,12 @@ jobs:
             "ml-modelcontrol @ git+https://github.com/victor-von-pooh/ML-ModelControl.git"
           pip install --no-deps \
             "ml-inference @ git+https://github.com/victor-von-pooh/ML-Inference.git"
+      # 足りない依存と, 学習のテストが黙って道を分ける名前 (find_spec で見る
+      # ので SKIPPED にならない) が全て読めることの確認. ML-Inference の main が
+      # 新しい ML-EDA を要るようになったら, data の ML-EDA の固定を上げる
+      - run: |
+          pip check
+          python -c "import ml_found, ml_modelcontrol, ml_inference, ml_eda, torch, PIL, pyarrow"
       # pipefail で pytest の誤りを止める
       - shell: bash
         run: pytest -q -rs | tee pytest.log
