@@ -349,12 +349,13 @@ def test_content_training(tmp_path: Path, kind: str) -> None:
     )
     assert done.returncode == 0, done.stderr[-2000:]
 
-    # 実験の中の一式: 確かめ (検証用の正解率) が学習の記録と合う
+    # 実験の中の一式: 確かめ (検証用の正解率. ML-Inference の名前は acc) が
+    # 学習の記録と合う
     runs = sorted((project / "outputs").glob("*/*/*/inference"))
     assert len(runs) == 1
     info = yaml.safe_load((runs[0] / "inference.yaml")
                           .read_text(encoding="utf-8"))
-    assert info["check"]["metric"] == "accuracy"
+    assert info["check"]["metric"] == "acc"
     assert info["check"]["recorded"] is not None
     assert info["check"]["matches"] is True, info
     log = (runs[0].parent / "train.log").read_text(encoding="utf-8")
