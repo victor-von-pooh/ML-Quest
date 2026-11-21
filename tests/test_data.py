@@ -352,3 +352,39 @@ def test_series_by_two_columns(tmp_path: Path) -> None:
     assert suggested["ml.parts.0.series_by"] == ["store", "item"]
     assert not any("間隔が一定ではありません" in f["message"]
                    for f in found["findings"])
+
+
+def test_decision_needs_two_classes(tmp_path: Path) -> None:
+    """
+    対象を選ぶ意思決定の分類で, 目的の列の値が 2 種類でなければデータの
+    確かめが誤りにし, 2 種類なら誤りにしないことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        pytest が用意する一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 会員の表 (解約したかの列が 3 種類と 2 種類)
+    pytest.importorskip("ml_eda")
+    rng = np.random.default_rng(0)
+    rows = 60
+    base = {"member_id": np.arange(rows), "plan": rng.choice(["a", "b"], rows),
+            "months": rng.integers(1, 30, rows),
+            "inquiries": rng.integers(0, 5, rows),
+            "monthly_fee": rng.integers(1000, 3000, rows)}
+    for name, labels in (("three", ["yes", "no", "maybe"]),
+                         ("two", ["yes", "no"])):
+        path = tmp_path / f"{name}.csv"
+        pd.DataFrame({**base, "churned": rng.choice(labels, rows)}).to_csv(
+            path, index=False
+        )
+        problem = attach_data(example_problem("解約の引き止め"), str(path))
+        errors = [f for f in inspect_data(problem)["findings"]
+                  if f["id"] == "action.decision" and f["level"] == "error"]
+        assert bool(errors) is (name == "three")
+        if errors:
+            assert "2 クラス" in errors[0]["message"]

@@ -1092,6 +1092,44 @@ def class_values(column: pd.Series) -> list[str]:
     return values
 
 
+def binary_message(
+    problem: dict, task: Optional[str], values: list[str]
+) -> Optional[str]:
+    """
+    量を決める以外の意思決定が, 2 クラスでない分類の目的の列に付いていれ
+    ば, その誤りの文を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+    task: Optional[str]
+        タスク
+    values: list[str]
+        目的の列の値 (class_values)
+
+    Returns
+    ----------
+    message: Optional[str]
+        誤りの文 (食い違いが無ければ None)
+    """
+    # 推論の段階 (ML-Inference) は, 量を決める以外の意思決定を 2 クラスの
+    # 分類の一式にだけ使う. 学習の後まで分からないので, データで先に知らせる
+    message: Optional[str] = None
+    decision = active_value(problem, "action.decision")
+    kind = decision.get("type") if isinstance(decision, dict) else None
+    if task == "classification" and kind not in (None, "quantity") and (
+        len(values) != 2
+    ):
+        message = (
+            f"意思決定 ({kind}) は 2 クラスの分類にだけ使えます (目的の列の"
+            f"値は {len(values)} 種類: {', '.join(values[:10])}). 目的の列"
+            "を 2 つの値にまとめるか, 意思決定を見直してください"
+        )
+
+    return message
+
+
 def label_text(value: Any) -> str:
     """
     ラベルの値を文字列にする関数
@@ -1188,6 +1226,9 @@ def data_findings(
             ))
         guess = (profiled.get("target") or {}).get("task")
         task = active_value(problem, f"{PART}.task")
+        message = binary_message(problem, task, values)
+        if message:
+            found.append(finding("error", "action.decision", message))
         if task in ("regression", "forecasting") and guess == (
             "classification"
         ):
