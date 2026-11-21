@@ -215,6 +215,36 @@ $baseline
 # 学習の流れ (データセット, モデル, 学習, 評価, 推論の一式)
 MAIN = '''
 
+def model_file(spec: Path, experiment: Experiment) -> Path:
+    """
+    モデルを組み立てる ML-ModelControl の定義のファイルを返す関数
+
+    Parameters
+    ----------
+    spec: Path
+        config の model.spec の, プロジェクトの定義
+    experiment: Experiment
+        実験 (ML-Found が実験に写した定義の場所 model_spec_path)
+
+    Returns
+    ----------
+    path: Path
+        ML-Found が実験に写した定義 (学習を始めたときの定義で, source.yaml
+        の sha256 と同じ中身). 写せなければプロジェクトの定義
+    """
+    # 写しが無ければ理由を知らせて, プロジェクトの定義
+    if experiment.model_spec_path is not None:
+        path = Path(experiment.model_spec_path)
+        return path
+    experiment.logger.warning(
+        "モデルの定義を実験に写せなかったので, プロジェクトの定義から"
+        "組み立てます (理由は source.yaml の model_spec の status)"
+    )
+    path = spec
+
+    return path
+
+
 def main() -> None:
     """
     データセットとモデルの定義から学習し, 推論の一式を作る関数
@@ -258,20 +288,20 @@ $scale_lines
         batch_size=cfg.data.batch_size
     )
 
-    # モデルの定義からの組み立てと学習
-    model = build_model(spec, seed=cfg.experiment.seed)
+    # 実験に写したモデルの定義からの組み立てと学習
     experiment = start_experiment(cfg, diff, str(PROJECT_DIR))
+    spec = model_file(spec, experiment)
+    model = build_model(spec, seed=cfg.experiment.seed)
     experiment.logger.info(
         f"問題: {PROBLEM_NAME}. ${predict_log}$inputs_log"
     )
     trainer = Trainer(model, experiment, Step(scale))
     trainer.fit(train_loader, valid_loader)
 
-    # 実験だけで見直せるように, 問題の設定とモデルの定義の写し (元の問題の
-    # 設定の場所 origin も残る)
+    # 実験だけで見直せるように, 問題の設定の写し (元の問題の設定の場所
+    # origin も残る. モデルの定義は ML-Found が start_experiment で写す)
     run_dir = Path(experiment.run_dir)
     shutil.copy(PROJECT_DIR / "problem.yaml", run_dir / "problem.yaml")
-    shutil.copy(spec, run_dir / "model_spec.yaml")
 
     # 結果の表示とテスト用の評価
     best_epoch = trainer.checkpoint.best_epoch

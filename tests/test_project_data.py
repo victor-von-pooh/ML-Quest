@@ -1156,6 +1156,8 @@ def test_baseline_in_skeleton(tmp_path: Path) -> None:
     script = (project / "train.py").read_text("utf-8")
     assert "TODO" not in script and "compare_baseline" not in script
     assert "今のやり方をデータで書いていない" in script
+    assert '"model_spec.yaml"' not in script
+    assert "spec = model_file(spec, experiment)" in script
     readme = (project / "README.md").read_text("utf-8")
     assert "今のやり方とは比べない" in readme and "TODO" not in readme
     assert "model_inputs" in readme

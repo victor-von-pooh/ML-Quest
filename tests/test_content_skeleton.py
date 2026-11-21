@@ -1,4 +1,5 @@
 import ast
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -531,6 +532,19 @@ def test_content_training(tmp_path: Path, kind: str) -> None:
     assert info["check"]["matches"] is True, info
     log = (runs[0].parent / "train.log").read_text(encoding="utf-8")
     assert "1 件の" in log and "合う: True" in log
+
+    # 定義は ML-Found が写し (記録の sha256 と同じ中身), 一式も写しから
+    copied = (runs[0].parent / "model_spec.yaml").read_bytes()
+    source = yaml.safe_load((runs[0].parent / "source.yaml")
+                            .read_text(encoding="utf-8"))
+    assert source["model_spec"]["status"] == "copied"
+    assert source["model_spec"]["sha256"] == hashlib.sha256(
+        copied
+    ).hexdigest()
+    assert yaml.safe_load((runs[0] / "model_spec.yaml").read_bytes()) == (
+        yaml.safe_load(copied)
+    )
+    assert "写せなかった" not in log
 
     # 答えた今のやり方での指標の値と, テスト用の正解率を並べた表
     table = json.loads((runs[0].parent / "evaluations" / "baseline_test.json")

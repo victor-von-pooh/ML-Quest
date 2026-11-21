@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -197,6 +198,10 @@ def test_items_project(tmp_path: Path, kind: str) -> None:
     written = make_project(problem, project)
     assert "train.py" in written
     script = (project / "train.py").read_text(encoding="utf-8")
+
+    # 定義は写さず, ML-Found の写しから組み立てる
+    assert '"model_spec.yaml"' not in script
+    assert "experiment.model_spec_path" in script
     compile(script, "train.py", "exec")
     assert "load_items" in script and "task_from_dataset" in script
     assert "PlaceholderModel" in script and "TODO" in script
@@ -548,7 +553,36 @@ def check_bundle(project: Path, kind: str) -> None:
         "masks" if kind == "mask" else "clouds"
     ))
     assert (frame["status"] == "ok").all()
-    assert (runs[0].parent / "model_spec.yaml").is_file()
+
+    # 定義は ML-Found が写し (記録の sha256 と同じ中身), 一式も写しから
+    run = runs[0].parent
+    copied = (run / "model_spec.yaml").read_bytes()
+    source = yaml.safe_load((run / "source.yaml").read_text("utf-8"))
+    assert source["model_spec"]["status"] == "copied"
+    assert source["model_spec"]["sha256"] == hashlib.sha256(
+        copied
+    ).hexdigest()
+    assert yaml.safe_load((runs[0] / "model_spec.yaml").read_bytes()) == (
+        yaml.safe_load(copied)
+    )
+
+    # 写せない定義 (リンク) は, プロジェクトの定義から組み立てて知らせる
+    if kind != "mask":
+        return
+    (models / "real.yaml").write_bytes((models / "model.yaml").read_bytes())
+    (models / "model.yaml").unlink()
+    (models / "model.yaml").symlink_to("real.yaml")
+    shutil.rmtree(run)
+    train(project)
+    runs = sorted((project / "outputs").glob("*/*/*/inference"))
+    assert len(runs) == 1
+    source = yaml.safe_load((runs[0].parent / "source.yaml")
+                            .read_text("utf-8"))
+    assert source["model_spec"]["status"] == "link"
+    assert not (runs[0].parent / "model_spec.yaml").exists()
+    log = (runs[0].parent / "train.log").read_text(encoding="utf-8")
+    assert "モデルの定義を実験に写せなかったので" in log
+    assert (runs[0] / "model_spec.yaml").is_file()
 
 
 def check_samples(run: Path, kind: str) -> None:

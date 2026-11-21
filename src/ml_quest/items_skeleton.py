@@ -1068,24 +1068,36 @@ def entry_names(dataset: ItemDataset) -> tuple[str, str]:
     return names
 
 
-def spec_file(cfg: object) -> Optional[Path]:
+def spec_file(cfg: object, experiment: Experiment) -> Optional[Path]:
     """
-    config の model.spec の, ML-ModelControl の定義のファイルを返す関数
+    モデルを組み立てる ML-ModelControl の定義のファイルを返す関数
 
     Parameters
     ----------
     cfg: object
         config (model.spec に定義の場所. プロジェクトのディレクトリから)
+    experiment: Experiment
+        実験 (ML-Found が実験に写した定義の場所 model_spec_path)
 
     Returns
     ----------
     spec: Optional[Path]
-        定義のファイル (場所を書いていないか, ファイルがまだ無ければ None)
+        ML-Found が実験に写した定義 (写せなければプロジェクトの定義).
+        場所を書いていないか, ファイルがまだ無ければ None
     """
     # ML-CreateArchitecture で組んで保存するまでは無い
     spec = PROJECT_DIR / cfg.model.spec if cfg.model.spec else None
-    if spec is not None and not spec.is_file():
-        spec = None
+    if spec is None or not spec.is_file():
+        return None
+
+    # 写しは学習を始めたときの定義 (source.yaml の sha256 と同じ中身)
+    if experiment.model_spec_path is not None:
+        spec = Path(experiment.model_spec_path)
+        return spec
+    experiment.logger.warning(
+        "モデルの定義を実験に写せなかったので, プロジェクトの定義から"
+        "組み立てます (理由は source.yaml の model_spec の status)"
+    )
 
     return spec
 
@@ -1232,7 +1244,7 @@ def main() -> None:
 
     # モデルの組み立てと学習 (定義がまだ無ければ仮のモデル. 検証は
     # trainer.valid_every_n_epochs ごとと最後のエポック)
-    spec = spec_file(cfg)
+    spec = spec_file(cfg, experiment)
     if spec is None:
         experiment.logger.info(
             f"モデルの定義 ({cfg.model.spec or '場所なし'}) が無いので, "
@@ -1243,12 +1255,10 @@ def main() -> None:
     trainer = make_trainer(model, experiment, dataset)
     trainer.fit(loaders["train"], loaders["valid"])
 
-    # 実験だけで見直せるように, 問題の設定とモデルの定義の写し (元の問題の
-    # 設定の場所 origin も残る)
+    # 実験だけで見直せるように, 問題の設定の写し (元の問題の設定の場所
+    # origin も残る. モデルの定義は ML-Found が start_experiment で写す)
     run_dir = Path(experiment.run_dir)
     shutil.copy(PROJECT_DIR / "problem.yaml", run_dir / "problem.yaml")
-    if spec is not None:
-        shutil.copy(spec, run_dir / "model_spec.yaml")
 
     # 結果の表示と, 指標が何との一致か. 学習した後の重みは, 最良のモデル
     # に戻した場合だけ最良のエポック (select_best: false などは最後)
