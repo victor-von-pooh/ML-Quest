@@ -9,10 +9,12 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from ml_quest.check import ITEMS_KINDS, finding, is_column_part
+from ml_quest.check import (
+    DECISION_TASKS, ITEMS_KINDS, finding, is_column_part
+)
 from ml_quest.problem import (
-    active_value, answer, data_location, get_value, set_value,
-    upgrade_problem
+    DECISION_NAMES, active_value, answer, data_location, get_value,
+    set_value, upgrade_problem
 )
 from ml_quest.questions import PART
 
@@ -1092,6 +1094,46 @@ def class_values(column: pd.Series) -> list[str]:
     return values
 
 
+def binary_message(
+    problem: dict, task: Optional[str], values: list[str]
+) -> Optional[str]:
+    """
+    分類で答える意思決定 (対象を選ぶ, 振り分ける) が, 2 クラスでない目的
+    の列に付いていれば, その誤りの文を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+    task: Optional[str]
+        タスク
+    values: list[str]
+        目的の列の値 (class_values)
+
+    Returns
+    ----------
+    message: Optional[str]
+        誤りの文 (食い違いが無ければ None)
+    """
+    # 推論の段階 (ML-Inference) は, 分類で答える意思決定を 2 クラスの分類の
+    # 一式にだけ使う. 学習の後まで分からないので, データで先に知らせる.
+    # 意思決定しない (none) は推論の段階に渡らない
+    message: Optional[str] = None
+    decision = active_value(problem, "action.decision")
+    kind = decision.get("type") if isinstance(decision, dict) else None
+    if task == "classification" and "classification" in DECISION_TASKS.get(
+        kind, []
+    ) and len(values) != 2:
+        message = (
+            f"{DECISION_NAMES[kind]}意思決定は 2 クラスの分類にだけ使えます"
+            f" (目的の列の値は {len(values)} 種類: "
+            f"{', '.join(values[:10])}). 目的の列を 2 つの値にまとめるか, "
+            "意思決定を見直してください"
+        )
+
+    return message
+
+
 def label_text(value: Any) -> str:
     """
     ラベルの値を文字列にする関数
@@ -1137,7 +1179,7 @@ def data_findings(
     Returns
     ----------
     found: list[dict]
-        確かめ (warning と info)
+        確かめ (error, warning と info)
     """
     # 時刻の列, 行の数, 入れた後のデータの変化
     found = []
@@ -1188,6 +1230,9 @@ def data_findings(
             ))
         guess = (profiled.get("target") or {}).get("task")
         task = active_value(problem, f"{PART}.task")
+        message = binary_message(problem, task, values)
+        if message:
+            found.append(finding("error", "action.decision", message))
         if task in ("regression", "forecasting") and guess == (
             "classification"
         ):

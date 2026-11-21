@@ -352,3 +352,56 @@ def test_series_by_two_columns(tmp_path: Path) -> None:
     assert suggested["ml.parts.0.series_by"] == ["store", "item"]
     assert not any("間隔が一定ではありません" in f["message"]
                    for f in found["findings"])
+
+
+def test_decision_needs_two_classes(tmp_path: Path) -> None:
+    """
+    対象を選ぶ意思決定の分類で, 目的の列の値が 2 種類でなければデータの
+    確かめが誤りにし, 2 種類なら誤りにしないことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        pytest が用意する一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 会員の表 (解約したかの列が 3 種類と 2 種類)
+    pytest.importorskip("ml_eda")
+    rng = np.random.default_rng(0)
+    rows = 60
+    base = {"member_id": np.arange(rows), "plan": rng.choice(["a", "b"], rows),
+            "months": rng.integers(1, 30, rows),
+            "inquiries": rng.integers(0, 5, rows),
+            "monthly_fee": rng.integers(1000, 3000, rows)}
+    # 欠損と 1 と 1.0 は 2 種類に数える
+    labels = {"three": ["yes", "no", "maybe"], "two": ["yes", "no"],
+              "numbers": [1, 1.0, 0, None]}
+    decisions = {
+        "select": {"type": "select", "value": 24000, "cost": 1500,
+                   "effect": 0.2, "budget": 300},
+        "triage": {"type": "triage", "miss_cost": 3000,
+                   "false_alarm_cost": 500, "capacity": 300},
+        "none": {"type": "none"},
+    }
+    for name, values in labels.items():
+        path = tmp_path / f"{name}.csv"
+        churned = rng.choice(np.array(values, dtype=object), rows)
+        pd.DataFrame({**base, "churned": churned}).to_csv(path, index=False)
+        for kind, decision in decisions.items():
+            problem = answer(example_problem("解約の引き止め"),
+                             "action.decision", decision)
+            if name == "numbers":
+                problem = answer(problem, "ml.parts.0.positive", "1")
+            problem = attach_data(problem, str(path))
+            errors = [f for f in inspect_data(problem)["findings"]
+                      if f["id"] == "action.decision"
+                      and f["level"] == "error"]
+            # 意思決定しないは推論の段階に渡らないので見ない
+            assert bool(errors) is (name == "three" and kind != "none"), (
+                name, kind
+            )
+            if errors:
+                assert "2 クラスの分類にだけ" in errors[0]["message"]
