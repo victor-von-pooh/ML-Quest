@@ -342,10 +342,11 @@ CONTENT_INPUTS = {
     "text": ("入力の形は書き出したデータセットから決まる (ML-EDA の "
              "`model_inputs(<データセット>)` の `inputs` の `shape` と "
              "`dtype`). 文は `[None, 長さ]` の int64 (語の番号). 埋め込み "
-             "(`nn.Embedding`) の数 `num_embeddings` は語彙の数で, データ"
-             "セットの `recipe.yaml` の `item_steps` の `vocabulary` の "
-             "`state.vocabulary` の長さ (埋め草 `<pad>` と語彙に無い語 "
-             "`<unk>` を含む. `model_inputs` には無い)"),
+             "(`nn.Embedding`) の数 `num_embeddings` は語彙の大きさで, "
+             "`model_inputs` の `inputs` の `vocabulary` (埋め草 `<pad>` と"
+             "語彙に無い語 `<unk>` を含む. ML-CreateArchitecture の「データ"
+             "セットから入力と出力を作る」は, 入力に直につながる埋め込みの数"
+             "をこれにする)"),
 }
 
 # 回帰と予測の指標 (step の名前, step の式, テスト用の式, 名前)

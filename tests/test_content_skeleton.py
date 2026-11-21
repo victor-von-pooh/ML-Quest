@@ -176,7 +176,7 @@ def vocabulary_size(dataset: Path) -> int:
     size: int
         語彙の数 (埋め草と語彙に無い語を含む)
     """
-    # README の案内どおり, recipe.yaml の item_steps の state.vocabulary
+    # 書き出したレシピの item_steps の vocabulary の state.vocabulary
     recipe = yaml.safe_load((dataset / "recipe.yaml")
                             .read_text(encoding="utf-8"))
     steps = [step for step in recipe["item_steps"]
@@ -307,6 +307,8 @@ def test_content_project(tmp_path: Path, kind: str) -> None:
         # 埋め草と語彙に無い語と, 学習用の文の語 (共通の 4 語とクラスの語)
         size = vocabulary_size(project / "outputs" / "dataset")
         assert 2 + 4 < size <= 2 + 4 + sum(len(w) for w in WORDS.values())
+        # README の案内どおり, model_inputs の語彙の大きさがレシピの語彙の数
+        assert inputs["inputs"][0]["vocabulary"] == size
 
 
 @pytest.mark.parametrize("kind", ["image", "text"])
@@ -334,8 +336,9 @@ def test_content_training(tmp_path: Path, kind: str) -> None:
     project = tmp_path / "project"
     make_project(problem, project)
     inputs = export(problem, project, kind)
-    dataset = project / "outputs" / "dataset"
-    vocabulary = vocabulary_size(dataset) if kind == "text" else 0
+    vocabulary = (
+        inputs["inputs"][0]["vocabulary"] if kind == "text" else 0
+    )
     place = Path(record_project(problem, project)["project"]["model_spec"])
     place.write_text(
         yaml.safe_dump(model_spec(kind, inputs, vocabulary),
