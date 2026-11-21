@@ -51,3 +51,34 @@ jobs:
           print("\n".join(long))
           sys.exit(1 if long else 0)
           PY
+
+  # 書き出した骨組みを学習と推論の一式まで通すテスト (CPU の PyTorch と,
+  # 骨組みが使う段階のライブラリの main). 上のジョブではこれらを入れないので
+  # 飛ばされる. 飛ばしたテストがあれば誤りにする
+  train:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      # ML-Inference の依存の ML-EDA は版を固定しない git の main で, data の
+      # 固定と同じ名前を 2 つの場所から入れられないので, 依存は入れずに入れる
+      - run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev,data]" pyarrow \
+            "ml-found @ git+https://github.com/victor-von-pooh/ML-Found.git" \
+            "ml-modelcontrol @ git+https://github.com/victor-von-pooh/ML-ModelControl.git"
+          pip install --no-deps \
+            "ml-inference @ git+https://github.com/victor-von-pooh/ML-Inference.git"
+      # pipefail で pytest の誤りを止める
+      - shell: bash
+        run: pytest -q -rs | tee pytest.log
+      - name: 飛ばしたテストが無いことの確認
+        run: |
+          if grep -q "^SKIPPED" pytest.log; then
+            echo "飛ばしたテストがあります"
+            exit 1
+          fi
