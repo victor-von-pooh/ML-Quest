@@ -790,21 +790,19 @@ def test_items_spec_weights(tmp_path: Path) -> None:
         yaml.safe_dump(spec, allow_unicode=True), encoding="utf-8"
     )
 
-    # 写しから組み立てて学習する (重みは元の定義の場所から辿る)
+    # 写しから組み立てて学習し, 推論の一式まで作る (重みは元の定義の場所
+    # から辿る)
     done = subprocess.run(
         [sys.executable, "train.py", "trainer.epochs=2",
          "experiment.device=cpu"],
         cwd=project, capture_output=True, text=True, timeout=600
     )
+    assert done.returncode == 0, done.stderr[-2000:]
     runs = sorted((project / "outputs").glob("*/*/*/train.log"))
     assert len(runs) == 1
     assert (runs[0].parent / "evaluations" / "test_iou.json").is_file()
     assert (runs[0].parent / "model_spec.yaml").is_file()
-    # 一式づくりは ML-Inference が定義の写しの場所から重みを辿るので
-    # 止まりうる (ML-Quest の DESIGN.md の 11 節)
-    assert done.returncode == 0 or "make_bundle" in done.stderr, (
-        done.stderr[-2000:]
-    )
+    assert (runs[0].parent / "inference" / "inference.yaml").is_file()
 
     # 誤りのある定義は, 実験の出力先を作る前に止まる
     spec["nodes"]["conv1"] = dict(spec["nodes"]["conv1"], repeat=2)

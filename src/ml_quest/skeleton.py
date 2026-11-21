@@ -350,7 +350,7 @@ $scale_lines
     print(f"ベストモデルのエポック: {best_epoch}")
     print(f"ベストの {cfg.trainer.monitor}: {best_value}")
     evaluate_test(trainer.model, dataset, experiment, center, scale)
-
+$compare
     # 実験の中に推論の一式 (問題の設定の意思決定と結論を既定値に)
     info = make_bundle(
         run_dir / "inference", spec, path, run_dir,
@@ -370,7 +370,7 @@ $scale_lines
             f"{check['value']:,.4f} (記録 {check['recorded']}, 合う: "
             f"{check['matches']})"
         )
-$compare
+
 
 if __name__ == "__main__":
     main()
@@ -629,8 +629,9 @@ def training_script(
     call = ""
     if reason is None and data_file is not None:
         baseline = baseline_code(problem, stages, data_file, literal)
-        compare = ("\n    # 今のやり方との比べ (推論の一式の後. 比べられなくても"
-                   "止めない)\n    compare_baseline(trainer.model, dataset, "
+        compare = ("\n    # 今のやり方との比べ (一式づくりで止まっても表が残る"
+                   "ように, 推論の一式の前.\n    # 比べられなくても止めない)"
+                   "\n    compare_baseline(trainer.model, dataset, "
                    "experiment, center, scale)\n")
     elif reported is not None:
         # 画像と文の, 答えた今のやり方での指標の値とテスト用の値の並べ (テスト

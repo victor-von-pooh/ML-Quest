@@ -599,14 +599,13 @@ def check_spec_weights(project: Path, place: Path, inputs: dict) -> None:
         cwd=project, capture_output=True, text=True, timeout=600
     )
 
-    # 学習は済む (一式づくりは ML-Inference が写しの場所から重みを辿るので
-    # 止まりうる. ML-Quest の DESIGN.md の 11 節)
+    # 学習, 評価の表, 推論の一式まで済む
+    assert done.returncode == 0, done.stderr[-2000:]
     runs = set((project / "outputs").glob("*/*/*")) - before
     assert len(runs) == 1
-    assert (runs.pop() / "evaluations" / "baseline_test.json").is_file()
-    assert done.returncode == 0 or "make_bundle" in done.stderr, (
-        done.stderr[-2000:]
-    )
+    run = runs.pop()
+    assert (run / "evaluations" / "baseline_test.json").is_file()
+    assert (run / "inference" / "inference.yaml").is_file()
 
     # 誤りのある定義は, 実験の出力先を作る前に止まる
     spec["nodes"]["conv"]["repeat"] = 2

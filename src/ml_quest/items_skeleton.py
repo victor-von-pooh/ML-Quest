@@ -1141,9 +1141,11 @@ def spec_file(
         相対の参照の起点 (写しなら元の定義のディレクトリ. 他は None で,
         定義のディレクトリ)
     """
-    # 写しの相対の参照は元の定義の場所から (写しの隣には重みが無い)
+    # 定義が無いうちは仮のモデル
     if spec is None:
         return None, None
+
+    # 写しの相対の参照は元の定義の場所から (写しの隣には重みが無い)
     if experiment.model_spec_path is not None:
         path = Path(experiment.model_spec_path)
         base_dir = Path(experiment.model_spec_source).parent
