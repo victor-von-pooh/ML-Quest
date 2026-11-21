@@ -1,5 +1,7 @@
 import copy
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import re
 import shutil
@@ -1591,6 +1593,66 @@ def rows_result(
 
 
 def inspect_data(problem: dict) -> Optional[dict]:
+    """
+    入れたデータを読み直して分析し, 概要, 答えの候補, 確かめを返す関数
+
+    結果の key に, どの問題の設定とデータから求めたかの印 (inspect_key)
+    を入れる (覚えておいた結果が今のものかを確かめられるように)
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+
+    Returns
+    ----------
+    result: Optional[dict]
+        analyze_data の結果に key を足したもの (データを入れていなければ
+        None)
+    """
+    # 分析と, 求めた元の印
+    result = analyze_data(problem)
+    if result is not None:
+        result["key"] = inspect_key(problem)
+
+    return result
+
+
+def inspect_key(problem: dict) -> str:
+    """
+    inspect_data の結果が, どの問題の設定とデータから求めたかの印を返す
+    関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+
+    Returns
+    ----------
+    key: str
+        答え (作った時刻と直した時刻, プロジェクトの記録, 元の場所を除く)
+        と, データの場所と大きさと更新の時刻 (ナノ秒. ディレクトリはその
+        ディレクトリの値) から作った 16 進の文字
+    """
+    # 分析に関わらない値を除いた答えと, データのファイルの値
+    upgraded = upgrade_problem(problem)
+    answers = {key: value for key, value in upgraded.items()
+               if key not in ("created_at", "updated_at", "project",
+                              "origin")}
+    source = data_location(upgraded)
+    stat = None
+    if source and Path(source).exists():
+        found = Path(source).stat()
+        stat = [found.st_size, found.st_mtime_ns]
+    text = json.dumps([answers, source, stat], sort_keys=True, default=str,
+                      ensure_ascii=False)
+    key = hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    return key
+
+
+def analyze_data(problem: dict) -> Optional[dict]:
     """
     入れたデータを読み直して分析し, 概要, 答えの候補, 確かめを返す関数
 

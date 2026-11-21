@@ -1,5 +1,6 @@
+import math
 import re
-from typing import Any
+from typing import Any, Optional
 
 from ml_quest.problem import (
     DECISION_FIELDS, DECISION_NAMES, DECISION_OPTIONS,
@@ -15,17 +16,15 @@ from ml_quest.questions import (
 # その他の指標の名前 (学習の記録の名前と曲線のファイルの名前)
 METRIC_NAME = re.compile(r"[A-Za-z0-9_.@-]+")
 
-# 骨組みを組める error の項目の場所 (頭が合えば). 課題, 分解, 決めることの
-# 文, 損得と制約, 確かめ方, 運用, 受け持ちの文の答えは, 受け渡しの値の形と
-# 学習のスクリプトの組み立てに使わないので, 「それでも書き出す」と指定すれ
-# ば書き出せる. 損得と制約は推論の一式の既定値になるので, 直さないと学習の
-# 後の一式づくりで止まりうる
+# 骨組みを組める error の項目の場所 (同じ場所か, その下の項目). 課題, 分解,
+# 決めることの文, 確かめ方, 運用, 受け持ちの文の答えは, README の要約の文に
+# しか使わないので, 「それでも書き出す」と指定すれば書き出せる. 損得と制約
+# は推論の一式の既定値になるので, error が残るときは既定値を付けずに書き出す
 EXPORTABLE_ERRORS = (
-    "issue.", "decomposition", "action.who", "action.when", "action.what",
-    "action.basis", "action.decision", "verification.", "operation.",
-    "ml.reason", "ml.constraints", f"{PART}.what", f"{PART}.item",
-    f"{PART}.baseline", f"{PART}.consumer", f"{PART}.downstream",
-    f"{PART}.evaluation.link"
+    "issue", "decomposition", "action.who", "action.when", "action.what",
+    "action.basis", "action.decision", "verification", "operation",
+    "ml.constraints", f"{PART}.what", f"{PART}.item", f"{PART}.baseline",
+    f"{PART}.consumer", f"{PART}.downstream", f"{PART}.evaluation.link"
 )
 
 # 列の予測の出力の形
@@ -616,6 +615,27 @@ def column_amount(field: str, value: str, columns: list[str]) -> list[dict]:
     return found
 
 
+def is_finite(value: Any) -> bool:
+    """
+    値が有限の数 (真偽値でない) かを返す関数
+
+    Parameters
+    ----------
+    value: Any
+        値
+
+    Returns
+    ----------
+    finite: bool
+        int か float で, 非数と無限大でなければ True
+    """
+    # 真偽値は int の仲間なので除く
+    finite = (isinstance(value, (int, float)) and not isinstance(value, bool)
+              and math.isfinite(value))
+
+    return finite
+
+
 def uplift_range(value: Any) -> list[dict]:
     """
     確率の差で書いた効果の範囲を確かめる関数
@@ -632,9 +652,9 @@ def uplift_range(value: Any) -> list[dict]:
     """
     # 行動したとき − しないときの当たりの確率なので -1 から 1
     found = []
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
+    if not is_finite(value):
         found.append(finding("error", "action.decision",
-                             "effect は数か列の名前にしてください"))
+                             "effect は有限の数か列の名前にしてください"))
     elif not -1 <= value <= 1:
         found.append(finding(
             "error", "action.decision",
@@ -718,9 +738,9 @@ def amount_range(field: str, value: Any) -> list[dict]:
     """
     # 効果は 0 から 1, 今ある量は 0 以上, 他は正
     found = []
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
+    if not is_finite(value):
         found.append(finding("error", "action.decision",
-                             f"{field} は数か列の名前にしてください"))
+                             f"{field} は有限の数か列の名前にしてください"))
     elif field == "effect" and not 0 < value <= 1:
         found.append(finding(
             "error", "action.decision",
@@ -847,7 +867,30 @@ def check(problem: dict) -> list[dict]:
     return found
 
 
-def split_errors(problem: dict) -> tuple[list[dict], list[dict]]:
+def is_exportable(key: str) -> bool:
+    """
+    項目の場所の error が, 骨組みを組めるものかを返す関数
+
+    Parameters
+    ----------
+    key: str
+        項目の場所
+
+    Returns
+    ----------
+    exportable: bool
+        EXPORTABLE_ERRORS のどれかと同じ場所か, その下の項目なら True
+    """
+    # 頭の文字だけで合わせない (action.decision と action.decisions など)
+    exportable = any(key == head or key.startswith(f"{head}.")
+                     for head in EXPORTABLE_ERRORS)
+
+    return exportable
+
+
+def split_errors(
+    problem: dict, found: Optional[list[dict]] = None
+) -> tuple[list[dict], list[dict]]:
     """
     確かめの error を, 骨組みを組めないものと組めるものに分ける関数
 
@@ -855,6 +898,8 @@ def split_errors(problem: dict) -> tuple[list[dict], list[dict]]:
     ----------
     problem: dict
         問題の設定
+    found: Optional[list[dict]] = None
+        同じ問題の設定の check の結果 (省くと求める)
 
     Returns
     ----------
@@ -865,14 +910,15 @@ def split_errors(problem: dict) -> tuple[list[dict], list[dict]]:
         骨組みを組める error (EXPORTABLE_ERRORS の項目の場所)
     """
     # 版と形の誤りがあれば, 他の確かめをしていないので全てを組めないものに
-    errors = [item for item in check(problem) if item["level"] == "error"]
+    found = check(problem) if found is None else found
+    errors = [item for item in found if item["level"] == "error"]
     if version_message(problem, "この問題の設定"):
         return errors, []
     upgraded = upgrade_problem(problem)
     if check_v1(upgraded) + check_parts(upgraded) + check_shape(upgraded):
         return errors, []
     blocking = [item for item in errors
-                if not str(item["id"]).startswith(EXPORTABLE_ERRORS)]
+                if not is_exportable(str(item["id"]))]
     exportable = [item for item in errors if item not in blocking]
 
     return blocking, exportable

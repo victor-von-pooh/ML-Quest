@@ -1,5 +1,6 @@
 import copy
 import json
+import math
 from pathlib import Path
 import re
 from string import Template
@@ -14,9 +15,9 @@ from ml_quest.baseline_skeleton import (
 from ml_quest.check import is_column_part, split_errors
 from ml_quest.data import (
     ITEMS_KINDS, content_kind, copy_data, dataset_info, inspect_data,
-    items_message
+    inspect_key, items_message
 )
-from ml_quest.handoff import NO_ML, build_stages, describe, errors_text
+from ml_quest.handoff import build_stages, describe, export_stages
 from ml_quest.items_skeleton import (
     ITEMS_LIBRARIES, dataset_place, items_config, items_name, items_readme,
     items_script
@@ -283,7 +284,7 @@ $scale_lines
         run_dir / "inference", spec, path, run_dir,
         target_scale=$target_scale, conclusion=CONCLUSION,
         decision=DECISION, name=cfg.experiment.name
-    )
+    )$decision_log
     check = info["check"]
     if check and check["recorded"] is None:
         experiment.logger.info(
@@ -302,6 +303,13 @@ $compare
 if __name__ == "__main__":
     main()
 '''
+
+# 損得と制約に直すところが残り, 意思決定の既定値を付けないことの記録
+DECISION_LOG = (
+    "\n    experiment.logger.info(\n        \"問題の設定の損得と制約に直す"
+    "ところが残るので, 意思決定の\"\n        \"既定値は付けずに推論の一式を作り"
+    "ました\"\n    )"
+)
 
 # 学習の記録の入力の文 (表と時系列は学習に使う列, 画像と文は 1 件の形)
 INPUTS_LOG = {
@@ -405,26 +413,90 @@ def literal(value: Any) -> str:
     Parameters
     ----------
     value: Any
-        辞書, 文字列か None
+        辞書, 並び, 文字列, 数, 真偽値か None
 
     Returns
     ----------
     text: str
-        式 (二重引用符. 長い辞書は 1 項目ずつ折り返す)
+        式 (文字は二重引用符. 長い辞書は 1 項目ずつ折り返し, 長い文字列は
+        括弧の中で空白か句読点の後で折り返す)
     """
-    # JSON の文字列と辞書 (Python の式としても有効). 長い文字列は括弧の中で
-    # つなぐ形に折り返し
-    if value is None:
-        return "None"
-    text = json.dumps(value, ensure_ascii=False)
+    # 長い辞書は 1 項目ずつ, 長い文字列は括弧の中でつなぐ形
+    text = expression(value)
     if isinstance(value, dict) and len(text) > 60:
-        text = json.dumps(value, ensure_ascii=False, indent=4)
+        items = [f"    {expression(key)}: {expression(item)}"
+                 for key, item in value.items()]
+        text = "{\n" + ",\n".join(items) + "\n}"
     elif isinstance(value, str) and len(text) > 60:
-        pieces = [json.dumps(value[i:i + 30], ensure_ascii=False)
-                  for i in range(0, len(value), 30)]
+        pieces = [json.dumps(piece, ensure_ascii=False)
+                  for piece in text_pieces(value, 30)]
         text = "(\n" + "\n".join(f"    {piece}" for piece in pieces) + "\n)"
 
     return text
+
+
+def expression(value: Any) -> str:
+    """
+    値を 1 行の Python の式にする関数
+
+    Parameters
+    ----------
+    value: Any
+        辞書, 並び, 文字列, 数, 真偽値か None
+
+    Returns
+    ----------
+    text: str
+        式 (文字は JSON の文字列. 真偽値と None は Python の名前. 有限で
+        ない数は float の式. 他の値は文字にする)
+    """
+    # JSON の true, null は Python では名前の誤りになるので, 型ごとに書く
+    if value is None or isinstance(value, bool):
+        text = repr(value)
+    elif isinstance(value, int):
+        text = str(value)
+    elif isinstance(value, float):
+        text = repr(value) if math.isfinite(value) else f'float("{value}")'
+    elif isinstance(value, (list, tuple)):
+        text = "[" + ", ".join(expression(item) for item in value) + "]"
+    elif isinstance(value, dict):
+        text = "{" + ", ".join(f"{expression(key)}: {expression(item)}"
+                               for key, item in value.items()) + "}"
+    else:
+        text = json.dumps(str(value), ensure_ascii=False)
+
+    return text
+
+
+def text_pieces(value: str, size: int) -> list[str]:
+    """
+    文字列を, 決まった長さほどの切れ目の良い片に分ける関数
+
+    Parameters
+    ----------
+    value: str
+        文字列
+    size: int
+        片の長さの上限
+
+    Returns
+    ----------
+    pieces: list[str]
+        片の並び (つなぐと元に戻る. 空白か句読点の後で切り, 無ければ長さ
+        で切る)
+    """
+    # 上限の半分より後ろの, 最後の空白か句読点の後
+    pieces = []
+    rest = value
+    while len(rest) > size:
+        head = rest[:size]
+        cut = max(head.rfind(mark, size // 2) for mark in " ,.、。)")
+        cut = cut + 1 if cut >= 0 else size
+        pieces.append(rest[:cut])
+        rest = rest[cut:]
+    pieces.append(rest)
+
+    return pieces
 
 
 def comment_lines(text: str, indent: str = "    ") -> str:
@@ -452,7 +524,8 @@ def comment_lines(text: str, indent: str = "    ") -> str:
 
 
 def training_script(
-    problem: dict, stages: dict, data_file: Optional[Path] = None
+    problem: dict, stages: dict, data_file: Optional[Path] = None,
+    dropped: bool = False
 ) -> str:
     """
     問題の設定から学習のスクリプトを作る関数
@@ -465,6 +538,9 @@ def training_script(
         受け渡し (handoff の結果)
     data_file: Optional[Path] = None
         プロジェクトに写すデータ (プロジェクトからの相対. 無ければ None)
+    dropped: bool = False
+        損得と制約に直すところが残り, 意思決定の既定値を付けないか (train.log
+        にそう書く)
 
     Returns
     ----------
@@ -529,7 +605,8 @@ def training_script(
         scaling=scaling, scale_lines=scale_lines,
         train_target=train_target, valid_target=valid_target,
         target_scale=target_scale, compare=compare,
-        inputs_log=INPUTS_LOG[kind],
+        inputs_log=INPUTS_LOG[kind], decision_log=DECISION_LOG if dropped
+        else "",
     )
     script = head + body + tail
 
@@ -756,6 +833,28 @@ def project_error(problem: dict) -> Optional[str]:
     """
     骨組みを書き出せない理由を, make_project が出す誤りの文で返す関数
 
+    project_check の文だけ
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 1 も)
+
+    Returns
+    ----------
+    message: Optional[str]
+        誤りの文 (書き出せるなら None. 書き出し先のファイルは見ない)
+    """
+    # 骨組みを組める error は返さない
+    message = project_check(problem)[0]
+
+    return message
+
+
+def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
+    """
+    骨組みを書き出せない理由と, 残っている組める確かめの error を返す関数
+
     受け渡しの値を作れるか (骨組みを組めない確かめの error が無いか),
     書き出せる受け持ちと正解の種類か, 指標がその他でないか, 入れたデータ
     セットが受け持ちに合うか, の順に確かめる. 「それでも書き出す」と指定
@@ -770,22 +869,20 @@ def project_error(problem: dict) -> Optional[str]:
     ----------
     message: Optional[str]
         誤りの文 (書き出せるなら None. 書き出し先のファイルは見ない)
+    exportable: list[dict]
+        骨組みを組める確かめの error (check は 1 回だけ求める)
     """
     # 受け渡しの値を作れるか (機械学習を使い, 骨組みを組めない確かめの
-    # error が無い. 組める error は open_errors で, 「それでも書き出す」と
-    # 指定すれば書き出せる). 渡せない理由は ValueError の文のまま
+    # error が無い. 組める error は「それでも書き出す」と指定すれば書き出
+    # せる). 渡せない理由は ValueError の文のまま
     message: Optional[str] = None
+    exportable: list[dict] = []
     try:
         upgraded = upgrade_problem(problem)
-        if get_value(upgraded, "ml.use") is not True:
-            raise ValueError(NO_ML)
-        blocking = split_errors(upgraded)[0]
-        if blocking:
-            raise ValueError(errors_text(blocking))
-        build_stages(upgraded)
+        exportable = export_stages(upgraded)[1]
     except ValueError as error:
         message = str(error)
-        return message
+        return message, exportable
 
     # 列の予測と, 予測するの画像の領域と点群だけ
     if not is_column_part(upgraded) and skeleton_kind(upgraded) is None:
@@ -793,7 +890,7 @@ def project_error(problem: dict) -> Optional[str]:
                    "画像の領域, 点群の場合だけです (作る, 並べる, まとめる, "
                    "効果を見積もるの受け持ちと, 他の正解の種類はまだ扱えま"
                    "せん)")
-        return message
+        return message, exportable
 
     # 骨組みが記録できる指標だけ
     if active_value(upgraded, f"{PART}.evaluation.metric") == "other":
@@ -801,12 +898,12 @@ def project_error(problem: dict) -> Optional[str]:
                    "(学習のスクリプトがその指標の求め方を知らないため). 候補"
                    "の指標 (loss など) で書き出し, その指標は学習のスクリプト"
                    "に足して記録してください")
-        return message
+        return message, exportable
 
     # 入れたデータセットの版, 受け持ち, 正解の種類
     message = items_message(upgraded)
 
-    return message
+    return message, exportable
 
 
 def open_errors(
@@ -823,8 +920,8 @@ def open_errors(
     problem: dict
         問題の設定 (版 1 も)
     inspected: Optional[dict] = None
-        同じ問題の設定の inspect_data の結果 (画面が覚えておいたもの. 省く
-        と求める. データを入れていなければ None のまま)
+        画面が覚えておいた inspect_data の結果 (省くか, 今の問題の設定と
+        データから求めたものでなければ求め直す)
 
     Returns
     ----------
@@ -833,11 +930,38 @@ def open_errors(
         データの確かめ)
     """
     # 問題の設定の確かめの組める error と, 入れたデータの確かめの error
-    found = inspected if inspected is not None else inspect_data(problem)
-    errors = split_errors(problem)[1] + [
-        item for item in (found or {}).get("findings", [])
-        if item["level"] == "error"
-    ]
+    errors = split_errors(problem)[1] + data_errors(problem, inspected)
+
+    return errors
+
+
+def data_errors(problem: dict, inspected: Optional[dict]) -> list[dict]:
+    """
+    入れたデータの確かめ (inspect_data の findings) の error を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+    inspected: Optional[dict]
+        覚えておいた inspect_data の結果 (印 key が今のものと同じで,
+        findings が辞書の並びのときだけ使う)
+
+    Returns
+    ----------
+    errors: list[dict]
+        確かめの並び (データを入れていなければ空)
+    """
+    # 古いか別の問題の設定の結果と, 形の崩れた結果は使わず求め直す
+    fresh = (
+        isinstance(inspected, dict)
+        and inspected.get("key") == inspect_key(problem)
+        and isinstance(inspected.get("findings"), list)
+        and all(isinstance(item, dict) for item in inspected["findings"])
+    )
+    found = inspected if fresh else inspect_data(problem)
+    errors = [item for item in (found or {}).get("findings", [])
+              if item.get("level") == "error"]
 
     return errors
 
@@ -866,7 +990,7 @@ def errors_message(errors: list[dict]) -> str:
     return message
 
 
-def errors_section(errors: list[dict]) -> str:
+def errors_section(errors: list[dict], dropped: bool = False) -> str:
     """
     README の, 書き出した時点で残っていた直すところの節を作る関数
 
@@ -874,6 +998,8 @@ def errors_section(errors: list[dict]) -> str:
     ----------
     errors: list[dict]
         確かめの error の並び
+    dropped: bool = False
+        損得と制約に直すところが残り, 意思決定の既定値を付けなかったか
 
     Returns
     ----------
@@ -887,7 +1013,14 @@ def errors_section(errors: list[dict]) -> str:
              "問題の設定と入れたデータの確かめで直すところ (error) が残った"
              "まま, 「それでも書き出す」と指定して書き出した. 学習が失敗したり"
              "結果がおかしかったりしたときは, まずこれを見る. 直したら書き出し"
-             "直す.", ""]
+             "直す. 直すまで, 推論の段階 (ML-Provide) で問題の設定につなげない"
+             " (推論の段階に渡す値は, 直すところが残ると作れないため)."]
+    if dropped:
+        lines.append("")
+        lines.append("損得と制約 (`action.decision`) に直すところが残るので, "
+                     "`train.py` は意思決定の既定値を付けずに推論の一式を作る "
+                     "(`train.log` にもそう書く).")
+    lines.append("")
     lines += [f"- `{item['id']}`: {' '.join(str(item['message']).split())}"
               for item in errors]
     text = "\n".join(lines) + "\n"
@@ -921,7 +1054,7 @@ def skeleton_kind(problem: dict) -> Optional[str]:
 
 def project_files(
     problem: dict, stages: dict, name: Optional[str],
-    data_file: Optional[Path], info: Optional[dict]
+    data_file: Optional[Path], info: Optional[dict], dropped: bool = False
 ) -> dict:
     """
     受け持ちに合う README, config の基準, 学習のスクリプトを作る関数
@@ -938,6 +1071,8 @@ def project_files(
         プロジェクトに写すデータ (プロジェクトからの相対. 無ければ None)
     info: Optional[dict]
         入れたデータセットの説明 (データセットでなければ None)
+    dropped: bool = False
+        損得と制約に直すところが残り, 意思決定の既定値を付けないか
 
     Returns
     ----------
@@ -950,7 +1085,8 @@ def project_files(
         files = {
             "README.md": project_readme(problem, stages, data_file),
             "configs/default/train.yaml": config_text(problem, stages, name),
-            "train.py": training_script(problem, stages, data_file),
+            "train.py": training_script(problem, stages, data_file,
+                                        dropped),
         }
         return files
 
@@ -1054,12 +1190,14 @@ def make_project(
     # その場所を指す. プロジェクトの記録は写しに持たせない (プロジェクトを
     # 動かしても古い場所を指さないように). 元の問題の設定の場所は写しの
     # origin に (推論の段階が元の今の値を読めるように)
-    error = project_error(problem)
+    error, exportable = project_check(problem)
     if error is not None:
         raise ValueError(error)
 
-    # 書き出せる確かめの error は, 「それでも書き出す」のときだけ残ったまま
-    errors = open_errors(problem, inspected)
+    # 書き出せる確かめの error は, 「それでも書き出す」のときだけ残ったまま.
+    # 損得と制約の error が残れば, 推論の一式の既定値を付けない (学習と
+    # 一式が最後まで通るように)
+    errors = exportable + data_errors(problem, inspected)
     if errors and not accept_errors:
         raise ValueError(errors_message(errors))
     problem = upgrade_problem(problem)
@@ -1067,6 +1205,12 @@ def make_project(
         problem = {key: value for key, value in problem.items()
                    if key != "project"}
     stages = build_stages(problem)
+    dropped = any(item["id"] == "action.decision"
+                  or str(item["id"]).startswith("action.decision.")
+                  for item in errors)
+    if dropped:
+        stages = copy.deepcopy(stages)
+        stages["inference"]["decision"] = None
     path = Path(path)
     if origin is not None:
         problem = {**problem, "origin": origin_file(origin, path)}
@@ -1084,10 +1228,10 @@ def make_project(
     files = {
         "problem.yaml": yaml.safe_dump(problem, allow_unicode=True,
                                        sort_keys=False),
-        **project_files(problem, stages, name, data_file, info),
+        **project_files(problem, stages, name, data_file, info, dropped),
         "configs/experiment/train.yaml": EXPERIMENT,
     }
-    files["README.md"] += errors_section(errors)
+    files["README.md"] += errors_section(errors, dropped)
 
     # 既にあるファイルと, ディレクトリを作れない場所の確かめ (全てを確かめ
     # てから書く. 途中で止まって一部だけが残らないように)

@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 from ml_quest.check import finding, is_column_part, is_items_part
 from ml_quest.data import ITEMS_LOADER
-from ml_quest.handoff import export_split, handoff
+from ml_quest.handoff import export_split, export_stages
 from ml_quest.problem import (
     active_value, answer, data_location, get_value, set_value,
     upgrade_problem
@@ -89,20 +89,23 @@ def recipe_from(problem: dict) -> dict:
     Raises
     ----------
     ValueError
-        受け渡せない問題の設定の場合と, 列の予測でもファイルの組の受け持ち
-        でもない場合
+        骨組みを組めない確かめの error がある場合と, 列の予測でもファイル
+        の組の受け持ちでもない場合
     """
-    # 受け渡しの値 (渡せなければ誤り. 版 1 は先に版 2 へ移行)
+    # 受け渡しの値 (骨組みを組めない error があれば誤り. 組める error は
+    # 骨組みの書き出しと同じく止めず, 知らせに. 版 1 は先に版 2 へ移行)
     problem = upgrade_problem(problem)
-    stages = handoff(problem)
+    stages, exportable = export_stages(problem)
     require_column_part(problem, "レシピの下書き")
     data = stages["data"]
+    remaining = [f"問題の設定に直すところが残っています ({item['id']}): "
+                 f"{item['message']}" for item in exportable]
     if is_items_part(problem):
         start = {"load": load_of(data), "recipe": None,
                  "export": export_from(problem, data), "notes": []}
-        start["notes"] = start["export"].pop("notes")
+        start["notes"] = remaining + start["export"].pop("notes")
         return start
-    notes = []
+    notes = remaining
 
     # 書き戻したレシピがあればそれ. 無ければ雛形 (除く列, 系列ごとの決める
     # 時点で分かる最も新しい期の値, 分割)
