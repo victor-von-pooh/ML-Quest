@@ -1018,6 +1018,29 @@ def is_items_part(problem: dict) -> bool:
     return items
 
 
+def is_generate_part(problem: dict) -> bool:
+    """
+    受け持ちが画像の生成 (作るで, 正解の種類が画像) かを返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    generate: bool
+        画像の生成の受け持ちか (出力の形は問わない. 骨組みの書き出しが
+        画像かを確かめる)
+    """
+    # 受け持ちと正解の種類の答え (要らない問いの古い答えは除外)
+    generate = active_value(problem, f"{PART}.role") == "generate" and (
+        active_value(problem, f"{PART}.target.kind") == "image"
+    )
+
+    return generate
+
+
 def check_v1(problem: dict) -> list[dict]:
     """
     版 1 のファイルに書いた, 4 つの他の指標を確かめる関数
