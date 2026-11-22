@@ -243,6 +243,12 @@ def test_apply_export_conflicts() -> None:
         ({"split": {"method": "none"}}, ("warning", "検証用")),
         ({"split": {"valid": 0, "test": 0}}, ("warning", "検証用")),
         ({"split": {"method": "group"}}, ("error", "グループ")),
+        ({"split": {"method": "stratified", "valid": 0.2}},
+         ("error", "分割のしかた stratified")),
+        ({"split": {"valid": "0.2"}}, ("error", "valid の割合")),
+        ({"split": {"valid": 0.2, "test": True}}, ("error", "test の割合")),
+        ({"split": {"valid": 1.5}}, ("error", "valid の割合")),
+        ({"split": {"valid": 0.6, "test": 0.5}}, ("error", "和は 1 未満")),
     ]
     for change, (level, words) in cases:
         export = {**copy.deepcopy(base), **change}
@@ -333,3 +339,75 @@ def test_export_into_project(tmp_path: Path, kind: str, steps: bool) -> None:
     assert again["options"].get("item_steps") == (
         KIND_STEPS[kind] if steps else None
     )
+
+
+def test_export_split_handoff() -> None:
+    """
+    正解の種類に合わない書き戻した書き出しの設定を, 受け渡しも recipe_from
+    と同じく使わないことを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 点群の書き出しの設定を書き戻した領域の受け持ち
+    problem = kind_problem("mask")
+    export = {**recipe_from(problem)["export"],
+              "function": "export_capture_clouds",
+              "split": {"method": "group"}, "groups": {"a": "g1"}}
+    export.pop("notes", None)
+    written = apply_recipe(problem, export)["problem"]
+    data = handoff(answer(written, "issue.owner", "店長"))["data"]
+    assert (data["split"], data["groups"]) == ("random", None)
+    assert recipe_from(written)["export"]["function"] == "export_image_masks"
+
+
+@pytest.mark.parametrize("kind", ["mask", "point_cloud"])
+def test_export_dirs_follow_data(tmp_path: Path, kind: str) -> None:
+    """
+    データの場所を変えると, 前の場所から下書きした入力と正解のディレクトリ
+    が新しい場所の下書きに戻り, 選んだ他のディレクトリは残ることを確かめる
+    関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+    kind: str
+        正解の種類
+
+    Returns
+    ----------
+    None
+    """
+    # 前の場所の下書きを書き戻す
+    old = write_raw(tmp_path / "old", kind)
+    new = write_raw(tmp_path / "new", kind)
+    problem = attach_data(kind_problem(kind), str(old["root"]))
+    export = recipe_from(problem)["export"]
+    export.pop("notes", None)
+    problem = apply_recipe(problem, export)["problem"]
+    assert problem["data"]["export"]["inputs"] == str(old["inputs"])
+
+    # 新しい場所を入れると, 新しい場所から埋まる (分割などは残る)
+    moved = attach_data(problem, str(new["root"]))
+    assert moved["data"]["export"]["inputs"] is None
+    start = recipe_from(moved)["export"]
+    assert start["inputs"] == str(new["inputs"])
+    assert start["targets"] == str(new["targets"])
+    assert start["split"] == export["split"]
+
+    # 同じ場所の入れ直しと, 利用者が選んだ他のディレクトリは変えない
+    again = attach_data(problem, str(old["root"]))
+    assert again["data"]["export"]["inputs"] == str(old["inputs"])
+    chosen = tmp_path / "chosen"
+    chosen.mkdir()
+    custom = {**export, "targets": str(chosen)}
+    problem = apply_recipe(problem, custom)["problem"]
+    moved = attach_data(problem, str(new["root"]))
+    assert moved["data"]["export"]["inputs"] is None
+    assert moved["data"]["export"]["targets"] == str(chosen)

@@ -21,6 +21,10 @@ NO_ML = "機械学習を使わない問題の設定は, 後ろの段階に渡す
 POLICY_KEYS = ["action_limits", "stop", "fallback", "fallback_action",
                "safety_key", "approver"]
 
+# ファイルの組の正解の種類ごとの, ML-EDA の書き出しの関数
+EXPORT_FUNCTIONS = {"mask": "export_image_masks",
+                    "point_cloud": "export_capture_clouds"}
+
 # 安全の違反の信号の名前の既定 (ML-Found の safety_key の既定)
 DEFAULT_SAFETY_KEY = "cost"
 
@@ -481,8 +485,13 @@ def items_data(problem: dict) -> dict:
     data: dict = {}
     if not is_items_part(problem):
         return data
+    # 書き出しが正解の種類に合う設定だけ (recipe_from と同じ扱い)
     saved = get_value(problem, "data.export")
-    saved = saved if isinstance(saved, dict) else {}
+    function = EXPORT_FUNCTIONS.get(
+        active_value(problem, f"{PART}.target.kind")
+    )
+    saved = (saved if isinstance(saved, dict)
+             and saved.get("function") == function else {})
     groups = saved.get("groups")
     data = {"split": export_split(saved),
             "groups": dict(groups) if isinstance(groups, dict) and groups

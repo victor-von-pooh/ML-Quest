@@ -45,6 +45,11 @@ RELEVANT_FINDINGS = {
 # 読み方として持たない設定 (時刻の列は答えから毎回付ける)
 VOLATILE_OPTIONS = {"time_column"}
 
+# ファイルの組の正解の種類ごとの, 入力と正解のディレクトリの名前 (ML-EDA
+# の合成の見本と同じ. recipe_from の下書きが使う)
+PAIR_NAMES = {"mask": ("images", "masks"),
+              "point_cloud": ("captures", "clouds")}
+
 # 写しごとのサブディレクトリの名前 (16 進の桁数. 片付けはこの名前だけ)
 COPY_DIGITS = 12
 COPY_NAME = re.compile(f"[0-9a-f]{{{COPY_DIGITS}}}")
@@ -470,6 +475,68 @@ def interval_of(data: Any, time: Optional[str]) -> Optional[float]:
     return seconds
 
 
+def drafted_dirs(problem: dict) -> set[str]:
+    """
+    前のデータの場所から recipe_from が下書きしうる, 入力と正解のディレク
+    トリを返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (データを入れる前)
+
+    Returns
+    ----------
+    places: set[str]
+        データの場所 (写しと元の場所) そのもの, その中の, と隣の, 入力と
+        正解の名前のディレクトリ
+    """
+    # bridge.pair_dirs と同じ組み立て
+    places: set[str] = set()
+    names = [name for pair in PAIR_NAMES.values() for name in pair]
+    for key in ("data.source", "data.origin"):
+        value = get_value(problem, key)
+        if not isinstance(value, str) or not value:
+            continue
+        place = Path(value)
+        places |= {str(place), *(str(place / name) for name in names),
+                   *(str(place.parent / name) for name in names)}
+
+    return places
+
+
+def reset_export_dirs(
+    problem: dict, updated: dict, location: Path
+) -> None:
+    """
+    データの場所を変えたときに, 前の場所から下書きした書き出しの入力と
+    正解のディレクトリを空にする関数
+
+    Parameters
+    ----------
+    problem: dict
+        データを入れる前の問題の設定
+    updated: dict
+        データを入れた問題の設定 (書き換える)
+    location: Path
+        新しく入れたデータの元の場所
+
+    Returns
+    ----------
+    None
+    """
+    # 同じ元の場所を入れ直した場合と, 利用者が選んだ他のディレクトリは残す
+    saved = get_value(updated, "data.export")
+    before = {get_value(problem, "data.source"),
+              get_value(problem, "data.origin")}
+    if not isinstance(saved, dict) or str(location) in before:
+        return
+    drafted = drafted_dirs(problem)
+    for key in ("inputs", "targets"):
+        if isinstance(saved.get(key), str) and saved[key] in drafted:
+            saved[key] = None
+
+
 def attach_data(
     problem: dict, path: Union[str, Path],
     copy_to: Optional[Union[str, Path]] = None
@@ -525,6 +592,7 @@ def attach_data(
 
     # 場所と読み方と列の名前 (写したなら元の場所も. 時刻の間隔も)
     updated = answer(problem, "data.source", str(copied or location))
+    reset_export_dirs(problem, updated, location)
     origin = None
     if copied == location:
         same = str(location) == get_value(problem, "data.source")
@@ -618,6 +686,7 @@ def attach_items(
 
     # 場所と読み方 (写したなら元の場所も). 列と時刻は持たない
     updated = answer(problem, "data.source", str(place))
+    reset_export_dirs(problem, updated, location)
     origin = None
     if copied == location:
         same = str(location) == get_value(problem, "data.source")

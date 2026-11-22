@@ -1,11 +1,12 @@
 import copy
+import math
 from pathlib import Path
 from typing import Any, Optional
 
 from ml_quest.check import (
     finding, is_column_part, is_generate_part, is_items_part, is_policy_part
 )
-from ml_quest.data import ITEMS_LOADER
+from ml_quest.data import ITEMS_LOADER, PAIR_NAMES
 from ml_quest.handoff import export_split, export_stages
 from ml_quest.problem import (
     active_value, answer, data_location, get_value, set_value,
@@ -20,9 +21,13 @@ TEST_RATIO = 0.15
 # 正解の種類から, ML-EDA のファイルの組の書き出しと, 入力と正解のディレク
 # トリの名前 (ML-EDA の合成の見本と同じ)
 EXPORTS = {
-    "mask": ("export_image_masks", "images", "masks"),
-    "point_cloud": ("export_capture_clouds", "captures", "clouds"),
+    kind: (function, *PAIR_NAMES[kind])
+    for kind, function in (("mask", "export_image_masks"),
+                           ("point_cloud", "export_capture_clouds"))
 }
+
+# 書き出しの分割のしかた (ML-EDA の split の method)
+SPLIT_METHODS = ("random", "group", "none")
 
 # 書き出しの設定の鍵と, 書き出しごとの他の引数 (中身の手順 item_steps を
 # 渡すと ML-EDA は版 3 で書く)
@@ -194,6 +199,10 @@ def export_from(problem: dict, data: dict) -> dict:
     notes = []
     if isinstance(saved, dict) and saved.get("function") == function:
         export = {**copy.deepcopy(saved), "notes": notes}
+        if not export.get("inputs") or not export.get("targets"):
+            inputs, targets = pair_dirs(problem, kind, data, notes)
+            export["inputs"] = export.get("inputs") or inputs
+            export["targets"] = export.get("targets") or targets
         return export
     if isinstance(saved, dict):
         notes.append(f"書き戻した書き出しの設定 ({saved.get('function')}) は"
@@ -702,9 +711,40 @@ def export_conflicts(problem: dict, settings: dict) -> list[dict]:
             f"は {function} で書き出します"
         ))
 
+    # 分割のしかたと割合の形 (書き出しの時点で初めて誤りにならないように)
+    split = settings["split"]
+    if split.get("method") is not None and (
+        split["method"] not in SPLIT_METHODS
+    ):
+        conflicts.append(finding(
+            "error", "data.export",
+            f"分割のしかた {split['method']} は "
+            f"{', '.join(SPLIT_METHODS)} のどれかにしてください"
+        ))
+    for key in ("valid", "test"):
+        value = split.get(key)
+        if value is not None and not (
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value) and 0 <= value < 1
+        ):
+            conflicts.append(finding(
+                "error", "data.export",
+                f"分割の {key} の割合は 0 以上 1 未満の数にしてください (今は "
+                f"{value!r})"
+            ))
+    if all(isinstance(split.get(key), (int, float))
+           and not isinstance(split.get(key), bool)
+           for key in ("valid", "test")) and (
+        split["valid"] + split["test"] >= 1
+    ):
+        conflicts.append(finding(
+            "error", "data.export",
+            "検証用とテスト用の割合の和は 1 未満にしてください (学習用が"
+            "残らないため)"
+        ))
+
     # 検証用の分割と, グループごとの分割のグループ (ML-EDA の既定の割合は
     # 検証用 2 割)
-    split = settings["split"]
     method = export_split(settings)
     if method == "none" or split.get("valid", 1) == 0:
         conflicts.append(finding(
