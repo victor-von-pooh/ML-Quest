@@ -284,6 +284,32 @@ METRICS = [
      "ほど良いかを書く)", "better": None, "fits": [{}]},
 ]
 
+# 今のやり方をデータで書く種類 (action.current の type). 欄 (fields) は
+# 意思決定の型の欄と同じ形, decisions は使える意思決定の型
+BASELINE_TYPES = [
+    {"value": "lag", "label": "k 期前と同じ (前の週の同じ曜日なら 7)",
+     "decisions": ["quantity"],
+     "fields": [{"key": "periods", "label": "期の数 k (1 以上の整数)",
+                 "required": True}]},
+    {"value": "mean", "label": "直前の k 期の平均", "decisions": ["quantity"],
+     "fields": [{"key": "periods", "label": "期の数 k (1 以上の整数)",
+                 "required": True}]},
+    {"value": "column", "label": "今のやり方の値の列 (置いた量, 行動したか)",
+     "decisions": ["quantity", "select", "triage"],
+     "fields": [{"key": "column", "label": "今のやり方の値の列",
+                 "required": True}]},
+]
+
+# 受け渡しのデータの分析の分割の名前 (handoff の data.split. ML-EDA の
+# split の method)
+SPLITS = [
+    {"value": "time", "label": "時刻の順 (後ろの期間を検証用とテスト用に)"},
+    {"value": "group", "label": "相手ごと (同じ相手は同じ分割に)"},
+    {"value": "random", "label": "無作為"},
+    {"value": "stratified", "label": "層別 (クラスの割合をそろえて無作為に)"},
+    {"value": "none", "label": "分けない (全て学習用)"},
+]
+
 # 版 1 のファイルで書ける指標
 V1_METRICS = ["accuracy", "loss", "mae", "rmse"]
 
@@ -582,7 +608,7 @@ QUESTIONS: list[dict[str, Any]] = [
      "required": False,
      "when": [*COLUMN_TARGET, {"id": "action.decision.type",
                         "in": ["quantity", "select", "triage"]}],
-     "title": "今のやり方をデータで書くと",
+     "choices": BASELINE_TYPES, "title": "今のやり方をデータで書くと",
      "help": "1 の「今のやり方」を, データの上の決まりにする. 量なら k 期前と同じ"
              " (前の週の同じ曜日なら 7) か, 直前の k 期の平均か, 今のやり方の"
              "値の列. 選ぶと振り分けなら, 行動したかの列. 書くと, データから"

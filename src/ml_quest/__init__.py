@@ -8,8 +8,8 @@ from ml_quest.problem import (
     new_problem, questions, read_columns, save_problem, upgrade_problem
 )
 from ml_quest.questions import (
-    METHODS, METRICS, OUTPUTS, PART, QUESTIONS, ROLES, SECTIONS,
-    TARGET_KINDS, TARGET_SOURCES, TASKS, UNITS
+    BASELINE_TYPES, METHODS, METRICS, OUTPUTS, PART, QUESTIONS, ROLES,
+    SECTIONS, SPLITS, TARGET_KINDS, TARGET_SOURCES, TASKS, UNITS
 )
 from ml_quest.requirements import FEATURES, required_features
 from ml_quest.skeleton import (
@@ -17,9 +17,10 @@ from ml_quest.skeleton import (
 )
 
 __all__ = [
-    "EXAMPLES", "FEATURES", "FORMAT_VERSION", "LEGACY_KEYS", "METHODS",
-    "METRICS", "OUTPUTS", "PART", "QUESTIONS", "ROLES", "SECTIONS",
-    "TARGET_KINDS", "TARGET_SOURCES", "TASKS", "UNITS", "answer",
+    "BASELINE_TYPES", "EXAMPLES", "FEATURES", "FORMAT_VERSION",
+    "LEGACY_KEYS", "METHODS", "METRICS", "OUTPUTS", "PART", "QUESTIONS",
+    "ROLES", "SECTIONS", "SPLITS", "TARGET_KINDS", "TARGET_SOURCES", "TASKS",
+    "UNITS", "answer",
     "apply_recipe", "attach_data", "check", "describe", "example_problem",
     "get_value", "handoff", "inspect_data", "is_column_part", "is_items_part",
     "is_ready", "load_problem", "make_project", "new_problem",
