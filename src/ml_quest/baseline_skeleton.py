@@ -456,8 +456,8 @@ def scores(
     return result
 '''
 
-# 今のやり方をデータの上で作れない骨組み (画像と文, 画像の領域と点群) で,
-# 答えた今のやり方での指標の値とテスト用の値を並べる部分
+# 今のやり方をデータの上で作れない骨組み (画像, 文, 音声, 画像の領域と点群)
+# で, 答えた今のやり方での指標の値とテスト用の値を並べる部分
 REPORTED = '''
 
 # 比べる相手 (今のやり方). 今のやり方の結果を 1 件ずつ並べられないので, 問題
@@ -586,13 +586,13 @@ def baseline_reason(
     reason: Optional[str]
         理由の文 (比べられるなら None)
     """
-    # 画像と文か, 今のやり方をデータで書いたか, データを入れたか
+    # 1 件の中身で学ぶデータか, 今のやり方をデータで書いたか, データを入れたか
     current = active_value(problem, "action.current")
     task = stages["data"]["task"]
     reason: Optional[str] = None
     if content_kind(stages) is not None:
-        reason = ("入れたデータが 1 件の中身で学ぶ画像か文で, データセット"
-                  "に学習に使う列が無く, 元のデータの同じ行が分からない")
+        reason = ("入れたデータが 1 件の中身で学ぶ画像, 文か音声で, データ"
+                  "セットに学習に使う列が無く, 元のデータの同じ行が分からない")
     elif not isinstance(current, dict) or "type" not in current:
         reason = ("問題の設定に今のやり方をデータで書いていない (今のやり方"
                   "をデータで書く問い, action.current)")
@@ -631,7 +631,7 @@ def baseline_note(
     comment_lines: Callable
         文を 1 行ずつのコメントにする関数 (skeleton.comment_lines)
     retry: bool = True
-        答えて書き出し直せば比べることを書くか (画像と文では False で,
+        答えて書き出し直せば比べることを書くか (画像, 文, 音声では False で,
         代わりに hint を書く)
     hint: str = ""
         retry でないときに書く, 今のやり方での指標の値を答えれば並べる
