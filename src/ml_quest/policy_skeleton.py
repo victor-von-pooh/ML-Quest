@@ -3,7 +3,6 @@ import math
 from string import Template
 from typing import Any, Callable, Optional
 
-from ml_quest.baseline_skeleton import predict_log
 from ml_quest.check import env_id_of
 from ml_quest.handoff import describe
 from ml_quest.problem import active_value
@@ -864,9 +863,10 @@ def policy_script(problem: dict, literal: Callable) -> str:
         method=literal(active_value(problem, f"{PART}.method")),
         approver=literal(active_value(problem, f"{PART}.policy.approver")),
     )
-    script = head + Template(POLICY_MAIN).substitute(
-        predict_log=predict_log(problem)
-    )
+    # train.log の初めの行の方策が出すもの (空なら省く)
+    made = ("方策が出すもの: {PREDICT}. "
+            if active_value(problem, f"{PART}.what") else "")
+    script = head + Template(POLICY_MAIN).substitute(predict_log=made)
 
     return script
 

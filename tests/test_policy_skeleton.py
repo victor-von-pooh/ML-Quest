@@ -286,6 +286,8 @@ def test_policy_training(tmp_path: Path, env_id: str) -> None:
     )
     log = (run / "train.log").read_text(encoding="utf-8")
     assert "守り付きの評価" in log
+    assert "方策が出すもの: 押す向きを選ぶ方策" in log
+    assert "予測すること" not in log
 
     # 守る指標の表 (守りを当てたエピソード)
     table = json.loads((run / "evaluations" / "guarded_episodes.json")
