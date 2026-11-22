@@ -314,6 +314,26 @@ def test_policy_shape_errors() -> None:
     assert errors_of(problem) == ["ml.gpu"]
 
 
+def test_simulator_choices() -> None:
+    """
+    シミュレータのその他の選択肢が, Gymnasium の環境の道でもあると読める
+    ことを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 選択肢の言葉
+    items = {item["id"]: item for item in questions(policy_problem())}
+    labels = {choice["value"]: choice["label"]
+              for choice in items[f"{PART}.simulator"]["choices"]}
+    assert "Gymnasium の環境" in labels["other"]
+
+
 def test_env_id() -> None:
     """
     環境の登録名の問いが方策で今ある記録から集めない場合だけ要り, 形を
