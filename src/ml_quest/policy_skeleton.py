@@ -194,15 +194,17 @@ class ProjectEnv(gymnasium.Env):
             観測, 報酬, 終了 (台から落ちた), 打ち切り (歩数の上限), info
             (安全の違反の信号)
         """
-        # TODO: 課題の動きと報酬に直す. 今は押した向きに速さが変わり, 0 から
-        # 離れるほど報酬が下がり, 台 (位置の絶対値 2) から落ちたら終える
+        # TODO: 課題の動きと報酬に直す. 今は押した向きに速さが変わり, 台の
+        # 上にいる歩は中心に近いほど大きい正の報酬 (0.5 から 1), 台 (位置の
+        # 絶対値 2) から落ちたら大きな負の報酬で終える (早く落ちると得に
+        # ならず, 中心に寄せて長く留まるのが学ばれる)
         position, velocity = (float(value) for value in self.state)
         velocity = 0.9 * velocity + 0.05 * (int(action) - 1)
         position = position + velocity
         self.state = np.array([position, velocity], dtype=np.float32)
         self.steps += 1
-        reward = -abs(position)
         terminated = abs(position) > 2.0
+        reward = -10.0 if terminated else 1.0 - 0.25 * abs(position)
         truncated = self.steps >= self.max_steps
 
         # 台の端に近い (位置の絶対値 1.5 より外) 歩を安全の違反として知らせる
@@ -229,7 +231,7 @@ from typing import Any, Optional
 
 from ml_found import (
     Experiment, MissingRequirementError, Trainer, load_project_config,
-    save_evaluation, start_experiment, write_task
+    require, save_evaluation, start_experiment, write_task
 )
 from model import PolicyNet
 
@@ -246,10 +248,28 @@ METHOD = $method
 # 方策を使ってよいかと守りの範囲を決める人 (問題の設定の答え)
 APPROVER = $approver
 
+# 問題の設定の守りの文 (行動の上限と止める条件. config の guards に数で
+# 書く元)
+ACTION_LIMITS = $action_limits
+STOP = $stop
+
 # 守りの結果の種類 (ML-Found の evaluate_policy の列) と, 行動を返さずに
 # エピソードを終える結果
 STATUSES = ("ok", "clipped", "fallback", "stop", "handover")
 STOP_STATUSES = ("stop", "handover")
+
+# 守る指標の表の列ごとの向き
+GUARDED_BETTER = {"reward": "higher", "fallback": "lower", "stop": "lower",
+                  "handover": "lower"}
+
+# 学習の方法の名前
+ALGORITHMS = ("auto", "reinforce", "actor_critic")
+
+# 守りの数が無いことの知らせ
+NO_LIMITS = ("config の guards に行動の範囲も止める条件も数で書いていない"
+             "ので, 外れたときの動きは観測やモデルの出力が読めないときだけ"
+             "です. 問題の設定の守り (ACTION_LIMITS と STOP) を観測と行動"
+             "の空間に合わせて数にしてください")
 '''
 
 # 環境, 守り, 学習の流れ
@@ -297,7 +317,7 @@ def environment_name(cfg: Any) -> str:
     name: str
         Gymnasium の環境の登録名か, 自作の環境の env:ProjectEnv
     """
-    # 自作の環境は Gymnasium の entry_point の書き方
+    # 自作の環境は Gymnasium の entry_point の書き方 (登録名ではない)
     name = cfg.env.id or "env:ProjectEnv"
 
     return name
@@ -477,6 +497,29 @@ def build_guards(env: Any, cfg: Any) -> dict:
     return guards
 
 
+def guards_numbered(guards: dict) -> bool:
+    """
+    守りに数の範囲が 1 つでもあるかを返す関数
+
+    Parameters
+    ----------
+    guards: dict
+        make_guards の守り
+
+    Returns
+    ----------
+    numbered: bool
+        行動の範囲か止める条件の要素に, null でない値があるか
+    """
+    # 範囲の項目の要素のどれかが数
+    keys = ("action_low", "action_high", "allowed_actions",
+            "observation_low", "observation_high")
+    numbered = any(value is not None for key in keys
+                   for value in (guards.get(key) or []))
+
+    return numbered
+
+
 def describe_guards(guards: dict) -> str:
     """
     守りを 1 行の文にする関数 (評価の表と train.log のため)
@@ -600,21 +643,42 @@ def main() -> None:
     ----------
     None
     """
-    # config と実験. config の requires (rl など) が足りなければ,
-    # start_experiment が出力先を作る前に止まるので, 入れ方を示して終了
+    # config. 学習の方法の名前の確かめ
     cfg, diff = load_project_config(str(PROJECT_DIR))
+    if str(cfg.algorithm) not in ALGORITHMS:
+        print(f"config の algorithm の {cfg.algorithm} は知らない方法です "
+              f"({', '.join(ALGORITHMS)} のどれかにしてください)")
+        sys.exit(1)
+
+    # 学習用, 検証用, 守り付きの評価用の環境は別に作る. 守りも学習の前に
+    # 作る. Gymnasium が足りないか守りが誤りなら, 出力先を作る前に止める
+    try:
+        require("rl")
+        train_env = make_environment(cfg)
+        valid_env = make_environment(cfg)
+        guard_env = make_environment(cfg)
+        guards = build_guards(guard_env, cfg)
+        args = model_args(train_env, cfg)
+    except MissingRequirementError as error:
+        print(error)
+        sys.exit(1)
+    except ValueError as error:
+        print(f"config の guards を直してください ({error}). 外れたときの"
+              "動きが action なら, 番号で選ぶ行動では guards.fallback_action"
+              " に決めた行動の番号を書きます")
+        sys.exit(1)
+    from ml_found.rl import EvaluationLoader, Exploration, RolloutLoader
+    algorithm = algorithm_of(train_env, cfg)
+    name = environment_name(cfg)
+    numbered = guards_numbered(guards)
+
+    # 実験. config の requires が足りなければ, start_experiment が出力先を
+    # 作る前に止まるので, 入れ方を示して終了
     try:
         experiment = start_experiment(cfg, diff, str(PROJECT_DIR))
     except MissingRequirementError as error:
         print(error)
         sys.exit(1)
-    from ml_found.rl import EvaluationLoader, Exploration, RolloutLoader
-
-    # 学習用, 検証用, 守り付きの評価用の環境は別に作る
-    train_env = make_environment(cfg)
-    valid_env = make_environment(cfg)
-    guard_env = make_environment(cfg)
-    name = environment_name(cfg)
 
     # 何の実験か. 方策は受け持ちでは効果を見積もる (effect), 出力の形は
     # 行動 (action), 正解の出どころは環境の報酬 (environment)
@@ -624,17 +688,13 @@ def main() -> None:
                    "origin": {"type": "environment", "name": name}},
         "method": METHOD,
     })
-
-    # 守りは学習の前に作る (config の守りの誤りで, 学習の後に止まらない
-    # ように)
-    guards = build_guards(guard_env, cfg)
-    args = model_args(train_env, cfg)
-    algorithm = algorithm_of(train_env, cfg)
     experiment.logger.info(
         f"問題: {PROBLEM_NAME}. ${predict_log}環境: {name}, 行動の空間: "
         f"{space_kind(train_env)}, 学習の方法: {algorithm}, 守り: "
         f"{describe_guards(guards)}"
     )
+    if not numbered:
+        experiment.logger.warning(NO_LIMITS)
 
     # 1 エポックは rollout.episodes のエピソード (batch_episodes ごとに
     # 更新), 検証は別の種のエピソードを最もスコアの高い行動 (連続の行動は
@@ -673,20 +733,29 @@ def main() -> None:
 
     # 守りと一緒に方策の一式 (policy/) に書き出し, 読み直して守り付きで
     # 動かした結果を守る指標の表に
+    # metadata には, 守りを数にしたか (guards_set) と問題の設定の守りの
+    # 文も残す (数が無いまま書き出した一式と分かるように)
     metadata = {
-        "env_id": name, "algorithm": algorithm, "epoch": epoch,
+        "env_id": cfg.env.id or None, "algorithm": algorithm,
+        "epoch": epoch,
         "model": {"class": "model.PolicyNet", "args": args},
-        "approver": APPROVER,
+        "approver": APPROVER, "guards_set": numbered,
+        "guards_text": {"action_limits": ACTION_LIMITS, "stop": STOP},
     }
+    if not cfg.env.id:
+        metadata["entry_point"] = name
     rows = evaluate_guards(trainer.model, guard_env, cfg, experiment, args,
                            guards, metadata)
     save_evaluation(
         experiment, "guarded_episodes", rows, "environment",
-        description="書き出した方策を読み直し, 守りを当てて環境で動かした "
+        description="書き出した方策を読み直し, 守りを当てて環境で動かした"
         f"エピソード ({weights}). 1 行が 1 エピソードで, 歩ごとの守りの"
-        "結果の数. 実機での結果は別に確かめる",
-        guard=True, epoch=epoch
+        "結果の数. 実機での結果は別に確かめる"
+        + ("" if numbered else f". {NO_LIMITS}"),
+        guard=True, epoch=epoch, better=GUARDED_BETTER
     )
+    for env in (train_env, valid_env, guard_env):
+        env.close()
     print(f"方策の一式: {run_dir / 'policy'} (使ってよいかと守りの範囲は "
           f"{APPROVER or '承認する人'} が決める)")
 
@@ -862,6 +931,10 @@ def policy_script(problem: dict, literal: Callable) -> str:
         predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         method=literal(active_value(problem, f"{PART}.method")),
         approver=literal(active_value(problem, f"{PART}.policy.approver")),
+        action_limits=literal(
+            active_value(problem, f"{PART}.policy.action_limits")
+        ),
+        stop=literal(active_value(problem, f"{PART}.policy.stop")),
     )
     # train.log の初めの行の方策が出すもの (空なら省く)
     made = ("方策が出すもの: {PREDICT}. "
@@ -935,7 +1008,8 @@ def policy_config(
         monitor=training["monitor"], mode=training["mode"],
         env_id=json.dumps(policy["env_id"]) if policy["env_id"] else "null",
         safety_key=json.dumps(policy["safety_key"], ensure_ascii=False),
-        approver=f" {approver} が" if approver else "人が",
+        approver=(f" {' '.join(str(approver).split())} が" if approver
+                  else "人が"),
         limits_comment=yaml_comment("行動の上限", policy["action_limits"])
         + "\n  # TODO: 連続の行動は action_low と action_high, 番号で選ぶ"
         "行動は allowed_actions",
@@ -1036,7 +1110,10 @@ def policy_readme(problem: dict, stages: dict) -> str:
         "読み直して守りを当てたまま環境で動かした結果を守る指標の表 "
         "`evaluations/guarded_episodes.json` に書く. 一式は ML-Inference の "
         "`load_policy(<policy/>, PolicyNet(**args))` で読め (組み立て方は "
-        "`policy.json` の `metadata.model`), 観測から守りを当てた行動を返す. "
+        "`policy.json` の `metadata.model`. `model.PolicyNet` を読むには, "
+        "このプロジェクトのディレクトリを `sys.path` に入れる), 観測から"
+        "守りを当てた行動を返す. 守りを数にしていない (`metadata` の "
+        "`guards_set` が false) 一式は, 範囲の守りが入っていない. "
         "実機での実行は道具の外で, 環境での結果は実機での結果と別に確かめる",
         "", "`train.py`, `model.py`"
         + (", `env.py`" if not policy["env_id"] else "")

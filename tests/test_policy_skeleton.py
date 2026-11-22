@@ -218,6 +218,106 @@ def test_policy_errors(tmp_path: Path) -> None:
         recipe_from(policy_problem())
 
 
+def test_policy_approver_lines(tmp_path: Path) -> None:
+    """
+    改行のある承認する人と守りの文が, config の YAML を崩さないことを
+    確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 改行の後に YAML の行に見える文
+    problem = answer(policy_problem(), f"{PART}.policy.approver",
+                     "設備の\nfallback: stop\n責任者")
+    problem = answer(problem, f"{PART}.policy.stop",
+                     "2 m を出たら\nguards: null")
+    project = tmp_path / "project"
+    make_project(problem, project)
+    config = yaml.safe_load((project / "configs" / "default" / "train.yaml")
+                            .read_text(encoding="utf-8"))
+    assert config["guards"]["fallback"] == "action"
+    assert isinstance(config["guards"], dict)
+    assert "fallback" not in config
+    ast.parse((project / "train.py").read_text(encoding="utf-8"))
+
+
+def test_policy_config_errors(tmp_path: Path) -> None:
+    """
+    学習の方法の名前と決めた行動の誤りが, 出力先を作る前に止まることを
+    確かめる関数 (ML-Found と Gymnasium が無ければ飛ばす)
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 知らない方法, 番号で選ぶ行動で決めた行動が無い
+    for name in TRAINING:
+        pytest.importorskip(name)
+    project = tmp_path / "project"
+    make_project(policy_problem("CartPole-v1"), project)
+    for override, words in (("algorithm=ppo", "知らない方法"),
+                            ("guards.fallback_action=null",
+                             "guards.fallback_action")):
+        done = subprocess.run([sys.executable, "train.py", override],
+                              cwd=project, capture_output=True, text=True,
+                              timeout=600)
+        assert done.returncode == 1, override
+        assert words in done.stdout, done.stdout
+    assert not (project / "outputs").exists()
+
+
+def test_policy_guards_numbers(tmp_path: Path) -> None:
+    """
+    守りに数を書くと, 守り付きの評価で clipped と fallback が数えられ,
+    一式に守りを数にした印が残ることを確かめる関数 (PyTorch, ML-Found,
+    Gymnasium が無ければ飛ばす)
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 選んでよい行動を 0 だけ, 棒の角度を狭く (外れたら決めた行動 0)
+    for name in TRAINING:
+        pytest.importorskip(name)
+    project = tmp_path / "project"
+    make_project(policy_problem("CartPole-v1"), project)
+    done = subprocess.run(
+        [sys.executable, "train.py", *SHORT, "guards.allowed_actions=[0]",
+         "guards.observation_low=[null,null,-0.01,null]",
+         "guards.observation_high=[null,null,0.01,null]"],
+        cwd=project, capture_output=True, text=True, timeout=600
+    )
+    assert done.returncode == 0, done.stderr[-2000:]
+    run = next((project / "outputs").glob("*/*/*/policy")).parent
+    spec = json.loads((run / "policy" / "policy.json")
+                      .read_text(encoding="utf-8"))
+    assert spec["metadata"]["guards_set"] is True
+    assert spec["guards"]["allowed_actions"] == [0]
+    table = json.loads((run / "evaluations" / "guarded_episodes.json")
+                       .read_text(encoding="utf-8"))
+    assert sum(row["clipped"] + row["fallback"]
+               for row in table["rows"]) > 0
+    assert "数で書いていない" not in table["description"]
+    log = (run / "train.log").read_text(encoding="utf-8")
+    assert "数で書いていない" not in log
+
+
 def test_fallback_value() -> None:
     """
     決めた行動の答えを config の数か数の並びにすることを確かめる関数
@@ -281,11 +381,17 @@ def test_policy_training(tmp_path: Path, env_id: str) -> None:
     metadata = spec["metadata"]
     assert metadata["model"]["class"] == "model.PolicyNet"
     assert metadata["approver"] == "設備の責任者"
+    assert metadata["env_id"] == env_id
+    assert ("entry_point" in metadata) == (env_id is None)
+    assert metadata["guards_set"] is False
+    assert metadata["guards_text"] == {
+        "action_limits": "左右に押すだけ", "stop": "台車が中心から 2 m を出たら"
+    }
     assert metadata["algorithm"] == (
         "actor_critic" if env_id == "Pendulum-v1" else "reinforce"
     )
     log = (run / "train.log").read_text(encoding="utf-8")
-    assert "守り付きの評価" in log
+    assert "守り付きの評価" in log and "数で書いていない" in log
     assert "方策が出すもの: 押す向きを選ぶ方策" in log
     assert "予測すること" not in log
 
@@ -293,6 +399,10 @@ def test_policy_training(tmp_path: Path, env_id: str) -> None:
     table = json.loads((run / "evaluations" / "guarded_episodes.json")
                        .read_text(encoding="utf-8"))
     assert table["guard"] is True and table["split"] == "environment"
+    assert "数で書いていない" in table["description"]
+    assert "  " not in table["description"]
+    assert table["better"] == {"reward": "higher", "fallback": "lower",
+                               "stop": "lower", "handover": "lower"}
     assert len(table["rows"]) == 2
     assert {"reward", "length", "end", "ok", "fallback"} <= set(
         table["rows"][0]
