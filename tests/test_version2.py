@@ -619,3 +619,48 @@ def test_project_error() -> None:
         with pytest.raises(ValueError) as raised:
             make_project(problem, Path("/nonexistent-ml-quest-project"))
         assert str(raised.value) == message
+
+
+def test_screen_names() -> None:
+    """
+    画面が写していた名前 (受け渡しの分割の名前, 今のやり方の書き方の名前)
+    が, 説明付きでこのライブラリから取れることを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 分割: 受け渡しとファイルの組の書き出しの分け方を全て含み, 説明付き
+    from ml_quest import BASELINE_TYPES, SPLITS
+    from ml_quest.bridge import SPLIT_METHODS
+
+    names = {item["value"] for item in SPLITS}
+    assert {"time", "group", "random", "stratified"} <= names
+    assert set(SPLIT_METHODS) <= names
+    assert all(item["label"] for item in SPLITS)
+    for name in ("総菜の作る量", "解約の引き止め"):
+        assert handoff(example_problem(name))["data"]["split"] in names
+
+    # 今のやり方の書き方: 問いの選択肢として, 答えた意思決定の型に使える
+    # ものだけと, 欄
+    assert [item["value"] for item in BASELINE_TYPES] == [
+        "lag", "mean", "column"
+    ]
+    items = {item["id"]: item
+             for item in questions(example_problem("総菜の作る量"))}
+    choices = items["action.current"]["choices"]
+    assert [choice["value"] for choice in choices] == ["lag", "mean",
+                                                       "column"]
+    assert choices[0]["fields"][0]["key"] == "periods"
+    items = {item["id"]: item
+             for item in questions(example_problem("解約の引き止め"))}
+    choices = items["action.current"]["choices"]
+    assert [choice["value"] for choice in choices] == ["column"]
+    assert choices[0]["fields"][0]["key"] == "column"
+    with pytest.raises(ValueError, match="lag, mean, column"):
+        answer(example_problem("総菜の作る量"), "action.current",
+               {"type": "median", "periods": 3})

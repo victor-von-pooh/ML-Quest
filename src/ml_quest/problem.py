@@ -10,7 +10,7 @@ import pandas as pd
 import yaml
 
 from ml_quest.questions import (
-    BY_ID, METRIC_TITLES, PART, QUESTIONS, V1_METRICS
+    BASELINE_TYPES, BY_ID, METRIC_TITLES, PART, QUESTIONS, V1_METRICS
 )
 
 # 問題の設定の形の版
@@ -365,12 +365,19 @@ def choices_of(problem: dict, question: dict) -> list[dict]:
         値と説明の並び (出力の形と指標は受け持ち, 正解の種類, タスクに合う
         ものだけ. 同じ値は最初のもの)
     """
-    # 今の答えに合う選択肢. 意思決定の型は欄も
+    # 今の答えに合う選択肢. 意思決定の型と今のやり方の書き方は欄も. 今の
+    # やり方の書き方は, 答えた意思決定の型に使えるものだけ
     choices: list[dict] = []
+    decision = get_value(problem, "action.decision")
+    kind = decision.get("type") if isinstance(decision, dict) else None
     for choice in question.get("choices", []):
         if not choice_fits(problem, choice) or choice["value"] in [
             item["value"] for item in choices
         ]:
+            continue
+        if "decisions" in choice and kind in DECISION_NAMES and (
+            kind not in choice["decisions"]
+        ):
             continue
         choices.append(
             {"value": choice["value"], "label": choice["label"]}
@@ -768,11 +775,12 @@ def clean_baseline(problem: dict, value: Any) -> Optional[dict]:
     # 種類ごとの項目 (期の数は 1 以上の整数, 列は使えるデータの列から)
     if value is None:
         return None
-    if not isinstance(value, dict) or value.get("type") not in (
-        "lag", "mean", "column"
-    ):
-        raise ValueError("action.current の type は lag, mean, column の"
-                         "どれかにしてください")
+    if not isinstance(value, dict) or value.get("type") not in [
+        item["value"] for item in BASELINE_TYPES
+    ]:
+        names = ", ".join(item["value"] for item in BASELINE_TYPES)
+        raise ValueError(f"action.current の type は {names} のどれかにして"
+                         "ください")
     kind = value["type"]
     if kind == "column":
         column = clean_text(value.get("column"), "action.current の column")

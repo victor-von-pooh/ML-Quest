@@ -288,7 +288,7 @@ pip で入らないものを含む外の道具 (ROS2, MuJoCo, CUDA) は, 要る�
 | `list` | 文の並び |
 | `levers` | 要因と打てる手の並び (`decomposition`) |
 | `decision` | 意思決定の型と損得と制約 (ML-Inference の形). `choices` は型ごとに名前と欄 (`fields`: `key`, `label`, `required`, 選んで書く欄は `choices` と選ばないときの意味 `unset`, 他の欄の値で要るかが決まる欄は `when`) を持ち, 画面はこれだけで描く |
-| `baseline` | 今のやり方をデータで書いたもの (`type` と `periods` か `column`. 下の「今のやり方をデータで書く」) |
+| `baseline` | 今のやり方をデータで書いたもの (`type` と `periods` か `column`. 下の「今のやり方をデータで書く」). `choices` は書き方の種類 (`BASELINE_TYPES`. 値, 説明, 欄 `fields`) のうち, 答えた意思決定の型に使えるものだけ (k 期前と平均は量を決めるだけ) |
 | `source` | データの場所 (絶対パス. `~` は展開する). 画面はファイルを選ばせて `attach_data` で入れる (`answer` で場所だけを答えると, 読み方と列の名前は入らない) |
 
 - 各問いは `id` (項目の場所), `section` (1 から 10), `title` (問い), `help` (なぜ問うか, 例), `required`, `kind`, `multiline` を持つ. `when` (条件の並び. 全てを満たすときに要る. 条件は, 項目の値が等しい `equals`, 並びに入る `in`, 答えたか `filled`, 中の条件のどれかを満たす `any` (例: データの読み込みが画像か文か, 正解の種類が画像の領域か点群か), 中の条件のどれも満たさない `none`) で, 今の答えのもとで要るかが決まる (機械学習を使う場合だけ, 受け持ちごと, 列の予測だけ, 分類だけ, 時系列の予測だけ, など)
@@ -396,6 +396,8 @@ pip で入らないものを含む外の道具 (ROS2, MuJoCo, CUDA) は, 要る�
 | 方策の守り | `policy` (方策のときだけ. `action_limits`, `stop`, `fallback`, `fallback_action`, `safety_key` (答えていなければ ML-Found の既定の `cost`), `approver`, `env_id` (環境の登録名. 答えていないか要らない問いなら `None`). 方策でなければ `None`) | ML-Found の `make_guards` と `safety_key`, 学習の環境 (`make_env`. 骨組みの config の `env.id`), 推論の段階の守り |
 
 最良を選ぶ指標の候補は, 上の「最良を選ぶ指標」.
+
+データの分析の分割 (`data.split`) の値の名前と説明は `SPLITS` (`time` 時刻の順, `group` 相手ごと, `random` 無作為, `stratified` 層別, `none` 分けない. 問いの選択肢と同じ `value` と `label` の並び) で返す. 画面 (ML-Pathfinder) は分割の名前と今のやり方の書き方の名前を写さず, これと問いの `choices` を使う
 
 - 読む側は, 知らない値 (`requires`, `policy`, `project` など) を無視してよい
 - 受け持ちの答えは `part` (`role`, `unit`, `output`, `target_kind`, `target_source`, `target_process`, `method`) で渡す. 学習・評価とモデルの作成にも `role` と `target_kind` を入れる
