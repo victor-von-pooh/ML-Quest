@@ -31,7 +31,7 @@ GUARDS = [("policy.action_limits", "左右に押すだけ"),
           ("policy.approver", "設備の責任者")]
 
 
-def policy_problem(env_id: str = None) -> dict:
+def policy_problem(env_id: str = None, metric: str = "reward") -> dict:
     """
     見本の課題から, 続けて行動を選ぶ方策の問題の設定を作る関数
 
@@ -39,11 +39,13 @@ def policy_problem(env_id: str = None) -> dict:
     ----------
     env_id: str = None
         Gymnasium の環境の登録名 (None なら答えない)
+    metric: str = "reward"
+        最良を選ぶ指標 (方策の既定の reward か, 古い設定の loss)
 
     Returns
     ----------
     problem: dict
-        効果を見積もるで方策, シミュレータで集め, 指標が loss の問題の設定
+        効果を見積もるで方策, シミュレータで集める問題の設定
     """
     # 1 から 4 と 9, 10 は見本のまま, 受け持ちは作り直し
     problem = example_problem("総菜の作る量")
@@ -54,7 +56,7 @@ def policy_problem(env_id: str = None) -> dict:
                        ("output", "effect"), ("target.source", "feedback"),
                        ("method", "scratch"), ("what", "押す向きを選ぶ方策"),
                        ("item", "1 歩"), ("baseline", "人の操作"),
-                       ("evaluation.metric", "loss"),
+                       ("evaluation.metric", metric),
                        ("evaluation.link", "報酬が大きいほど損が減る"),
                        ("autonomous", True), ("collect", "simulator"),
                        ("simulator", "other"), *GUARDS]:
@@ -125,7 +127,7 @@ def test_policy_project(tmp_path: Path) -> None:
     assert config["requires"] == ["rl"]
     assert config["experiment"]["name"] == "CartPole-v1_policy"
     assert (config["trainer"]["monitor"], config["trainer"]["mode"]) == (
-        "valid/loss", "min"
+        "valid/reward", "max"
     )
     assert config["trainer"]["monitor_tiebreak"] == "train/reward"
     assert config["env"]["id"] == "CartPole-v1"
@@ -144,9 +146,39 @@ def test_policy_project(tmp_path: Path) -> None:
     # README: 環境, 守り, 方策の一式
     readme = (project / "README.md").read_text(encoding="utf-8")
     for words in ("`CartPole-v1`", "設備の責任者", "policy/",
+                  "`valid/reward` (評価のエピソードの報酬の和の平均. 大きい",
                   "guarded_episodes", "データの分析の段階は無い"):
         assert words in readme, words
     assert "env.py" not in readme
+
+
+def test_policy_loss_metric(tmp_path: Path) -> None:
+    """
+    指標に損失 (loss) を選んだ古い方策の問題の設定も, 今まで通り
+    valid/loss を min で監視する骨組みを書き出せることを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 誤りが無く, 監視と README の説明が損失の向き
+    problem = policy_problem("CartPole-v1", metric="loss")
+    assert [item for item in check(problem) if item["level"] == "error"] == []
+    assert project_error(problem) is None
+    project = tmp_path / "project"
+    make_project(problem, project)
+    config = yaml.safe_load((project / "configs" / "default" / "train.yaml")
+                            .read_text(encoding="utf-8"))
+    assert (config["trainer"]["monitor"], config["trainer"]["mode"]) == (
+        "valid/loss", "min"
+    )
+    readme = (project / "README.md").read_text(encoding="utf-8")
+    assert "`valid/loss` (評価のエピソードの報酬の和の平均の符号" in readme
 
 
 def test_policy_env_template(tmp_path: Path) -> None:
@@ -203,7 +235,9 @@ def test_policy_errors(tmp_path: Path) -> None:
     # 今ある記録から集める, 指標が qini, 方策でない効果の見積もり
     logged = answer(policy_problem(), f"{PART}.collect", "log")
     qini = answer(policy_problem(), f"{PART}.evaluation.metric", "qini")
-    uplift = answer(policy_problem(), f"{PART}.autonomous", False)
+    uplift = answer(policy_problem(metric="loss"), f"{PART}.autonomous",
+                    False)
+    assert "「評価のエピソードの報酬の和の平均" in project_error(qini)
     assert "「検証用の分割での損失" in project_error(qini)
     assert "今は「効果の順の当たり (Qini" in project_error(qini)
     for problem, words in ((logged, "今ある記録"), (qini, "Qini"),
@@ -441,6 +475,12 @@ def test_policy_training(tmp_path: Path, env_id: str) -> None:
     project = tmp_path / "project"
     make_project(problem, project)
     run = train(project)
+
+    # 評価の報酬 (valid/reward) を大きいほど良い向きで監視し, 記録する
+    status = json.loads((run / "run.json").read_text(encoding="utf-8"))
+    assert (status["monitor"], status["mode"]) == ("valid/reward", "max")
+    header = (run / "history.csv").read_text(encoding="utf-8").splitlines()[0]
+    assert "valid/reward" in header.split(",")
 
     # 何の実験か (環境の報酬)
     task = yaml.safe_load((run / "task.yaml").read_text(encoding="utf-8"))

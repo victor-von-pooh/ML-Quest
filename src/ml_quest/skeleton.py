@@ -1136,11 +1136,11 @@ def policy_message(problem: dict) -> Optional[str]:
     Returns
     ----------
     message: Optional[str]
-        誤りの文 (今ある記録から学ぶ, 指標が損失でない. 書き出せるなら
-        None)
+        誤りの文 (今ある記録から学ぶ, 指標が報酬でも損失でもない. 書き出せる
+        なら None)
     """
-    # 環境とやり取りして学び, 評価の報酬 (valid/loss はその符号の反転) で
-    # 選ぶ
+    # 環境とやり取りして学び, 評価の報酬 (valid/reward. valid/loss はその
+    # 符号の反転) で選ぶ
     collect = active_value(problem, f"{PART}.collect")
     metric = active_value(problem, f"{PART}.evaluation.metric")
     message = None
@@ -1148,9 +1148,10 @@ def policy_message(problem: dict) -> Optional[str]:
         message = ("方策の骨組みは, 環境で行動を試して学びます. 今ある記録"
                    "から方策を学ぶ骨組みはまだありません (行動の結果の集め方"
                    "を, 実際に試すかシミュレータにしてください)")
-    elif metric not in ("loss", "other"):
+    elif metric not in ("reward", "loss", "other"):
         message = (
             "方策の骨組みは, 最良を選ぶ指標が"
+            f"{choice_label(METRICS, 'reward', problem)}か"
             f"{choice_label(METRICS, 'loss', problem)}の場合だけです (今は"
             f"{choice_label(METRICS, metric, problem)}. 方策の損失は評価の"
             "エピソードの報酬の和の平均の符号を反転した値です)"

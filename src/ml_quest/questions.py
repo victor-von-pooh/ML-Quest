@@ -235,10 +235,11 @@ TASKS = [
 
 # 最良のモデルを選ぶ指標. fits は合う受け持ち, 正解の種類, タスクの組の
 # 並び (kinds と tasks が無ければ問わない). better は大きいほど良いか小さい
-# ほど良いか. tasks は版 1 の形 (列の予測のタスク). loss は 2 つ (分類の
-# 交差エントロピーと, 他の受け持ちの損失. 監視する名前は同じ valid/loss
+# ほど良いか. tasks は版 1 の形 (列の予測のタスク). policy は続けて行動を
+# 選ぶ方策 (方策かの答え) だけに合う目印. loss は 2 つ (分類の交差
+# エントロピーと, 他の受け持ちの損失. 監視する名前は同じ valid/loss
 # なので値も同じ). 選択肢は questions の choices (今の答えで絞り, 同じ値は
-# 1 つ) の利用
+# 1 つ) の利用. reward は方策の既定なので, 方策の選択肢の先頭
 METRICS = [
     {"value": "accuracy", "label": "当たった割合 (正解率. 大きいほど良い)",
      "tasks": ["classification"], "better": "higher",
@@ -258,6 +259,9 @@ METRICS = [
      "better": "lower",
      "fits": [{"role": "predict", "kinds": ["column"],
                "tasks": ["regression", "forecasting"]}]},
+    {"value": "reward", "label": "評価のエピソードの報酬の和の平均 (大きい"
+     "ほど良い. 方策の既定)", "better": "higher",
+     "fits": [{"role": "effect", "policy": True}]},
     {"value": "loss", "label": "検証用の分割での損失 (小さいほど良い)",
      "better": "lower",
      "fits": [{"role": "predict", "kinds": ["mask", "point_cloud", "text"]},

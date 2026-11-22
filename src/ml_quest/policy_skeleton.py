@@ -15,6 +15,13 @@ POLICY_LIBRARIES = ["rl"]
 # もの. 番号で選ぶ行動と連続の行動)
 SPACES = ("Discrete", "Box")
 
+# 監視する指標の README の説明 (他はその他の指標)
+MONITOR_NAMES = {
+    "valid/reward": "評価のエピソードの報酬の和の平均. 大きいほど良い",
+    "valid/loss": "評価のエピソードの報酬の和の平均の符号を反転した値. "
+                  "小さいほど良い",
+}
+
 # 方策のモデル (観測から行動のスコアか平均と, 状態の価値)
 POLICY_MODEL = '''"""
 方策のモデル (ML-Quest が問題の設定から書き出した骨組み)
@@ -807,8 +814,9 @@ optimizer:
 
 trainer:
   epochs: 20
-  # 問題の設定の「最良を選ぶ指標」. 強化学習の valid/loss は評価の
-  # エピソードの報酬の和の平均の符号を反転した値 (小さいほど報酬が大きい)
+  # 問題の設定の「最良を選ぶ指標」. 強化学習の valid/reward は評価の
+  # エピソードの報酬の和の平均 (大きいほど良い. max), valid/loss はその
+  # 符号を反転した値 (小さいほど報酬が大きい. min)
   monitor: $monitor
   mode: $mode
   # 評価の報酬が上限で並んだ場合は, 学習のエピソードの報酬が大きい方
@@ -1111,6 +1119,7 @@ def policy_readme(problem: dict, stages: dict) -> str:
     """
     # 筋道の要約
     policy = stages["policy"]
+    monitor = stages["training"]["monitor"]
     names = {item["value"]: item["label"] for item in FALLBACKS}
     lines = [f"# {problem.get('name', '')}", "",
              "ML-Quest の問題の設定 (`problem.yaml`) から書き出した, "
@@ -1151,8 +1160,8 @@ def policy_readme(problem: dict, stages: dict) -> str:
         "モデルは `model.py` の `PolicyNet` (印 TODO). 学習の方法は config "
         "の `algorithm` (`auto` は番号で選ぶ行動なら REINFORCE の "
         "`ReinforceStep`, 連続の行動なら `ActorCriticStep`). 検証用の "
-        f"`{stages['training']['monitor']}` (評価のエピソードの報酬の和の"
-        "平均の符号を反転した値) が最も良いモデルを選ぶ. 結果は "
+        f"`{monitor}` ({MONITOR_NAMES.get(monitor, '問題の設定で書いた指標')}"
+        ") が最も良いモデルを選ぶ. 結果は "
         "`outputs/<実験の名前>/<日付>/<時刻>/` に残る (`task.yaml`, 学習の"
         "記録)",
         "4. **方策の一式と守り付きの評価** (ML-Inference, ML-Provide): 学習"
