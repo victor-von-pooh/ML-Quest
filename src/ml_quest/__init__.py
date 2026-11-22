@@ -18,6 +18,7 @@ from ml_quest.questions import (
     SECTIONS, SPLITS, TARGET_KINDS, TARGET_SOURCES, TASKS, UNITS
 )
 from ml_quest.requirements import FEATURES, required_features
+from ml_quest.sensitivity import SENSITIVITY_FIELDS, decision_sensitivity
 from ml_quest.skeleton import (
     make_project, open_errors, project_error, record_project
 )
@@ -25,13 +26,14 @@ from ml_quest.skeleton import (
 __all__ = [
     "BASELINE_TYPES", "COPY_NAME", "EXAMPLES", "FEATURES", "FORMAT_VERSION",
     "LEGACY_KEYS", "METHODS", "METRICS", "MODEL_EXAMPLES", "OUTPUTS", "PART",
-    "QUESTIONS", "ROLES", "SECTIONS", "SPLITS", "TARGET_KINDS",
-    "TARGET_SOURCES", "TASKS", "UNITS", "active_value", "answer",
-    "apply_recipe", "attach_data", "check", "decision_text", "describe",
-    "example_problem", "get_value", "handoff", "inspect_data", "inspect_key",
-    "is_column_part", "is_items_part", "is_ready", "load_problem",
-    "make_project", "model_example", "new_problem", "open_errors",
-    "problem_origin", "project_error", "project_of", "prune_copies",
-    "questions", "read_columns", "recipe_from", "record_project",
-    "required_features", "resolve_choice", "save_problem", "upgrade_problem"
+    "QUESTIONS", "ROLES", "SECTIONS", "SENSITIVITY_FIELDS", "SPLITS",
+    "TARGET_KINDS", "TARGET_SOURCES", "TASKS", "UNITS", "active_value",
+    "answer", "apply_recipe", "attach_data", "check",
+    "decision_sensitivity", "decision_text", "describe", "example_problem",
+    "get_value", "handoff", "inspect_data", "inspect_key", "is_column_part",
+    "is_items_part", "is_ready", "load_problem", "make_project",
+    "model_example", "new_problem", "open_errors", "problem_origin",
+    "project_error", "project_of", "prune_copies", "questions",
+    "read_columns", "recipe_from", "record_project", "required_features",
+    "resolve_choice", "save_problem", "upgrade_problem"
 ]

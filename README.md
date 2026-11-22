@@ -8,6 +8,7 @@
 - **確かめ**: 答えどうしの食い違いと足りない答えを `error`, `warning`, `info` で返す. 課題から行動までの要約の文も返す
 - **受け渡し**: 後ろの段階 (データの分析, モデルの作成, 学習・評価, 推論) が要る値と, 要る機能 (強化学習, MuJoCo, ROS2, CUDA), 方策の守り, 書き出したプロジェクトの場所をまとめて返す
 - **データからの候補**: 手元のデータを入れると, 答えの候補と今のやり方の損 (指標の今の値の候補) を出す (ML-EDA を使う)
+- **損得の値の幅**: 損得と制約の値を幅の中で変えたとき, 決め方の値 (置く水準, 得になる確率の下限, 回すしきい値), 件数の上限, データの上の今のやり方の損がどう変わるかを返す
 - **骨組み**: [ML-Found](https://github.com/victor-von-pooh/ML-Found) のプロジェクトの骨組み (config, 学習のスクリプト, 比べる相手との評価の表) を書き出す. 書き出せるのは, 列の予測 (表, 時系列, 画像, 文, 音声), 画像の領域と点群, 画像の生成, 続けて行動を選ぶ方策 (最良を選ぶ指標は報酬 (`reward`) が既定. 方策の頭は ML-ModelControl の定義で組み, 方策の一式に定義を写す. 守りと一緒に書き出す). 既製のモデルをそのまま使う画像の分類は, 学習のスクリプトの代わりに ML-Inference の既製のモデルの一式を作るスクリプトと config を書き出す
 - **見本**: 架空の課題の問題の設定 (量を決める予測, 対象を選ぶ分類, 機械学習を使わない出口) を作る
 
@@ -15,7 +16,7 @@
 
 | 相手 | 使うもの |
 | --- | --- |
-| [ML-Pathfinder](https://github.com/victor-von-pooh/ML-Pathfinder) (問題の設定) | 問い (`questions`, `answer`), 確かめ (`check`), 要約 (`describe`), データの候補 (`attach_data`, `inspect_data`), 骨組みの書き出し (`make_project`, `record_project`), 見本 (`example_problem`) |
+| [ML-Pathfinder](https://github.com/victor-von-pooh/ML-Pathfinder) (問題の設定) | 問い (`questions`, `answer`), 確かめ (`check`), 要約 (`describe`), データの候補 (`attach_data`, `inspect_data`), 損得の値の幅 (`decision_sensitivity`), 骨組みの書き出し (`make_project`, `record_project`), 見本 (`example_problem`) |
 | ML-Fathom (データの分析) | データの分析の受け渡しの値 (`handoff`), レシピの下書きと書き戻し (`recipe_from`, `apply_recipe`) |
 | ML-CreateArchitecture (モデルの作成) | モデルの作成の受け渡しの値 (出力の大きさ, 受け持ちに合う雛形 `example`. `model_example` でも求まる), プロジェクトのモデルの定義の置き場 |
 | ML-Dashboard (学習・評価) | 学習・評価の受け渡しの値 (骨組みの外の学習でも使う監視する指標と向き), 要る機能, 書き出した骨組みのプロジェクト |
@@ -72,6 +73,17 @@ problem = answer(problem, "action.current", {"type": "lag", "periods": 7})   # �
 found = inspect_data(problem)    # 概要, 答えの候補, 確かめ, 今のやり方の損 (指標の今の値の候補)
 found["key"] == inspect_key(problem)   # 覚えておいた結果が今の問題の設定とデータのものか (変われば False)
 COPY_NAME.fullmatch("5a75d2e92f54")    # attach_data が作る写しのサブディレクトリの名前の形 (12 桁の 16 進)
+```
+
+損得の値に自信が無ければ, 幅を渡して結論の変わり方を見る (値は 1 つずつ変え, 他の値は今のまま):
+
+```python
+from ml_quest import SENSITIVITY_FIELDS, decision_sensitivity
+
+result = decision_sensitivity(problem, {"under_cost": [100, 300], "over_cost": [100, 200]})
+for field in result["fields"]:
+    print(field["sentence"])   # 置く水準と, データの上の今のやり方の損の変わり方
+SENSITIVITY_FIELDS["select"]   # 型ごとの幅を渡せる項目
 ```
 
 データの分析の段階とつなぐ部品 (全体のシステムで使う):

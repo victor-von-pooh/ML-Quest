@@ -1542,56 +1542,21 @@ def baseline_result(problem: dict, data: Any) -> Optional[dict]:
         total, rows, days, per_30_days, sentence か, 求められない理由
         (reason だけ). 今のやり方を書いていなければ None
     """
-    # 目的の列, 行動, 今のやり方が揃うこと
-    current = active_value(problem, "action.current")
-    if not current:
-        return None
+    # 行ごとの部品と, 損得の値での損
+    parts = loss_parts(problem, data)
+    if parts is None or "reason" in parts:
+        return parts
     decision = active_value(problem, "action.decision") or {}
-    target = active_value(problem, f"{PART}.target.column")
-    frame = data.frame
-    time = active_value(problem, f"{PART}.time_column") or data.roles.get(
-        "time"
-    )
-    interval = get_value(problem, "data.interval_seconds") or interval_of(
-        data, time
-    )
-    reason = None
-    if not target or target not in frame.columns:
-        reason = "目的の列がデータに無いので, 今のやり方の損は求めません"
-    elif decision.get("type") == "select":
-        reason = ("対象を選ぶ行動は, 行動した行の結果が行動の後の値なので, "
-                  "今のやり方の得は求めません (試して確かめる)")
-    elif current["type"] != "column" and (
-        not time or time not in frame.columns or not interval
-    ):
-        reason = ("k 期前と平均は時刻の列で数えるので, 時刻の列が要ります "
-                  "(無ければ今のやり方の値の列で書く)")
-    elif current["type"] == "column" and current.get("column") not in (
-        frame.columns
-    ):
-        reason = f"今のやり方の列 {current.get('column')} がデータにありません"
-    if reason:
-        return {"reason": reason}
     try:
-        series = [name for name in active_value(problem, f"{PART}.series_by")
-                  or [] if name in frame.columns]
-        values = rows_result(problem, frame, decision, current, target,
-                             series, time, interval)
+        values = parts_loss(parts, decision)
     except (KeyError, ValueError, TypeError) as error:
         return {"reason": f"今のやり方の損を求められません: {error}"}
-    if values is None or values.empty:
+    if values.empty:
         return {"reason": "今のやり方の損を求められる行がありません"}
 
-    # 期間 (時刻の列があれば, 間隔 1 つ分を足した日数) と 30 日あたり
+    # 期間と 30 日あたり
     total = float(values.sum())
-    days = None
-    if time and time in frame.columns:
-        times = pd.to_datetime(frame.loc[values.index, time], errors="coerce")
-        if times.notna().any():
-            span = (times.max() - times.min()).total_seconds() + (
-                interval or 0
-            )
-            days = span / 86400
+    days = period_days(parts, values.index)
     per_30 = total / days * 30 if days is not None and days >= 1 else None
     period = f"{days:,.0f} 日で" if days is not None else "データの全てで"
     sentence = (f"今のやり方の損は, {period} {total:,.0f}"
@@ -1604,70 +1569,168 @@ def baseline_result(problem: dict, data: Any) -> Optional[dict]:
     return result
 
 
-def rows_result(
-    problem: dict, frame: pd.DataFrame, decision: dict, current: dict,
-    target: str, series: list[str], time: Optional[str],
-    interval: Optional[float]
-) -> Optional[pd.Series]:
+def loss_parts(problem: dict, data: Any) -> Optional[dict]:
     """
-    行ごとの今のやり方の損 (量と振り分け) を求める関数
+    今のやり方の損を損得の値から求めるための, 行ごとの部品を作る関数
+
+    量は足りない量と余る量, 振り分けは回したかと当たりか. 損得の値を
+    変えても部品は同じなので, 値ごとに求め直さずに済む
 
     Parameters
     ----------
     problem: dict
         問題の設定
-    frame: pd.DataFrame
-        データの表
-    decision: dict
-        意思決定の型と損得
-    current: dict
-        今のやり方
-    target: str
-        目的の列
-    series: list[str]
-        系列を分ける列
-    time: Optional[str]
-        時刻の列
-    interval: Optional[float]
-        時刻の間隔 (秒)
+    data: Any
+        ML-EDA の Data
 
     Returns
     ----------
-    values: Optional[pd.Series]
-        求められた行の損 (損得の値か今のやり方が欠けた行は除く)
+    parts: Optional[dict]
+        kind, frame, time, interval と, 量は short と excess, 振り分けは
+        flagged と hit (部品の揃う行だけ) か, 求められない理由 (reason
+        だけ). 今のやり方を書いていなければ None
+    """
+    # 目的の列, 行動, 今のやり方が揃うこと
+    current = active_value(problem, "action.current")
+    if not current:
+        return None
+    decision = active_value(problem, "action.decision") or {}
+    kind = decision.get("type")
+    target = active_value(problem, f"{PART}.target.column")
+    frame = data.frame
+    time = active_value(problem, f"{PART}.time_column") or data.roles.get(
+        "time"
+    )
+    interval = get_value(problem, "data.interval_seconds") or interval_of(
+        data, time
+    )
+    positive = active_value(problem, f"{PART}.positive")
+    reason = None
+    if not target or target not in frame.columns:
+        reason = "目的の列がデータに無いので, 今のやり方の損は求めません"
+    elif kind == "select":
+        reason = ("対象を選ぶ行動は, 行動した行の結果が行動の後の値なので, "
+                  "今のやり方の得は求めません (試して確かめる)")
+    elif current["type"] != "column" and (
+        not time or time not in frame.columns or not interval
+    ):
+        reason = ("k 期前と平均は時刻の列で数えるので, 時刻の列が要ります "
+                  "(無ければ今のやり方の値の列で書く)")
+    elif current["type"] == "column" and current.get("column") not in (
+        frame.columns
+    ):
+        reason = f"今のやり方の列 {current.get('column')} がデータにありません"
+    elif kind not in ("quantity", "triage") or (
+        kind == "triage" and positive is None
+    ):
+        reason = "今のやり方の損を求められる行がありません"
+    if reason:
+        return {"reason": reason}
+
+    # 量: 足りない量と余る量
+    parts: dict = {"kind": kind, "frame": frame, "time": time,
+                   "interval": interval}
+    y = pd.to_numeric(frame[target], errors="coerce")
+    try:
+        if kind == "quantity":
+            series = [name for name in active_value(
+                problem, f"{PART}.series_by"
+            ) or [] if name in frame.columns]
+            placed = baseline_values(frame, current, target, series,
+                                     str(time), float(interval or 0))
+            keep = placed.notna() & y.notna()
+            parts["short"] = np.maximum(y - placed, 0)[keep]
+            parts["excess"] = np.maximum(placed - y, 0)[keep]
+            return parts
+
+        # 振り分け: 回したかの列と, 当たりか (読めない値は除く)
+        flags = acted(frame[current["column"]])
+        hit = frame[target].map(label_text) == label_text(
+            number_or_text(str(positive))
+        )
+        keep = (flags.notna() & frame[target].notna()).astype(bool)
+        parts["flagged"] = flags.fillna(False).astype(bool)[keep]
+        parts["hit"] = hit[keep]
+    except (KeyError, ValueError, TypeError) as error:
+        return {"reason": f"今のやり方の損を求められません: {error}"}
+
+    return parts
+
+
+def parts_loss(
+    parts: dict, decision: dict, plan: str = "current"
+) -> pd.Series:
+    """
+    行ごとの部品と損得の値から, 行ごとの損を求める関数
+
+    Parameters
+    ----------
+    parts: dict
+        loss_parts の部品
+    decision: dict
+        意思決定の型と損得
+    plan: str = "current"
+        今のやり方 (current) か, 振り分けで全てを回す (all) か, どれも
+        回さない (none) か
+
+    Returns
+    ----------
+    values: pd.Series
+        行ごとの損 (損得の値が欠けた行は除く)
     """
     # 量: 足りない損と余る損
-    kind = decision["type"]
-    y = pd.to_numeric(frame[target], errors="coerce")
-    if kind == "quantity":
-        placed = baseline_values(frame, current, target, series,
-                                 str(time), float(interval or 0))
-        under = amount_values(frame, decision["under_cost"])
-        over = amount_values(frame, decision["over_cost"])
-        keep = placed.notna() & y.notna() & under.notna() & over.notna()
-        loss = under * np.maximum(y - placed, 0) + over * np.maximum(
-            placed - y, 0
-        )
+    frame = parts["frame"]
+    if parts["kind"] == "quantity":
+        index = parts["short"].index
+        under = amount_values(frame, decision["under_cost"]).loc[index]
+        over = amount_values(frame, decision["over_cost"]).loc[index]
+        keep = under.notna() & over.notna()
+        loss = under * parts["short"] + over * parts["excess"]
         values = loss[keep]
         return values
 
-    # 振り分け: 回したかの列と, 当たりか (読めない値は除く)
-    positive = active_value(problem, f"{PART}.positive")
-    if kind != "triage" or positive is None:
-        return None
-    flags = acted(frame[current["column"]])
-    hit = frame[target].map(label_text) == label_text(
-        number_or_text(str(positive))
-    )
-    miss = amount_values(frame, decision["miss_cost"])
-    alarm = amount_values(frame, decision["false_alarm_cost"])
-    keep = (flags.notna() & frame[target].notna() & miss.notna()
-            & alarm.notna()).astype(bool)
-    flagged = flags.fillna(False).astype(bool)
+    # 振り分け: 当たりの見逃しと外れの空振り
+    hit = parts["hit"]
+    flagged = {"current": parts["flagged"], "all": hit | True,
+               "none": hit & False}[plan]
+    miss = amount_values(frame, decision["miss_cost"]).loc[hit.index]
+    alarm = amount_values(frame, decision["false_alarm_cost"]).loc[hit.index]
+    keep = miss.notna() & alarm.notna()
     loss = miss * (~flagged & hit) + alarm * (flagged & ~hit)
     values = loss[keep]
 
     return values
+
+
+def period_days(parts: dict, index: pd.Index) -> Optional[float]:
+    """
+    損を求めた行の期間を日数で求める関数
+
+    Parameters
+    ----------
+    parts: dict
+        loss_parts の部品
+    index: pd.Index
+        損を求めた行
+
+    Returns
+    ----------
+    days: Optional[float]
+        時刻の範囲に間隔 1 つ分を足した日数 (時刻の列が無ければ None)
+    """
+    # 時刻の列があれば, 間隔 1 つ分を足した日数
+    frame, time = parts["frame"], parts["time"]
+    if not time or time not in frame.columns:
+        return None
+    times = pd.to_datetime(frame.loc[index, time], errors="coerce")
+    if not times.notna().any():
+        return None
+    span = (times.max() - times.min()).total_seconds() + (
+        parts["interval"] or 0
+    )
+    days = span / 86400
+
+    return days
 
 
 def inspect_data(problem: dict) -> Optional[dict]:
