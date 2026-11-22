@@ -1017,6 +1017,11 @@ def test_group_time_and_stratified_group() -> None:
     assert "時刻" in names["group_time"]
     assert "分類だけ" in names["stratified_group"]
 
+    # グループを使う分割が, 公開の分割の名前の目印から分かる
+    grouped = {item["value"] for item in SPLITS if item["grouped"]}
+    assert grouped == {"group", "group_time", "stratified_group"}
+    assert all(isinstance(item["grouped"], bool) for item in SPLITS)
+
 
 def test_split_names_match_ml_eda() -> None:
     """
@@ -1035,9 +1040,14 @@ def test_split_names_match_ml_eda() -> None:
     # レシピの分割のしかたと, ファイルの組の書き出しの分割のしかた
     recipe = pytest.importorskip("ml_eda.recipe")
     items = pytest.importorskip("ml_eda.items")
+    pipeline = pytest.importorskip("ml_eda.pipeline")
     from ml_quest.bridge import SPLIT_METHODS
 
     names = {item["value"] for item in SPLITS}
     assert names <= set(recipe.SPLIT_METHODS)
     assert set(recipe.SPLIT_METHODS) <= names
     assert set(SPLIT_METHODS) == set(items.SPLIT_METHODS)
+
+    # グループを使う分割の目印が, ML-EDA のグループの分割と同じ組
+    grouped = {item["value"] for item in SPLITS if item["grouped"]}
+    assert grouped == set(pipeline.GROUP_METHODS)
