@@ -276,6 +276,69 @@ def test_policy_questions() -> None:
         answer(policy_problem(), f"{PART}.autonomous", "yes")
 
 
+def metric_choices(problem: dict) -> list[str]:
+    """
+    最良を選ぶ指標の選択肢の値を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+
+    Returns
+    ----------
+    values: list[str]
+        画面に出す選択肢の値 (並びのまま)
+    """
+    # questions の choices
+    items = {item["id"]: item for item in questions(problem)}
+    values = [choice["value"] for choice in
+              items[f"{PART}.evaluation.metric"]["choices"]]
+
+    return values
+
+
+def test_policy_reward_metric() -> None:
+    """
+    最良を選ぶ指標の報酬 (reward) が方策だけで選べ, 方策の選択肢の先頭に
+    なり, 大きいほど良い監視で受け渡すことを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 方策では先頭, 方策でない効果の見積もりと方策かを答えていない場合
+    assert metric_choices(policy_problem())[:2] == ["reward", "loss"]
+    uplift = answer(effect_problem(), f"{PART}.autonomous", False)
+    assert "reward" not in metric_choices(uplift)
+    assert "reward" in metric_choices(effect_problem())
+    assert "reward" not in metric_choices(example_problem("総菜の作る量"))
+
+    # 方策で選ぶと誤りが無く, valid/reward を max で監視する
+    problem = answer(policy_problem(), f"{PART}.evaluation.metric",
+                     "reward")
+    errors = [item for item in check(problem) if item["level"] == "error"
+              and item["id"] == f"{PART}.evaluation.metric"]
+    assert errors == []
+    training = handoff(problem)["training"]
+    assert (training["monitor"], training["mode"]) == ("valid/reward", "max")
+
+    # 方策でなくなると合わない指標の誤り. 古い loss は今まで通り
+    stale = answer(problem, f"{PART}.autonomous", False)
+    errors = [item for item in check(stale) if item["level"] == "error"
+              and item["id"] == f"{PART}.evaluation.metric"]
+    assert len(errors) == 1 and "合いません" in errors[0]["message"]
+    old = answer(policy_problem(), f"{PART}.evaluation.metric", "loss")
+    assert [item for item in check(old) if item["level"] == "error"
+            and item["id"] == f"{PART}.evaluation.metric"] == []
+    training = handoff(old)["training"]
+    assert (training["monitor"], training["mode"]) == ("valid/loss", "min")
+
+
 def test_policy_shape_errors() -> None:
     """
     手で書いたファイルの, 方策の答えの形の崩れを確かめる関数
