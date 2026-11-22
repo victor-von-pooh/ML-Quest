@@ -15,7 +15,7 @@ import pandas as pd
 import yaml
 
 from ml_quest.check import (
-    DECISION_TASKS, ITEMS_KINDS, finding, is_column_part
+    DECISION_TASKS, ITEMS_KINDS, finding, is_column_part, location_message
 )
 from ml_quest.problem import (
     DECISION_NAMES, active_value, answer, data_location, get_value,
@@ -1826,8 +1826,16 @@ def analyze_data(problem: dict) -> Optional[dict]:
         overview (行, 列, 種類, 時刻の範囲と間隔, 見本で分析したか),
         suggestions, findings (データを入れていなければ None)
     """
-    # 機械学習を使い, データを入れた場合だけ (版 1 は先に版 2 へ移行)
+    # 機械学習を使い, データを入れた場合だけ (版 1 は先に版 2 へ移行).
+    # 文字でない場所は読まずに確かめの誤りで返す
     problem = upgrade_problem(problem)
+    messages = [(key, location_message(problem, key))
+                for key in ("data.source", "data.origin")]
+    errors = [finding("error", key, message)
+              for key, message in messages if message is not None]
+    if errors:
+        result = {"overview": None, "suggestions": [], "findings": errors}
+        return result
     source = data_location(problem)
     if not source:
         return None

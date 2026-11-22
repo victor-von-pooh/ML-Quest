@@ -185,6 +185,10 @@ def check_shape(problem: dict) -> list[dict]:
         if value is not None and not isinstance(value, str):
             found.append(finding("error", key,
                                  f"{key} は文字列にしてください"))
+    for key in ("data.source", "data.origin"):
+        message = location_message(problem, key)
+        if message is not None:
+            found.append(finding("error", key, message))
     consumer = get_value(problem, f"{PART}.consumer")
     if isinstance(consumer, str) and consumer not in [
         item["value"] for item in CONSUMERS
@@ -1016,6 +1020,33 @@ def is_items_part(problem: dict) -> bool:
     )
 
     return items
+
+
+def location_message(problem: dict, key: str) -> Optional[str]:
+    """
+    データの場所 (data.source か data.origin) の型の誤りの文を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+    key: str
+        data.source か data.origin
+
+    Returns
+    ----------
+    message: Optional[str]
+        文字でない場合の誤りの文 (無いか文字なら None)
+    """
+    # 手で書いたファイルで数や並びになった場所 (Path にできない)
+    value = get_value(problem, key)
+    message = None
+    if value is not None and not isinstance(value, str):
+        name = "元のデータの場所" if key == "data.origin" else "データの場所"
+        message = (f"{name}は文字の場所 (絶対パス) で書いてください (今は "
+                   f"{value!r})")
+
+    return message
 
 
 def choice_label(
