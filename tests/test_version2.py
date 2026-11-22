@@ -5,9 +5,10 @@ import pytest
 import yaml
 
 from ml_quest import (
-    LEGACY_KEYS, answer, check, describe, example_problem, get_value,
-    handoff, is_ready, load_problem, make_project, new_problem,
-    project_error, questions, recipe_from, save_problem, upgrade_problem
+    LEGACY_KEYS, MODEL_EXAMPLES, answer, check, describe, example_problem,
+    get_value, handoff, is_ready, load_problem, make_project, model_example,
+    new_problem, project_error, questions, recipe_from, save_problem,
+    upgrade_problem
 )
 from ml_quest.problem import active_value, set_value
 
@@ -270,7 +271,7 @@ def test_column_handoff_unchanged() -> None:
     }
     assert stages["model"] == {"task": "forecasting", "outputs": 1,
                                "role": "predict", "target_kind": "column",
-                               "project_model_spec": None}
+                               "example": None, "project_model_spec": None}
     assert stages["training"] == {"metric": "mae", "monitor": "valid/mae",
                                   "mode": "min", "role": "predict",
                                   "target_kind": "column"}
@@ -341,6 +342,71 @@ def test_point_cloud_handoff() -> None:
     start = recipe_from(problem)
     assert start["recipe"] is None
     assert start["export"]["function"] == "export_capture_clouds"
+
+
+def test_model_example() -> None:
+    """
+    モデルの作成の雛形の名前を, 一から学習する受け持ちにだけ渡すことを
+    確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 画像の領域, 点群, 並べる, まとめるを一から学習
+    region = [("unit", "pair"), ("output", "region"),
+              ("target.source", "files"), ("method", "scratch"),
+              ("target.kind", "mask"), ("evaluation.metric", "iou")]
+    cloud = [("unit", "bundle"), ("output", "shape"),
+             ("target.source", "files"), ("method", "scratch"),
+             ("target.kind", "point_cloud"),
+             ("evaluation.metric", "chamfer")]
+    group = [("unit", "row"), ("output", "cluster"),
+             ("target.source", "none"), ("method", "scratch"),
+             ("evaluation.metric", "silhouette")]
+    cases = [
+        (role_problem("predict", region), "unet_segmentation"),
+        (role_problem("predict", cloud), "point_cloud_predictor"),
+        (role_problem("rank", ROLE_ANSWERS["rank"]), "two_tower_retrieval"),
+        (role_problem("group", group), "contrastive_encoder"),
+    ]
+    for problem, name in cases:
+        assert errors_of(problem) == []
+        assert model_example(problem) == name
+        assert handoff(problem)["model"]["example"] == name
+
+    # 一から学習しない場合, 合う雛形の無い受け持ち, 表の列は None
+    tuned = answer(cases[0][0], "ml.parts.0.method", "finetune")
+    assert model_example(tuned) is None
+    assert handoff(tuned)["model"]["example"] is None
+    for role in ("generate", "effect"):
+        assert model_example(role_problem(role, ROLE_ANSWERS[role])) is None
+    assert model_example(example_problem("総菜の作る量")) is None
+
+    # 版 1 の問題の設定も読む (列の予測なので None)
+    assert model_example(v1_problem()) is None
+
+
+def test_model_examples_names() -> None:
+    """
+    雛形の名前が ML-ModelControl の同梱の例にあることを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # ML-ModelControl が無ければ飛ばす
+    spec = pytest.importorskip("ml_modelcontrol.spec")
+    names = {item["name"] for item in spec.list_examples()}
+    assert set(MODEL_EXAMPLES.values()) <= names
 
 
 def test_each_role_checks() -> None:

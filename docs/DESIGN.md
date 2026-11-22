@@ -13,7 +13,7 @@ ML-Quest の今の設計と決まりをまとめる. まだやっていないこ
 - **受け渡し**: 後ろの段階ごとに, 問題の設定から決まる値をまとめて返す
 - **骨組み**: 問題の設定から, 学習・評価の段階 (ML-Found) のプロジェクトの骨組み (config と学習のスクリプト) を書き出す. 既製のモデルをそのまま使う場合は, 学習の代わりに推論の一式を作る設定とスクリプトを書き出す
 - **機械学習を使わない出口**: 課題の分解の結果, 機械学習が要らない (ルールや集計, 今のやり方の改善で足りる) と分かれば, そこで終えられる. 問題の設定は機械学習の入口ではなく, 機械学習が要るかを決める場所
-- **他の段階との分け方**: 後ろの段階は, 問題の設定のファイルをこのライブラリを通して読む (YAML を自分で解釈しない). 段階どうしをつなぐかは, 要ると分かった所から段階ごとに決める (今は, データの分析の ML-Fathom は「問題の設定から始める」と書き戻し, 推論の ML-Provide は一式に問題の設定をつないで損得を読む. 他の段階は利用者が受け渡しの値を見て画面で選ぶ)
+- **他の段階との分け方**: 後ろの段階は, 問題の設定のファイルをこのライブラリを通して読む (YAML を自分で解釈しない). 段階どうしをつなぐかは, 要ると分かった所から段階ごとに決める (今は, データの分析の ML-Fathom は「問題の設定から始める」と書き戻し, 推論の ML-Provide は一式に問題の設定をつないで損得を読む. モデルの作成の ML-CreateArchitecture と学習・評価の ML-Dashboard は, 問題の設定から始めるのに要る値 (モデルの定義の保存先, 受け持ちに合う雛形, 監視する指標と向き) を受け渡しの値で受け取る. 出力の大きさはデータセットから入れる)
 - 依存は軽くする (PyYAML と pandas. pandas はデータのファイルから列の名前を読むためだけ). 前処理や学習はしない. 手元のデータから答えの候補を出す部分 (下の「データからの候補」) だけは ML-EDA を使う (任意の依存 `ml-quest[data]`. ML-EDA の画像と音声の追加の依存 `image` と `audio` (Pillow と soundfile) も入れ, 画像と WAVE の他の音声も読めるようにする. データの読み方は ML-EDA が持つ約束なので, 写して作り直さない)
 
 ## 2. 他のリポジトリとの約束
@@ -21,9 +21,10 @@ ML-Quest の今の設計と決まりをまとめる. まだやっていないこ
 | 約束 | 持つか読むか | 版 | 使う側と中身 |
 | --- | --- | --- | --- |
 | 問題の設定 (`problem.yaml`) | 持つ | `format_version` 2 (版 1 も読み, 版 2 に移す. 新しい版は誤りで止まる) | 下の「問題の設定の形」. 型の値の名前 (受け持ち, 1 件の単位, 出力の形, 正解の出どころ, 作り方, 正解の種類) もこのライブラリが持ち, 他の段階は写して使う |
-| 受け渡しの値 (`handoff`) | 持つ | 問題の設定の版に従う | 各段階の約束と同じ名前と形で返す (意思決定は ML-Inference の `decision` の形そのまま, 要る機能は ML-Found の登録簿の名前, など). 下の「受け渡し」 |
+| 受け渡しの値 (`handoff`) | 持つ | 問題の設定の版に従う | 各段階の約束と同じ名前と形で返す (意思決定は ML-Inference の `decision` の形そのまま, 要る機能は ML-Found の登録簿の名前, モデルの作成の雛形は ML-ModelControl の同梱の例の名前, 監視する指標と向きは ML-Found の config の `trainer.monitor` と `trainer.mode` の値, など). 下の「受け渡し」 |
 | ML-Found のプロジェクトの形 | 書く (ML-Found の約束) | ML-Found の `docs/FORMAT.md` の「プロジェクトの形」, 「evaluations」, 「samples」(一覧の版 2) | 骨組み (config と学習のスクリプト, `task.yaml`, 比べる相手との評価の表と列ごとの指標の向き `better`, ファイルの組と画像の生成の見本. 画像の生成の config は重みの指数移動平均 `trainer.ema` を書く. 方策の骨組みは方策の一式 `policy/` (ML-Found の `export_policy`) と守る指標の表を書く). 学習のスクリプトは利用者のコードなので, ML-EDA, ML-ModelControl, ML-Found, ML-Inference を使う形で書く (このライブラリ自身はそれらに依存しない). モデルの定義は ML-Found が実験に写したもの (`Experiment.model_spec_path`) から組み立てる. config の `requires` には, 学習のスクリプトが読み込むライブラリを ML-Found の登録簿の名前 (`eda`, `modelcontrol`, `inference`. 画像の生成で最良を選ぶ指標が FID なら `fid` も) で書く. ファイルの組の骨組みの config の `model.placeholder: true` (定義が無くても仮のモデルで学習できる目印) は ML-Dashboard の学習の準備が読む. 下の「骨組み」と「ファイルの組の骨組み」 |
 | ML-Inference の既製のモデルの一式づくり (`make_ready_bundle` と `READY_LIBRARIES` の名前) | 呼ぶ (書き出すスクリプトが) | 推論の一式の版 6 (既製のモデルの一式) | 既製のモデルの骨組みの `bundle.py` が, 出どころ (`library`), モデルの名前 (`model`), 重みの名前 (`weights`), 重みの hash (`sha256`) を渡す. 出どころの名前は ML-Inference の `READY_LIBRARIES` の名前を写す (今は `torchvision`). 下の「既製のモデルの骨組み」 |
+| ML-ModelControl の同梱の例の名前 (`list_examples` の `name`) | 写す | 版を持たない (名前の一覧) | 受け渡しのモデルの作成の雛形 (`example`) と `model_example`. 写した名前はテストで突き合わせる. 下の「受け渡し」の「モデルの作成の雛形」 |
 | ML-EDA のデータの読み方とデータセット (`dataset.yaml`) | 読む | 読み方は `Data.source`, データセットは版 1, 版 2, 版 3 (版 2 と版 3 はファイルの組. 版 3 は版 2 に項目ごとの中身の手順を足した版. 新しい版は誤りで止まる) | 手元のデータの読み込み (`data` に読み方を残す), レシピの雛形と書き戻し, ファイルの組のデータセットの骨組み. 下の「データからの候補」「後ろの段階との書き戻し」「ファイルの組の骨組み」 |
 
 ## 3. 用語
@@ -44,7 +45,7 @@ ML-Quest の今の設計と決まりをまとめる. まだやっていないこ
 | `src/ml_quest/questions.py` | 問いの並び, タスクと指標の選択肢 |
 | `src/ml_quest/problem.py` | 問題の設定の作成, 答え, 読み書き, 列の名前の読み込み |
 | `src/ml_quest/check.py` | 確かめ |
-| `src/ml_quest/handoff.py` | 受け渡しの値と要約の文, 写した問題の設定の元の場所 |
+| `src/ml_quest/handoff.py` | 受け渡しの値と要約の文, モデルの作成の雛形の名前, 写した問題の設定の元の場所 |
 | `src/ml_quest/requirements.py` | 要る機能の名前 (ML-Found の登録簿の名前) と, 答えから要る機能 |
 | `src/ml_quest/skeleton.py` | ML-Found のプロジェクトの骨組みと, 書き出したプロジェクトの記録 |
 | `src/ml_quest/baseline_skeleton.py` | 列の予測の骨組みで, 今のやり方と比べる部分 |
@@ -407,18 +408,30 @@ pip で入らないものを含む外の道具 (ROS2, MuJoCo, CUDA) は, 要る�
 
 `handoff(problem)` は後ろの段階ごとの値を返す. 確かめに `error` があれば誤り.
 
-| 段階 | 値 | 使い方 (今は利用者が各段階の画面で選ぶ) |
+| 段階 | 値 | 使い方 |
 | --- | --- | --- |
 | データの分析 (ML-EDA, ML-Fathom) | `target`, `task`, `time_column`, `series_by`, `split` (予測と, 分類と回帰で時刻の順で分ける列 (`ml.split_time_column`) があれば `time`, 相手をまとめる列があれば `group`, 分類は `stratified`, 他は `random`. レシピの下書きの分割と同じ. 時刻の列は `time_column` で渡し, 学習に使わない列にしてもよい), `group_column` (相手をまとめる列. 時刻の順でも渡し, ML-EDA が分割をまたぐ重なりを知らせる), `min_lag` (過去の値の列に使ってよい最も小さいずらし幅. 予測だけ), `known` (学習に使ってよい列), `drop` (`unknown` と `forbidden` の列と, 今のやり方の列 (`action.current` の `column`). 今のやり方は決めることの結果で予測の時点では分からず, 学習に入れると答えが漏れるため. 利用者が `known` に入れた場合は落とさず, 確かめが注意を出す) | 読み込みの日時の列 (`load_data` の `time_column`. 系列を分ける列が複数あると ML-EDA は日時の列を推定できない), レシピの目的の列, タスク, 分割, 除く列 |
 | 受け持ち | `part` (`role`, `unit`, `output`, `target_kind`, `target_source`, `target_process`, `method`) | 型に依らない 5 つの答え |
-| モデルの作成 (ML-ModelControl, ML-CreateArchitecture) | `task`, `outputs` (回帰と予測は 1, 分類はクラスの数. 分からなければ空), `role`, `target_kind` | 出力の大きさ |
-| 学習・評価 (ML-Found, ML-Dashboard) | `metric`, `monitor` (`valid/<指標>`. RMSE はバッチの平均で書けないので, 並びの同じ `valid/mse`. その他は `valid/<名前>`), `mode` (`min` か `max`), `role`, `target_kind` | config の `trainer.monitor` と `trainer.mode` |
+| モデルの作成 (ML-ModelControl, ML-CreateArchitecture) | `task`, `outputs` (回帰と予測は 1, 分類はクラスの数. 分からなければ空), `role`, `target_kind`, `example` (受け持ちに合う雛形. 下の「モデルの作成の雛形」) | 出力の大きさ, 始めに開く定義 (ML-ModelControl の `load_example` の名前) |
+| 学習・評価 (ML-Found, ML-Dashboard) | `metric`, `monitor` (`valid/<指標>`. RMSE はバッチの平均で書けないので, 並びの同じ `valid/mse`. その他は `valid/<名前>`), `mode` (`min` か `max`), `role`, `target_kind` | config の `trainer.monitor` と `trainer.mode` (骨組みはそのまま書く. 骨組みの外の学習も同じ値を使う) |
 | 推論 (ML-Inference, ML-Provide) | `decision` (損得と制約. 選ぶと振り分けには `ml.positive` を `positive` として足す. 今のやり方 (`action.current`) が列なら, たどり直しで比べる `current` として足す. ただし量の型は今ある量 (`stock`) が無いか 0 の場合だけ (ML-Inference の量の `current` は今ある量に足した量, 問題の設定の列は置いた量なので, 今ある量があると意味が違う). k 期前と平均は列の名前でないので `current` には入れず, 推論の段階が問題の設定の今のやり方 (`action.current`) から ML-Inference の `current_from_baseline` で同じ値の列を作る (骨組みの今のやり方との比べ, データの候補の今のやり方の損と同じ数え方: k 期前は同じ系列のちょうど k 期前の行, 平均は k 期前から今の期の前まで)), `conclusion` (系列を分ける最初の列でまとめる `group_by`. 無ければ空), `horizon` (何期先まで), `ready` (既製のモデルをそのまま使う予測だけ. `library`, `model`, `weights`, `sha256` (決めていなければ `None`). 他は `None`) | 一式の既定値 (`make_bundle` の `decision` と `conclusion`), 何段も先の予測, 既製のモデルの一式づくり (`make_ready_bundle` の引数). ML-Provide は一式につないだ問題の設定から推論の既定値を読む |
 | 要る機能 | `requires` (機能の名前の並び. 上の「要る機能」) | 画面のカード (ML-Pathfinder, ML-Dashboard が ML-Found の `describe_requirements` で入れ方を出す) |
 | 書き出したプロジェクト | `project` (`path`. 記録が無ければ `None`), データの分析の `project_dataset`, モデルの作成の `project_model_spec` (どれも `project` の記録の絶対パス. 無ければ `None`) | データの分析の書き出し先, モデルの定義の置き場, 学習のプロジェクト (写さずにそのまま使う) |
 | 方策の守り | `policy` (方策のときだけ. `action_limits`, `stop`, `fallback`, `fallback_action`, `safety_key` (答えていなければ ML-Found の既定の `cost`), `approver`, `env_id` (環境の登録名. 答えていないか要らない問いなら `None`). 方策でなければ `None`) | ML-Found の `make_guards` と `safety_key`, 学習の環境 (`make_env`. 骨組みの config の `env.id`), 推論の段階の守り |
 
 最良を選ぶ指標の候補は, 上の「最良を選ぶ指標」.
+
+**モデルの作成の雛形**: `model_example(problem)` は, 受け持ちに合う ML-ModelControl の同梱の例の名前を返す (受け渡しのモデルの作成の `example` も同じ値. 版 1 の問題の設定は先に版 2 に移す). 名前と受け持ちの組は `MODEL_EXAMPLES` で, 作り方が一から学習 (`scratch`) のときだけ返す (同梱の例は学習前の定義で, 既製の重みを読む作り方に合わないため). 合う例が無ければ `None` (利用者が画面で選ぶ).
+
+| 受け持ちと正解の種類 | 同梱の例 |
+| --- | --- |
+| 予測する, 画像の領域 | `unet_segmentation` |
+| 予測する, 点群 | `point_cloud_predictor` |
+| 並べる | `two_tower_retrieval` |
+| まとめる | `contrastive_encoder` |
+
+- 予測するの表の列は, 1 件の中身 (表, 画像, 文, 音声) で合う例が変わるので返さない. 作るは, 拡散の例 (`diffusion_denoiser`) が 1 次元のデータを全結合で扱い, 画像の生成の骨組みの画像の入力に合わないので返さない (VAE と GAN の例は, 合う骨組みが無く学び方が決まらないので返さない). 効果を見積もるの方策は, 骨組みの方策の頭の約束 (入力と出力が 1 つずつ) と同梱の `policy_value` (方策と価値の 2 つの出力) が違うので返さない (骨組みが既定の定義を書く)
+- 名前は ML-ModelControl の同梱の例 (`list_examples`) を写して持ち (ML-ModelControl を入れなくても返せるように), 食い違いはテストで確かめる (ML-ModelControl を入れなければ飛ばす)
 
 データの分析の分割 (`data.split`) の値の名前と説明は `SPLITS` (`time` 時刻の順, `group` 相手ごと, `random` 無作為, `stratified` 層別, `group_time` 相手ごとと時刻の順, `stratified_group` 相手ごとの層別, `none` 分けない. 受け渡しが答えから作る分割は `time`, `group`, `stratified`, `random` で, 他は書き戻したレシピの名前を読むため. 名前は ML-EDA のレシピの分割のしかた (`ml_eda.recipe.SPLIT_METHODS`) と同じ組で, ファイルの組の書き出しの分割 (`bridge.SPLIT_METHODS`) は ML-EDA の `ml_eda.items.SPLIT_METHODS` と同じ組 (どちらもテストで突き合わせる. ML-EDA を入れなければ飛ばす) 問いの選択肢と同じ `value` と `label` に, グループを使うか `grouped` (相手をまとめる列の同じ値を同じ分割に入れるなら `True`. `group`, `group_time`, `stratified_group`. ML-EDA の `ml_eda.pipeline.GROUP_METHODS` と同じ組で, テストで突き合わせる) を足した並び) で返す. 書き戻しの確かめ (相手をまとめる列が要る分割) も `grouped` を使う. 画面 (ML-Pathfinder) は分割の名前と今のやり方の書き方の名前を写さず, これと問いの `choices` を使う (相手をまとめる列の説明も, 分割の名前でなく `grouped` で決める)
 
