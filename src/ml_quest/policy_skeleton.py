@@ -340,16 +340,23 @@ def space_kind(env: Any) -> str:
     Raises
     ----------
     ValueError
-        他の空間の場合 (ML-Found の強化学習が扱えない)
+        他の空間の場合 (ML-Found の強化学習の action_kind と同じく, 形が ()
+        で 0 から始まる Discrete と, PolicyNet が扱える 1 次元の Box だけ)
     """
-    # 空間のクラスの名前
-    kind = type(env.action_space).__name__
-    if kind not in ("Discrete", "Box"):
-        raise ValueError(
-            f"行動の空間 {kind} は扱えません (Discrete か Box にしてください)"
-        )
-
-    return kind
+    # 空間のクラスの名前, 形, 番号の始まり
+    space = env.action_space
+    kind = type(space).__name__
+    shape = tuple(getattr(space, "shape", None) or ())
+    if kind == "Discrete" and shape == () and int(
+        getattr(space, "start", 0)
+    ) == 0:
+        return kind
+    if kind == "Box" and len(shape) == 1:
+        return kind
+    raise ValueError(
+        f"行動の空間 {space!r} は扱えません (0 から始まる Discrete か, 1 次元"
+        " の Box にしてください. 形が () の Box は (1,) に)"
+    )
 
 
 def model_args(env: Any, cfg: Any) -> dict:
@@ -377,11 +384,10 @@ def model_args(env: Any, cfg: Any) -> dict:
     # 観測は 1 次元の Box だけ (Discrete などは要素の数が無い)
     observation = env.observation_space
     kind = type(observation).__name__
-    if kind != "Box" or len(getattr(observation, "shape", ()) or ()) != 1:
+    if kind != "Box" or len(getattr(observation, "shape", None) or ()) != 1:
         raise ValueError(
-            f"観測の空間 {kind} (形 {getattr(observation, 'shape', None)}) は"
-            "扱えません (1 次元の Box にしてください. Gymnasium の "
-            "FlattenObservation などで平らにできます)"
+            f"観測の空間 {observation!r} は扱えません (1 次元の Box にして"
+            "ください. Gymnasium の FlattenObservation などで平らにできます)"
         )
 
     # 番号で選ぶ行動は行動の数, 連続の行動は要素の数
