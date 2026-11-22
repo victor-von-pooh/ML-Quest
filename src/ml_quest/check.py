@@ -9,8 +9,8 @@ from ml_quest.problem import (
 )
 from ml_quest.questions import (
     COLLECTS, CONSUMERS, FALLBACKS, METHODS, METRICS, OUTPUTS, PART,
-    QUESTIONS, ROLES, SIMULATORS, TARGET_KINDS, TARGET_SOURCES, UNITS,
-    V1_METRICS
+    QUESTIONS, READY_LIBRARIES, ROLES, SIMULATORS, TARGET_KINDS,
+    TARGET_SOURCES, UNITS, V1_METRICS
 )
 
 # その他の指標の名前 (学習の記録の名前と曲線のファイルの名前)
@@ -20,6 +20,9 @@ METRIC_NAME = re.compile(r"[A-Za-z0-9_.@-]+")
 # "module:" と名前空間の "namespace/" は任意. 名前空間は Gymnasium と同じ
 # く英数字と _ と -)
 ENV_ID = re.compile(r"(?:[\w.]+:)?(?:[\w-]+/)?[\w.-]+", re.ASCII)
+
+# 既製のモデルの重みの hash (SHA-256 の 16 進の 64 文字)
+SHA256 = re.compile(r"[0-9a-fA-F]{64}")
 
 # 骨組みを組める error の項目の場所 (同じ場所か, その下の項目). 課題, 分解,
 # 決めることの文, 確かめ方, 運用, 受け持ちの文の答えは, README の要約の文に
@@ -44,7 +47,7 @@ ITEMS_KINDS = ("mask", "point_cloud")
 
 # 受け持ちの中の, 辞書で書く項目
 PART_DICTS = [f"{PART}.target", f"{PART}.target.process",
-              f"{PART}.evaluation", f"{PART}.policy"]
+              f"{PART}.evaluation", f"{PART}.policy", f"{PART}.ready"]
 
 # 受け持ちの, 選んで書く項目と選択肢 (手で書いたファイルの確かめ)
 PART_CHOICES = {
@@ -53,12 +56,18 @@ PART_CHOICES = {
     f"{PART}.target.kind": TARGET_KINDS, f"{PART}.method": METHODS,
     f"{PART}.collect": COLLECTS, f"{PART}.simulator": SIMULATORS,
     f"{PART}.policy.fallback": FALLBACKS,
+    f"{PART}.ready.library": READY_LIBRARIES,
 }
 
 # 方策の守りの, 文で書く項目
 POLICY_TEXTS = [f"{PART}.policy.{name}" for name in (
     "action_limits", "stop", "safety_key", "approver"
 )] + [f"{PART}.env_id"]
+
+# 既製のモデルの, 文で書く項目 (一式づくりに渡す名前と hash)
+READY_TEXTS = [f"{PART}.ready.{name}" for name in (
+    "model", "weights", "sha256"
+)]
 
 # はいかいいえで答える項目
 BOOLEANS = [f"{PART}.autonomous", f"{PART}.ros2", "ml.gpu"]
@@ -180,7 +189,7 @@ def check_shape(problem: dict) -> list[dict]:
                 f"{PART}.split_time_column", f"{PART}.downstream",
                 "issue.guard.name", f"{PART}.evaluation.name",
                 f"{PART}.target.process.name", *PART_CHOICES,
-                *POLICY_TEXTS):
+                *POLICY_TEXTS, *READY_TEXTS):
         value = get_value(problem, key)
         if value is not None and not isinstance(value, str):
             found.append(finding("error", key,
@@ -989,12 +998,13 @@ def is_column_part(problem: dict) -> bool:
     Returns
     ----------
     column: bool
-        列の予測か
+        列の予測か (作り方が既製のモデルをそのままなら False)
     """
-    # 受け持ちと正解の種類の答え (要らない問いの古い答えは除外)
+    # 受け持ちと正解の種類の答え (要らない問いの古い答えは除外). 既製の
+    # モデルをそのまま使う場合は学習しないので除外
     column = active_value(problem, f"{PART}.role") == "predict" and (
         active_value(problem, f"{PART}.target.kind") == "column"
-    )
+    ) and active_value(problem, f"{PART}.method") != "pretrained"
 
     return column
 
@@ -1096,6 +1106,54 @@ def choice_label(
     label = f"「{text}」"
 
     return label
+
+
+def is_pretrained_part(problem: dict) -> bool:
+    """
+    受け持ちが既製のモデルをそのまま使う予測 (予測するで, 作り方が既製の
+    モデルをそのまま) かを返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    pretrained: bool
+        既製のモデルをそのまま使う予測の受け持ちか (出力の形と正解の種類
+        は問わない. 骨組みの書き出しが画像の分類かを確かめる)
+    """
+    # 受け持ちと作り方の答え (要らない問いの古い答えは除外)
+    pretrained = active_value(problem, f"{PART}.role") == "predict" and (
+        active_value(problem, f"{PART}.method") == "pretrained"
+    )
+
+    return pretrained
+
+
+def sha256_of(problem: dict) -> Optional[str]:
+    """
+    答えた既製のモデルの重みの hash を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    sha256: Optional[str]
+        前後の空白を除き小文字にした hash (要らない問いか, 答えていないか,
+        文字でないか, 空白だけの文字なら None)
+    """
+    # 手で書いた空の文字と空白だけの値も, 答えていない扱い. 大文字の 16 進
+    # は ML-Inference の記録 (小文字) と比べられるように小文字
+    value = active_value(problem, f"{PART}.ready.sha256")
+    sha256 = value.strip().lower() if isinstance(value, str) else None
+    sha256 = sha256 or None
+
+    return sha256
 
 
 def is_generate_part(problem: dict) -> bool:
@@ -1259,6 +1317,15 @@ def check_part(problem: dict) -> list[dict]:
             f"環境の登録名 {env_id} は Gymnasium の登録名の形 (CartPole-v1, "
             "ALE/Pong-v5 など. 英数字と _ . -. 前に名前空間の namespace/ と, "
             "読み込むモジュールの module: を付けてよい) で書いてください"
+        ))
+
+    # 既製のモデルの重みの hash の形 (一式づくりが読んだ重みと比べるため)
+    sha256 = sha256_of(problem)
+    if sha256 is not None and not SHA256.fullmatch(sha256):
+        found.append(finding(
+            "error", f"{PART}.ready.sha256",
+            f"重みの hash {sha256} は SHA-256 の 16 進の 64 文字で書いて"
+            "ください (分からなければ空のまま)"
         ))
 
     # 列の予測の正解の種類と出力の形 (表の列はクラスか値か分布)

@@ -38,6 +38,10 @@ from ml_quest.problem import (
     active_value, data_location, get_value, set_value, upgrade_problem
 )
 from ml_quest.questions import METRICS, OUTPUTS, PART
+from ml_quest.ready_skeleton import (
+    READY_CONFIG, READY_SCRIPT, ready_config, ready_message, ready_readme,
+    ready_script
+)
 
 # 学習のスクリプトの頭 (読み込みと, 問題の設定から決まる既定値). 答えの
 # 文字は, コードを壊さないように JSON の文字列か 1 行のコメントで埋め込み
@@ -1057,6 +1061,12 @@ def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
         message = str(error)
         return message, exportable
 
+    # 既製のモデルをそのまま使う (学習しない) のは, 予測するの画像の分類
+    # だけ. 学習しないので指標と入れたデータセットは見ない
+    if active_value(upgraded, f"{PART}.method") == "pretrained":
+        message = ready_message(upgraded)
+        return message, exportable
+
     # 列の予測と, 予測するの画像の領域と点群と, 作るの画像と, 効果を
     # 見積もるの方策だけ
     generate = is_generate_part(upgraded)
@@ -1066,7 +1076,8 @@ def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
     ):
         message = ("骨組みを書き出せるのは, 予測するで正解の種類が表の列, "
                    "画像の領域, 点群の場合と, 作るで正解の種類が画像の場合と,"
-                   " 効果を見積もるで続けて行動を選ぶ方策の場合だけです (並べ"
+                   " 効果を見積もるで続けて行動を選ぶ方策の場合と, 予測するで"
+                   "既製のモデルをそのまま使う画像の分類の場合だけです (並べ"
                    "る, まとめるの受け持ちと, 方策でない効果の見積もりと, 他"
                    "の正解の種類はまだ扱えません)")
         return message, exportable
@@ -1344,8 +1355,21 @@ def project_files(
     Returns
     ----------
     files: dict
-        README.md, configs/default/train.yaml, train.py の中身
+        README.md, configs/default/train.yaml, train.py の中身 (既製の
+        モデルは configs/default/bundle.yaml と bundle.py. 方策は model.py
+        と env.py も)
     """
+    # 既製のモデルをそのまま使う (学習せず, 推論の一式だけを作る)
+    if stages["inference"].get("ready") is not None:
+        files = {
+            "README.md": ready_readme(
+                problem, stages, data_file.as_posix() if data_file else None
+            ),
+            READY_CONFIG: ready_config(stages, name),
+            READY_SCRIPT: ready_script(problem, literal),
+        }
+        return files
+
     # 方策 (環境の登録名が無ければ自作の環境の雛形も)
     if is_policy_part(problem):
         files = {
@@ -1459,7 +1483,8 @@ def make_project(
     path: Union[str, Path]
         プロジェクトのディレクトリ
     name: Optional[str] = None
-        実験の名前 (省略すると目的の列とタスクから)
+        実験の名前 (省略すると目的の列とタスクから. 既製のモデルをそのまま
+        使う場合は一式の名前で, 省略するとモデルと重みの名前から)
     overwrite: bool = False
         既にあるファイルを上書きするか
     origin: Optional[Union[str, Path]] = None
@@ -1529,8 +1554,9 @@ def make_project(
         "problem.yaml": yaml.safe_dump(problem, allow_unicode=True,
                                        sort_keys=False),
         **project_files(problem, stages, name, data_file, info, dropped),
-        "configs/experiment/train.yaml": EXPERIMENT,
     }
+    if stages["inference"].get("ready") is None:
+        files["configs/experiment/train.yaml"] = EXPERIMENT
     files["README.md"] += errors_section(errors, dropped, bool(exportable))
 
     # 既にあるファイルと, ディレクトリを作れない場所の確かめ (全てを確かめ
@@ -1615,9 +1641,12 @@ def record_project(problem: dict, path: Union[str, Path]) -> dict:
     ValueError
         config が無いか読めない場合
     """
-    # 書き出した config の data.dataset と model.spec
+    # 書き出した config の data.dataset と model.spec (既製のモデルの
+    # 一式づくりの設定はどちらも持たない)
     place = Path(path).expanduser().resolve()
     config = place / "configs" / "default" / "train.yaml"
+    if not config.exists() and (place / READY_CONFIG).is_file():
+        config = place / READY_CONFIG
     try:
         loaded = yaml.safe_load(config.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as error:

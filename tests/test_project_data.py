@@ -419,6 +419,8 @@ BLOCKING_IDS = {
     "ml.parts.0.policy.approver", "information.columns",
     "information.known", "information.unknown", "information.forbidden",
     "data.source", "data.missing", "action.current",
+    "ml.parts.0.ready.library", "ml.parts.0.ready.model",
+    "ml.parts.0.ready.weights", "ml.parts.0.ready.sha256",
 }
 
 

@@ -277,7 +277,7 @@ def test_column_handoff_unchanged() -> None:
     assert stages["inference"] == {
         "decision": {"type": "quantity", "under_cost": 200,
                      "over_cost": 150},
-        "conclusion": {"group_by": "store"}, "horizon": 1,
+        "conclusion": {"group_by": "store"}, "horizon": 1, "ready": None,
     }
     assert stages["part"] == {
         "role": "predict", "unit": "row", "output": "value",
@@ -331,7 +331,7 @@ def test_point_cloud_handoff() -> None:
     assert stages["data"]["split"] == "random"
     assert stages["data"]["groups"] is None
     assert stages["inference"] == {"decision": None, "conclusion": {},
-                                   "horizon": None}
+                                   "horizon": None, "ready": None}
     assert any("予測すること: 試しの出力" in text
                for text in describe(problem))
 
