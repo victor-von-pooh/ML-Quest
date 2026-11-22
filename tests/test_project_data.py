@@ -410,7 +410,7 @@ BLOCKING_IDS = {
     "ml.parts.0.split_time_column", "ml.parts.0.time_column",
     "ml.parts.0.series_by", "ml.parts.0.available_lag",
     "ml.parts.0.horizon", "ml.parts.0.autonomous", "ml.parts.0.ros2",
-    "ml.parts.0.collect", "ml.parts.0.simulator",
+    "ml.parts.0.collect", "ml.parts.0.simulator", "ml.parts.0.env_id",
     "ml.parts.0.evaluation.metric", "ml.parts.0.evaluation.name",
     "ml.parts.0.evaluation.better", "ml.parts.0.policy.action_limits",
     "ml.parts.0.policy.stop", "ml.parts.0.policy.fallback",

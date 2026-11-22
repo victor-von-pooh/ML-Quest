@@ -145,7 +145,7 @@ def test_policy_guards_handoff() -> None:
         "action_limits": "各関節の速さは毎秒 0.5 rad まで",
         "stop": "腕の先が台の上 0 から 0.3 m を出たら",
         "fallback": "handover", "fallback_action": None,
-        "safety_key": "cost", "approver": "設備の責任者",
+        "safety_key": "cost", "approver": "設備の責任者", "env_id": None,
     }
     assert stages["requires"] == ["rl", "mujoco"]
     assert stages["part"]["role"] == "effect"
@@ -300,6 +300,7 @@ def test_policy_shape_errors() -> None:
         (["policy", "fallback_action"], True,
          f"{PART}.policy.fallback_action"),
         (["policy"], "止める", f"{PART}.policy"),
+        (["env_id"], 1, f"{PART}.env_id"),
     ]
     for path, value, key in cases:
         problem = copy.deepcopy(policy_problem())
@@ -311,6 +312,53 @@ def test_policy_shape_errors() -> None:
     problem = copy.deepcopy(policy_problem())
     problem["ml"]["gpu"] = "はい"
     assert errors_of(problem) == ["ml.gpu"]
+
+
+def test_env_id() -> None:
+    """
+    環境の登録名の問いが方策で今ある記録から集めない場合だけ要り, 形を
+    確かめ, 受け渡しと要約に出ることを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 方策で, 集め方が今ある記録でなければ問う (任意の問い)
+    items = {item["id"]: item for item in questions(policy_problem())}
+    assert items[f"{PART}.env_id"]["applies"]
+    assert not items[f"{PART}.env_id"]["required"]
+    assert items[f"{PART}.env_id"]["section"] == 5
+    logged = answer(policy_problem(), f"{PART}.collect", "log")
+    items = {item["id"]: item for item in questions(logged)}
+    assert not items[f"{PART}.env_id"]["applies"]
+    unanswered = answer(policy_problem(), f"{PART}.collect", None)
+    items = {item["id"]: item for item in questions(unanswered)}
+    assert items[f"{PART}.env_id"]["applies"]
+    items = {item["id"]: item for item in questions(effect_problem())}
+    assert not items[f"{PART}.env_id"]["applies"]
+
+    # 答えると受け渡しの policy と要約に出る. 要らなくなると渡さない
+    for name in ("CartPole-v1", "ALE/Pong-v5", "Pendulum-v1",
+                 "my_package.envs:Arm-v0"):
+        problem = answer(policy_problem(), f"{PART}.env_id", name)
+        assert not errors_of(problem), name
+        assert handoff(problem)["policy"]["env_id"] == name
+    assert "方策を学ぶ環境: Gymnasium の my_package.envs:Arm-v0" in (
+        describe(problem)
+    )
+    problem = answer(problem, f"{PART}.collect", "log")
+    assert handoff(problem)["policy"]["env_id"] is None
+    assert not any(text.startswith("方策を学ぶ環境")
+                   for text in describe(problem))
+
+    # 登録名の形でない名前は誤り
+    for name in ("Cart Pole", "CartPole-v1;rm", "環境", "a/b/c"):
+        problem = answer(policy_problem(), f"{PART}.env_id", name)
+        assert errors_of(problem) == [f"{PART}.env_id"], name
 
 
 def test_describe_and_version(tmp_path: Path) -> None:
