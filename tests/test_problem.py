@@ -54,7 +54,7 @@ def test_examples_are_consistent() -> None:
     assert any("当たりの価値 24,000" in s and "件数の上限 300" in s
                for s in summary)
 
-    # 3 つの見本
+    # 4 つの見本
     for name in EXAMPLES:
         problem = example_problem(name)
         assert levels(problem)["error"] == [], name

@@ -11,7 +11,7 @@ ML-Quest の今の設計と決まりをまとめる. まだやっていないこ
 - **問い**: 問題の設定を決まった順の問いで埋める. 問いの並びと中身はこのライブラリが持ち, 画面 (ML-Pathfinder) はそれを順に出すだけ
 - **確かめ**: 答えどうしの食い違い (量を決めるのに分類のタスク, 予測の時点で分からない列を使う, など) と, 足りない答えを一覧にする
 - **受け渡し**: 後ろの段階ごとに, 問題の設定から決まる値をまとめて返す
-- **骨組み**: 問題の設定から, 学習・評価の段階 (ML-Found) のプロジェクトの骨組み (config と学習のスクリプト) を書き出す
+- **骨組み**: 問題の設定から, 学習・評価の段階 (ML-Found) のプロジェクトの骨組み (config と学習のスクリプト) を書き出す. 既製のモデルをそのまま使う場合は, 学習の代わりに推論の一式を作る設定とスクリプトを書き出す
 - **機械学習を使わない出口**: 課題の分解の結果, 機械学習が要らない (ルールや集計, 今のやり方の改善で足りる) と分かれば, そこで終えられる. 問題の設定は機械学習の入口ではなく, 機械学習が要るかを決める場所
 - **他の段階との分け方**: 後ろの段階は, 問題の設定のファイルをこのライブラリを通して読む (YAML を自分で解釈しない). 段階どうしをつなぐかは, 要ると分かった所から段階ごとに決める (今は, データの分析の ML-Fathom は「問題の設定から始める」と書き戻し, 推論の ML-Provide は一式に問題の設定をつないで損得を読む. 他の段階は利用者が受け渡しの値を見て画面で選ぶ)
 - 依存は軽くする (PyYAML と pandas. pandas はデータのファイルから列の名前を読むためだけ). 前処理や学習はしない. 手元のデータから答えの候補を出す部分 (下の「データからの候補」) だけは ML-EDA を使う (任意の依存 `ml-quest[data]`. ML-EDA の画像と音声の追加の依存 `image` と `audio` (Pillow と soundfile) も入れ, 画像と WAVE の他の音声も読めるようにする. データの読み方は ML-EDA が持つ約束なので, 写して作り直さない)
@@ -23,6 +23,7 @@ ML-Quest の今の設計と決まりをまとめる. まだやっていないこ
 | 問題の設定 (`problem.yaml`) | 持つ | `format_version` 2 (版 1 も読み, 版 2 に移す. 新しい版は誤りで止まる) | 下の「問題の設定の形」. 型の値の名前 (受け持ち, 1 件の単位, 出力の形, 正解の出どころ, 作り方, 正解の種類) もこのライブラリが持ち, 他の段階は写して使う |
 | 受け渡しの値 (`handoff`) | 持つ | 問題の設定の版に従う | 各段階の約束と同じ名前と形で返す (意思決定は ML-Inference の `decision` の形そのまま, 要る機能は ML-Found の登録簿の名前, など). 下の「受け渡し」 |
 | ML-Found のプロジェクトの形 | 書く (ML-Found の約束) | ML-Found の `docs/FORMAT.md` の「プロジェクトの形」, 「evaluations」, 「samples」(一覧の版 2) | 骨組み (config と学習のスクリプト, `task.yaml`, 比べる相手との評価の表と列ごとの指標の向き `better`, ファイルの組と画像の生成の見本. 画像の生成の config は重みの指数移動平均 `trainer.ema` を書く. 方策の骨組みは方策の一式 `policy/` (ML-Found の `export_policy`) と守る指標の表を書く). 学習のスクリプトは利用者のコードなので, ML-EDA, ML-ModelControl, ML-Found, ML-Inference を使う形で書く (このライブラリ自身はそれらに依存しない). モデルの定義は ML-Found が実験に写したもの (`Experiment.model_spec_path`) から組み立てる. config の `requires` には, 学習のスクリプトが読み込むライブラリを ML-Found の登録簿の名前 (`eda`, `modelcontrol`, `inference`) で書く. ファイルの組の骨組みの config の `model.placeholder: true` (定義が無くても仮のモデルで学習できる目印) は ML-Dashboard の学習の準備が読む. 下の「骨組み」と「ファイルの組の骨組み」 |
+| ML-Inference の既製のモデルの一式づくり (`make_ready_bundle` と `READY_LIBRARIES` の名前) | 呼ぶ (書き出すスクリプトが) | 推論の一式の版 6 (既製のモデルの一式) | 既製のモデルの骨組みの `bundle.py` が, 出どころ (`library`), モデルの名前 (`model`), 重みの名前 (`weights`), 重みの hash (`sha256`) を渡す. 出どころの名前は ML-Inference の `READY_LIBRARIES` の名前を写す (今は `torchvision`). 下の「既製のモデルの骨組み」 |
 | ML-EDA のデータの読み方とデータセット (`dataset.yaml`) | 読む | 読み方は `Data.source`, データセットは版 1, 版 2, 版 3 (版 2 と版 3 はファイルの組. 版 3 は版 2 に項目ごとの中身の手順を足した版. 新しい版は誤りで止まる) | 手元のデータの読み込み (`data` に読み方を残す), レシピの雛形と書き戻し, ファイルの組のデータセットの骨組み. 下の「データからの候補」「後ろの段階との書き戻し」「ファイルの組の骨組み」 |
 
 ## 3. 用語
@@ -49,6 +50,7 @@ ML-Quest の今の設計と決まりをまとめる. まだやっていないこ
 | `src/ml_quest/baseline_skeleton.py` | 列の予測の骨組みで, 今のやり方と比べる部分 |
 | `src/ml_quest/items_skeleton.py` | ML-EDA のファイルの組のデータセット (版 2 と版 3. 画像と領域, 撮影と点群) で学習する骨組み |
 | `src/ml_quest/generate_skeleton.py` | 画像の生成 (作るで画像) の, 条件の無い拡散のモデルを学ぶ骨組み |
+| `src/ml_quest/ready_skeleton.py` | 既製のモデルをそのまま使う (予測するで画像の分類) 骨組み. 学習せず, ML-Inference の既製のモデルの一式を作る |
 | `src/ml_quest/policy_skeleton.py` | 続けて行動を選ぶ方策 (効果を見積もるで方策) を環境で学び, 守りと一緒に書き出す骨組み |
 | `src/ml_quest/examples.py` | 見本の問題の設定 |
 | `src/ml_quest/data.py` | 手元のデータの読み込みと写し, 答えの候補と確かめ, 今のやり方の損 (ML-EDA) |
@@ -190,8 +192,26 @@ origin: /work/problems/sozai/problem.yaml # 元の問題の設定 (写しだけ�
 
 - 正解の出どころが今の処理の出力 (`process`) なら, その処理の名前 (`target.process.name`. 要る) と設定 (`target.process.settings`. 任意の文) を問う. 何で作ったかは問わないが, 評価と結論で「その処理を超えられない」ことを示せるように残す
 - 正解の種類 (`target.kind`) は予測すると作るで問う: 予測するは `column` 表の列 (クラスか値), `mask` 画像の領域, `point_cloud` 点群, `text` 文. 作るは `text`, `image`, `table` 表 (合成のデータ), `point_cloud`
-- 続く問い: 予測するで正解の種類が表の列のとき (以下「列の予測」) だけ, 版 1 の問い (タスク, 目的の列, 当たりのクラス, 時刻の列など), 使える列 (`information`), 意思決定の損得と今のやり方と根拠 (`action.decision`, `action.current`, `action.basis`) を問う. 並べる, まとめる, 効果を見積もるの受け持ちの中の問いは, 5 つの問いと何を出すか, 1 件は何か, 比べる相手, 使い道, 最良を選ぶ指標だけ (効果を見積もるは, 加えて方策かどうか, 行動の結果の集め方, 方策の守りも問う. 下の「続けて行動を選ぶ方策と守り」. 型ごとの通り道は TODO.md). 受け持ちに依らない問い (手元のデータ, 要るのに無いデータ, 制約, 9 と 10 の節) は全ての受け持ちで問う
+- 続く問い: 予測するで正解の種類が表の列のとき (作り方が既製のモデルをそのまま (`pretrained`) の場合を除く. 以下「列の予測」) だけ, 版 1 の問い (タスク, 目的の列, 当たりのクラス, 時刻の列など), 使える列 (`information`), 意思決定の損得と今のやり方と根拠 (`action.decision`, `action.current`, `action.basis`) を問う. 並べる, まとめる, 効果を見積もるの受け持ちの中の問いは, 5 つの問いと何を出すか, 1 件は何か, 比べる相手, 使い道, 最良を選ぶ指標だけ (効果を見積もるは, 加えて方策かどうか, 行動の結果の集め方, 方策の守りも問う. 下の「続けて行動を選ぶ方策と守り」. 型ごとの通り道は TODO.md). 受け持ちに依らない問い (手元のデータ, 要るのに無いデータ, 制約, 9 と 10 の節) は全ての受け持ちで問う
 - タスク (`task`) は列の正解の種類 (分類, 回帰, 時系列の予測) に限る. 型は受け持ち (`role`) と正解の種類 (`target.kind`) で表す
+- **既製のモデルをそのまま** (`method: pretrained`): 学習しないので, モデルの作成, 学習, データの分析の段階を通らない. そのため列の予測の問い (目的の列, タスク, 使える列, 損得と今のやり方) と, 学習の指標の問い (最良を選ぶ指標とその名前, 向き, 課題の指標とのつながり, 今のやり方での指標の値) は問わない (作り方を変える前の答えは, 他の要らなくなった問いと同じく残すが使わない). 予測するの受け持ちでは, 代わりに一式づくりに渡す値を問う (下の表). 値は ML-Inference の既製のモデルの一式づくり (`make_ready_bundle`) の引数と同じ名前. 種類の名前の表と前処理は ML-Inference が重みの説明から読むので問わない
+
+```yaml
+ml:
+  parts:
+    - role: predict
+      output: class
+      method: pretrained
+      target: {source: none, kind: column}
+      ready:                        # 既製のモデル (予測するで, 作り方が既製のモデルをそのままのときだけ)
+        library: torchvision        # 出どころ (要る. ML-Inference の READY_LIBRARIES の名前. 今は torchvision だけ)
+        model: resnet18             # 出どころでのモデルの名前 (要る)
+        weights: IMAGENET1K_V1      # 重みの名前 (版. 要る. 名前ごとに重みが決まる)
+        sha256: 8ec1484cdbb88ded96d21c3a5936faf3cdcc665aef92f331f675d0c63038f0ba   # 重みの hash (任意)
+```
+
+- 重みの hash (`ready.sha256`) は任意の文で, SHA-256 の 16 進の 64 文字 (前後の空白は除き, 大文字は小文字にして見る. 形が違えば確かめの `error`). 書くと一式づくりが読んだ重みと比べて違えば作らないので, 重みを固定できる. 分からなければ空のまま書き出し, 一式づくりが表示する hash を書き戻す. 名前 (`model`, `weights`) は前後の空白を除いて渡す. 出どころにその名前があるかは見ない (ML-Inference に頼らないため. 一式づくりが確かめる)
+- これらの項目は, 作り方の答えに続く問いなので, 版 2 に含む. 知らない ML-Quest は知らない項目として残す
 
 ### 最良を選ぶ指標
 
@@ -211,6 +231,7 @@ origin: /work/problems/sozai/problem.yaml # 元の問題の設定 (写しだけ�
 | 効果を見積もるで方策 | `reward` 評価のエピソードの報酬の和の平均 (大きい. 方策の既定), `loss` 報酬の和の平均の符号を反転した値 (小さい), `qini` (大きい) |
 | 全て | `other` その他 (名前 `evaluation.name` と向き `evaluation.better` を書く) |
 
+- 学習しない (作り方が既製のモデルをそのまま) 場合は問わない. 受け渡しの学習・評価の `metric`, `monitor`, `mode` は `None`
 - 監視する指標は `valid/<指標>` (RMSE は並びの同じ `valid/mse`). その他は `valid/<名前>`. 名前は英数字と `_`, `.`, `@`, `-` だけ (`.` と `..` は除く. 学習の記録の名前と曲線のファイルの名前になるため)
 - `loss` は `METRICS` に 2 つある (分類の交差エントロピーと, 他の受け持ちの損失. 監視する名前が同じ `valid/loss` なので値も同じ). 画面は `METRICS` を直接使わず, `questions` の `choices` (今の答えで絞り, 同じ値は 1 つ) を使う
 - `reward` は方策 (効果を見積もるで, 方策かに「はい」) だけに合う (`METRICS` の `fits` の `policy: true`. 方策かを答えていなければ絞らない. 方策でないと答えると選択肢から外れ, 答えてあれば「合いません」の誤り). 方策の選択肢の先頭に並べ, 方策の既定とする (強化学習では報酬が大きいほど良いと読むのが普通で, 損失を選ばせると迷うため). 方策で `loss` を選んだ問題の設定もそのまま読め, 書き出せる
@@ -392,7 +413,7 @@ pip で入らないものを含む外の道具 (ROS2, MuJoCo, CUDA) は, 要る�
 | 受け持ち | `part` (`role`, `unit`, `output`, `target_kind`, `target_source`, `target_process`, `method`) | 型に依らない 5 つの答え |
 | モデルの作成 (ML-ModelControl, ML-CreateArchitecture) | `task`, `outputs` (回帰と予測は 1, 分類はクラスの数. 分からなければ空), `role`, `target_kind` | 出力の大きさ |
 | 学習・評価 (ML-Found, ML-Dashboard) | `metric`, `monitor` (`valid/<指標>`. RMSE はバッチの平均で書けないので, 並びの同じ `valid/mse`. その他は `valid/<名前>`), `mode` (`min` か `max`), `role`, `target_kind` | config の `trainer.monitor` と `trainer.mode` |
-| 推論 (ML-Inference, ML-Provide) | `decision` (損得と制約. 選ぶと振り分けには `ml.positive` を `positive` として足す. 今のやり方 (`action.current`) が列なら, たどり直しで比べる `current` として足す. ただし量の型は今ある量 (`stock`) が無いか 0 の場合だけ (ML-Inference の量の `current` は今ある量に足した量, 問題の設定の列は置いた量なので, 今ある量があると意味が違う). k 期前と平均は列の名前でないので `current` には入れず, 推論の段階が問題の設定の今のやり方 (`action.current`) から ML-Inference の `current_from_baseline` で同じ値の列を作る (骨組みの今のやり方との比べ, データの候補の今のやり方の損と同じ数え方: k 期前は同じ系列のちょうど k 期前の行, 平均は k 期前から今の期の前まで)), `conclusion` (系列を分ける最初の列でまとめる `group_by`. 無ければ空), `horizon` (何期先まで) | 一式の既定値 (`make_bundle` の `decision` と `conclusion`), 何段も先の予測. ML-Provide は一式につないだ問題の設定から推論の既定値を読む |
+| 推論 (ML-Inference, ML-Provide) | `decision` (損得と制約. 選ぶと振り分けには `ml.positive` を `positive` として足す. 今のやり方 (`action.current`) が列なら, たどり直しで比べる `current` として足す. ただし量の型は今ある量 (`stock`) が無いか 0 の場合だけ (ML-Inference の量の `current` は今ある量に足した量, 問題の設定の列は置いた量なので, 今ある量があると意味が違う). k 期前と平均は列の名前でないので `current` には入れず, 推論の段階が問題の設定の今のやり方 (`action.current`) から ML-Inference の `current_from_baseline` で同じ値の列を作る (骨組みの今のやり方との比べ, データの候補の今のやり方の損と同じ数え方: k 期前は同じ系列のちょうど k 期前の行, 平均は k 期前から今の期の前まで)), `conclusion` (系列を分ける最初の列でまとめる `group_by`. 無ければ空), `horizon` (何期先まで), `ready` (既製のモデルをそのまま使う予測だけ. `library`, `model`, `weights`, `sha256` (決めていなければ `None`). 他は `None`) | 一式の既定値 (`make_bundle` の `decision` と `conclusion`), 何段も先の予測, 既製のモデルの一式づくり (`make_ready_bundle` の引数). ML-Provide は一式につないだ問題の設定から推論の既定値を読む |
 | 要る機能 | `requires` (機能の名前の並び. 上の「要る機能」) | 画面のカード (ML-Pathfinder, ML-Dashboard が ML-Found の `describe_requirements` で入れ方を出す) |
 | 書き出したプロジェクト | `project` (`path`. 記録が無ければ `None`), データの分析の `project_dataset`, モデルの作成の `project_model_spec` (どれも `project` の記録の絶対パス. 無ければ `None`) | データの分析の書き出し先, モデルの定義の置き場, 学習のプロジェクト (写さずにそのまま使う) |
 | 方策の守り | `policy` (方策のときだけ. `action_limits`, `stop`, `fallback`, `fallback_action`, `safety_key` (答えていなければ ML-Found の既定の `cost`), `approver`, `env_id` (環境の登録名. 答えていないか要らない問いなら `None`). 方策でなければ `None`) | ML-Found の `make_guards` と `safety_key`, 学習の環境 (`make_env`. 骨組みの config の `env.id`), 推論の段階の守り |
@@ -403,6 +424,7 @@ pip で入らないものを含む外の道具 (ROS2, MuJoCo, CUDA) は, 要る�
 
 - 読む側は, 知らない値 (`requires`, `policy`, `project` など) を無視してよい
 - 受け持ちの答えは `part` (`role`, `unit`, `output`, `target_kind`, `target_source`, `target_process`, `method`) で渡す. 学習・評価とモデルの作成にも `role` と `target_kind` を入れる
+- 既製のモデルをそのまま使う予測は, 列の予測でない受け持ちと同じく, データの分析とモデルの作成の値を空にし, 意思決定は `None` (ML-Inference の既製のモデルの一式は意思決定を使えないため), 結論は空で渡す. 一式づくりの値は推論の `ready`
 - 列の予測でない受け持ち (予測するの点群など) は, データの分析の値を同じ名前の空 (`target`, `task`, `split` は `None`, 並びは空) にし, 意思決定は `None`, 結論は空, 何期先までは `None` で渡す. 画像の生成の受け持ちは, 分割 `split` (書き戻したレシピの `split.method`. 無ければ `random`) だけを渡す. ファイルの組の受け持ち (予測するの画像の領域と点群) は, 分割 `split` (書き戻した書き出しの設定の `split.method`. 設定は `recipe_from` と同じく, 書き出しが今の正解の種類に合うものだけを使う. 無ければ, グループがあれば `group`, 他は `random`) とグループ `groups` (書き戻した設定の件の id からグループ. 無ければ `None`) を渡す. 他の型のデータの分析と推論への受け渡しは TODO.md にある
 
 ## 11. 骨組み
@@ -423,7 +445,7 @@ pip で入らないものを含む外の道具 (ROS2, MuJoCo, CUDA) は, 要る�
 - 学習のスクリプトは, ML-EDA のデータセット (`outputs/dataset`) を読み, ML-ModelControl の定義 (`models/model.yaml`) からモデルを組み立て, ML-Found で学習し, テスト用の分割で評価し, 今のやり方と比べ (下の「今のやり方との比べ」), ML-Inference の推論の一式を実験の中に作る (問題の設定の意思決定と結論を既定値にする)
 - **モデルの定義の写し**: 学習のスクリプトは定義を自分で写さない. ML-Found の `start_experiment` が config の `model.spec` の定義を実験に `model_spec.yaml` として写し, 中身の sha256 を `source.yaml` に記録する (写す処理を 2 か所に持たないように). 学習のスクリプトは, 定義のファイルがあるか (列の予測は無ければ止まり, ファイルの組は仮のモデルで学習する) と, 定義に誤りが無いか (ML-ModelControl の `validate` の `error`. 誤りの文を並べて止まる) を `start_experiment` の前に確かめる (誤りの定義で, 学習しない実験の出力先が残らないように. 外部の重みのファイルが読めるかは組み立てるときに分かる). その後に `Experiment` の `model_spec_path` (写した場所) からモデルを組み立て, 推論の一式 (ML-Inference の `make_bundle`) にも同じ写しを渡す. 写しから組み立てるときは, 定義の中の相対の参照 (外部の重み `weights.path` など) の起点に, 写した元の定義のディレクトリ (`model_spec_source.parent`) を `build_model` の `base_dir` に渡す (ML-Found は定義のファイルだけを写し, 参照するファイルは写さないため). 学習を始めた後にプロジェクトの定義を書き換えても, 記録の sha256, 学習したモデル, 一式の定義の 3 つがそろうように. 写せなかった場合 (`model_spec_path` が `None`. 定義がリンク, プロジェクトの外, 大きすぎるなど. 理由は `source.yaml` の `model_spec` の `status`) は止めず, プロジェクトの定義から組み立てて一式にもそれを渡し, `train.log` に警告を 1 行書く (ML-Found の勧めの形. 写しが無いので記録に sha256 も無く, 食い違いは起きない. 定義を組み直す前の試しの学習を止めないため). 学習のスクリプトは ML-Found の `Experiment.model_spec_path` が要る
 - **要る機能**: config の一番上の `requires` に, 学習のスクリプトが読み込むライブラリ (列の予測もファイルの組も `eda`, `modelcontrol`, `inference`. ファイルの組は定義が無いうちは仮のモデルで学習し `modelcontrol` と `inference` を読まないが, 定義を置けばすぐ使うので, 先に入れておく) と, 受け渡しの `requires` (問題の設定から要る機能) を書く. ML-Found は学習の前に確かめ, 足りなければ入れ方を示して止まる. ML-Dashboard は同じ名前でプロジェクトの環境を作る
-- **プロジェクトの記録**: `record_project(problem, path)` は, 書き出したプロジェクトの config (`data.dataset` と `model.spec`) をプロジェクトのディレクトリから絶対パスにして, 問題の設定の `project` に入れて返す (元は変えない. 前の記録は置き換える). 場所を config から読むのは, train.py が読む場所と同じにするため. 画面 (ML-Pathfinder) は書き出しの後にこれを保存する. プロジェクトの中の `problem.yaml` の写しには記録を持たせない (プロジェクトを動かしても古い場所を指さないように. train.py はプロジェクトのディレクトリからの場所で読む)
+- **プロジェクトの記録**: `record_project(problem, path)` は, 書き出したプロジェクトの config (`data.dataset` と `model.spec`) をプロジェクトのディレクトリから絶対パスにして, 問題の設定の `project` に入れて返す (元は変えない. 前の記録は置き換える). 場所を config から読むのは, train.py が読む場所と同じにするため (既製のモデルの骨組みは `configs/default/bundle.yaml` を読み, どちらも `None`). 画面 (ML-Pathfinder) は書き出しの後にこれを保存する. プロジェクトの中の `problem.yaml` の写しには記録を持たせない (プロジェクトを動かしても古い場所を指さないように. train.py はプロジェクトのディレクトリからの場所で読む)
 - タスクごとの損失と指標: 分類は交差エントロピーと正解率 (正解率を監視するなら, 同じ値を損失で比べる `trainer.monitor_tiebreak: valid/loss`), 回帰と予測は目的の値を学習用の平均と標準偏差で標準化した二乗誤差と元の単位の平均絶対誤差 (RMSE なら元の単位の二乗誤差を監視し, テスト用の評価はエポック全体から RMSE を求める. ML-Found はバッチの平均で書ける指標だけを平均するため)
 - 推論の一式の確かめが学習の記録と比べられるのは, 監視した指標が `accuracy` か `mae` (ファイルの組の骨組みは `iou` か `chamfer`) の場合だけ (ML-Inference の決まり). それ以外では比べない理由を記録に書く
 - 答えの文字 (名前, 予測すること, 比べる相手) と値 (意思決定, 結論など) は, Python の式 (文字は JSON の文字列, 真偽値と `None` は Python の名前. 長い文字列は空白か句読点の後で折り返す) か 1 行のコメントとして埋め込む (改行や引用符でスクリプトが壊れず, JSON の `true` や `null` が名前の誤りにならないように). 実験の名前は目的の列とタスクから作り, 日本語の文字は残す
@@ -512,6 +534,37 @@ pip で入らないものを含む外の道具 (ROS2, MuJoCo, CUDA) は, 要る�
 - **受け渡し**: データの分析の値は列の予測でない受け持ちと同じ空 (データの分析の段階を通らない), 推論の意思決定は `None`, 方策の守りは `policy`
 - 骨組みを書き出せることと config と README をテストで確かめる. PyTorch, ML-Found, Gymnasium が入っていれば, CartPole (番号で選ぶ行動. REINFORCE), Pendulum (連続の行動. Actor-Critic), 自作の環境の雛形の 3 つで, 少ないエピソードの config の差分だけを渡して (骨組みは書き換えずに) 2 エポック学び, 方策の一式, 守る指標の表, `task.yaml` を見る. 守りに数 (選んでよい行動と狭い止める条件) を書いた差分で, 守り付きの評価に `clipped` と `fallback` が数えられ, `guards_set` が `true` になるかと, 知らない学習の方法と決めた行動の無い守りと, 方策の頭の定義の誤り (ノードと出力の無い定義, 出力が 2 つ, 出力が行動の数と違う, 観測を入れられない) が出力先を作る前に止まるかも見る. 既定の定義を書き, 一式に実験の写しと同じ定義を写すかも見る. ML-Inference も入っていれば, 3 つの一式を ML-Inference の `read_policy_spec` と, モデルを渡さない `load_policy` で読み (余る重みが無い), ML-Found と同じ行動と守りの結果を返すかを見る (CI の `train` のジョブは Gymnasium と, ML-ModelControl と ML-Inference の main を入れる. 固定はしない)
 
+### 既製のモデルの骨組み (予測するで, 既製のモデルをそのまま)
+
+作り方が既製のモデルをそのまま (`pretrained`) の予測するの受け持ちは, 学習のスクリプトの代わりに, ML-Inference の既製のモデルの一式 (推論の一式の版 6) を作る設定とスクリプトを書き出す. 学習しないので, データの分析, モデルの作成, 学習の段階を通らない. 今の一式づくりは画像の分類だけなので, 正解の種類が表の列で出力の形がクラスの場合だけ書き出す.
+
+```
+<プロジェクト>/
+├── problem.yaml                  # 問題の設定の写し (元の場所 origin を持つ)
+├── README.md                     # 課題の要約と, 次にすること (一式づくり, 推論)
+├── configs/default/bundle.yaml   # 一式づくりに渡す値 (ready), 一式の場所と名前 (bundle), 結論の決め方 (conclusion)
+└── bundle.py                     # 一式を作るスクリプト
+```
+
+```yaml
+ready:                       # 受け渡しの推論の ready のまま
+  library: "torchvision"
+  model: "resnet18"
+  weights: "IMAGENET1K_V1"
+  sha256: "8ec1484c…"          # 決めていなければ null
+bundle:
+  path: "outputs/inference"  # プロジェクトのディレクトリから
+  name: "resnet18_IMAGENET1K_V1"   # make_project の name. 省くとモデルと重みの名前から
+  overwrite: false
+conclusion: null             # 結論の決め方の既定値 (min_confidence など)
+```
+
+- **書き出せる条件**: 受け持ちが予測する (他の受け持ちで既製のモデルをそのままと答えると, 学習する骨組みも書き出さずに誤り. 答えと違って学習しないように), 正解の種類が表の列, 出力の形がクラス. 学習しないので最良を選ぶ指標と入れたデータセットは見ない. 入れたデータは他の骨組みと同じく `data/` に写す (推論で渡す画像)
+- **一式づくり** (`bundle.py`): config を読み, `ready` の `library`, `model`, `weights` (空でない文字. 無ければ直す所を示して止まる) と `sha256` (空なら比べない. 小文字にする) を, ML-Inference の `make_ready_bundle(path, model, weights, library=..., sha256=..., name=..., conclusion=..., overwrite=...)` に渡す. 学習の段階のライブラリ (ML-Found, ML-EDA) は使わず, 読むのは PyYAML と ML-Inference だけ. ML-Inference が無いか, `make_ready_bundle` の無い古い ML-Inference なら, ML-Inference と `ml-modelcontrol[torchvision]` の入れ方を示して止まる. 一式を作れない (hash が違う, 重みを読めない, 既にある) 場合は理由を示して止まる. 作った後は, 種類の数, 読んだ重みの hash, 一式の注意 (`notes`. ライセンスの注意など) を表示し, hash を決めていなければ config と問題の設定に書き戻す案内を出す
+- **重み**: 一式は重みを写さず, 使うときに出どころから読む (ML-Inference の決まり). README に, 初回は取りに行くことと, ネットワークを使えない場所での置き場 (`torch.hub.get_dir()` の `checkpoints`) を書く
+- **受け渡し**: 推論の `ready` を config の `ready` にそのまま書く. 意思決定は渡さない (ML-Inference の既製のモデルの一式は意思決定を使えない). 学習・評価の値は `None`
+- 見本 (`写真の仕分け (既製のモデル)`. torchvision の ResNet18 と ImageNet の重み) から書き出し, ファイル, config, README, スクリプトが Python として読め 79 文字以内であることと, `record_project` が場所を記録することをテストで確かめる. スクリプトは, `make_ready_bundle` の口だけを持つ作り物の ML-Inference (受け取った値を記録する) を先に読ませて動かし, config の値がそのまま渡ること, 決めた hash と結論の決め方を渡すこと, 作れない場合と名前の無い場合と古い ML-Inference で止まることを見る (ML-Inference の版 6 を入れなくても動く. 実際の重みを取りに行かない)
+
 ## 12. 書き出し
 
 - `save_problem(problem, path)` は `updated_at` を今にして YAML で書く (一時ファイルに書いてから置き換える)
@@ -532,4 +585,4 @@ pip で入らないものを含む外の道具 (ROS2, MuJoCo, CUDA) は, 要る�
 
 - 受け持ちは, 課題から見た機械学習の最後の出力に付ける 5 つ (予測する, 作る, 並べる, まとめる, 効果を見積もる). 今の時間のかかる処理を速くする「置き換え」は受け持ちにせず, 正解の出どころ (今の処理の出力), 守る指標 (今と同じ結果), 元に戻す道で書く. 埋め込み (表す) は段の部品で, 受け持ちにしない
 - 1 つのファイルに課題は 1 つ. 受け持ちは並びで持つ (今は 1 つだけ許す. 守る指標と確かめ方は課題に 1 つ)
-- 版 2 は, 型に依らない 5 つの問いと, 受け持ちと正解の種類ごとの指標の候補を持つ (上の「受け持ちと, 型に依らない 5 つの問い」). 並べる, まとめる, 効果を見積もるの続く問いは最小限. 骨組みを書き出せるのは, 列の予測と, 予測するの画像の領域と点群と, 作るの画像と, 効果を見積もるの方策
+- 版 2 は, 型に依らない 5 つの問いと, 受け持ちと正解の種類ごとの指標の候補を持つ (上の「受け持ちと, 型に依らない 5 つの問い」). 並べる, まとめる, 効果を見積もるの続く問いは最小限. 骨組みを書き出せるのは, 列の予測と, 予測するの画像の領域と点群と, 作るの画像と, 効果を見積もるの方策と, 予測するで既製のモデルをそのまま使う画像の分類 (学習しない)

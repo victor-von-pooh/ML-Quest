@@ -21,9 +21,20 @@ USES_ML = {"id": "ml.use", "equals": True}
 # 受け持ちの場所 (今は 1 つだけ書ける. 問いの識別子は並びの番号を持つ)
 PART = "ml.parts.0"
 
-# 予測するで, 正解の種類が表の列 (列の予測) の場合だけの問い
+# 作り方が既製のモデルをそのまま (学習しない) か
+PRETRAINED = {"id": f"{PART}.method", "equals": "pretrained"}
+
+# 学習する場合だけの問い (最良を選ぶ指標)
+TRAINED = [USES_ML, {"none": [PRETRAINED]}]
+
+# 予測するで, 正解の種類が表の列 (列の予測) の場合だけの問い. 既製のモデル
+# をそのまま使う場合は学習もデータの分析もしないので含めない
 COLUMN_TARGET = [USES_ML, {"id": f"{PART}.role", "equals": "predict"},
-                 {"id": f"{PART}.target.kind", "equals": "column"}]
+                 {"id": f"{PART}.target.kind", "equals": "column"},
+                 {"none": [PRETRAINED]}]
+
+# 予測するで, 既製のモデルをそのまま使う場合だけの問い (一式づくりに渡す値)
+READY = [USES_ML, {"id": f"{PART}.role", "equals": "predict"}, PRETRAINED]
 
 # 入れたデータが画像, 文か音声 (1 件の中身で学ぶ) の場合と, 骨組みが今の
 # やり方の結果を 1 件ずつ並べられない場合 (画像, 文か音声の列の予測と, 画像
@@ -33,7 +44,7 @@ CONTENT_DATA = [{"id": "data.loader",
                  "in": ["image_folder", "text_lines", "audio_folder"]},
                 {"id": "data.options.text_column", "filled": True}]
 REPORTED_BASELINE = [
-    USES_ML, {"id": f"{PART}.role", "equals": "predict"},
+    *TRAINED, {"id": f"{PART}.role", "equals": "predict"},
     {"id": f"{PART}.evaluation.metric",
      "in": ["accuracy", "mae", "rmse", "iou", "chamfer"]},
     {"any": [*CONTENT_DATA,
@@ -140,6 +151,12 @@ METHODS = [
     {"value": "partial", "label": "一部を微調整"},
     {"value": "finetune", "label": "全体を微調整"},
     {"value": "scratch", "label": "一から学習"},
+]
+
+# 既製のモデルの出どころ (ML-Inference の READY_LIBRARIES の名前)
+READY_LIBRARIES = [
+    {"value": "torchvision", "label": "torchvision (画像の分類の学習済みの"
+     "重み)"},
 ]
 
 # 効果を見積もるの受け持ちの場合だけの問い
@@ -470,6 +487,26 @@ QUESTIONS: list[dict[str, Any]] = [
                         "in": ["predict", "generate"]}],
      "choices": TARGET_KINDS, "title": "正解 (出力) の種類は",
      "help": "表の列なら, 続けて目的の列とタスクを問う"},
+    {"id": f"{PART}.ready.library", "section": 5, "kind": "choice",
+     "required": True, "when": READY, "choices": READY_LIBRARIES,
+     "title": "既製のモデルはどこのものですか (出どころ)",
+     "help": "学習済みの重みを配っているライブラリ. 今は torchvision の画像"
+             "の分類だけ"},
+    {"id": f"{PART}.ready.model", "section": 5, "kind": "text",
+     "required": True, "when": READY, "title": "既製のモデルの名前は",
+     "help": "出どころでのモデルの名前. 例: resnet18 (torchvision)"},
+    {"id": f"{PART}.ready.weights", "section": 5, "kind": "text",
+     "required": True, "when": READY, "title": "重みの名前 (版) は",
+     "help": "出どころでの学習済みの重みの名前. 名前ごとに重みが決まる. "
+             "例: IMAGENET1K_V1 (torchvision の ImageNet で学んだ重み). "
+             "DEFAULT は一式を作るときの名前に直す"},
+    {"id": f"{PART}.ready.sha256", "section": 5, "kind": "text",
+     "required": False, "when": READY,
+     "title": "重みの hash (SHA-256) は (決めておくなら)",
+     "help": "書くと, 一式を作るときに読んだ重みの hash と比べ, 違えば作ら"
+             "ない. 16 進の 64 文字. 分からなければ空のまま (一式を作ると"
+             "求めた hash が出るので, それを書くと次から同じ重みに固定でき"
+             "る)"},
     {"id": f"{PART}.what", "section": 5, "kind": "text", "required": True,
      "when": USES_ML, "title": "何を出させますか",
      "help": "4 で決めることのために, 何が分かればよいか. 文で. 例: 作る量"
@@ -679,27 +716,27 @@ QUESTIONS: list[dict[str, Any]] = [
 
     # 8. 学習の指標
     {"id": f"{PART}.evaluation.metric", "section": 8, "kind": "choice",
-     "required": True, "when": USES_ML, "choices": METRICS,
+     "required": True, "when": TRAINED, "choices": METRICS,
      "title": "最も良いモデルを何で選びますか",
      "help": "検証用の分割で見て, 最も良いモデルを選ぶ指標 (学習の損失の"
              "種類はモデルの作成と学習の段階で決める). 候補に無ければその他"},
     {"id": f"{PART}.evaluation.name", "section": 8, "kind": "text",
      "required": True,
-     "when": [USES_ML, {"id": f"{PART}.evaluation.metric",
-                        "equals": "other"}],
+     "when": [*TRAINED, {"id": f"{PART}.evaluation.metric",
+                         "equals": "other"}],
      "title": "その指標の名前は",
      "help": "学習の記録の名前 (空白と / は使えない). 検証用の分割の値 "
              "valid/<名前> を監視する指標として渡す. 例: f1, map50"},
     {"id": f"{PART}.evaluation.better", "section": 8, "kind": "choice",
      "required": True,
-     "when": [USES_ML, {"id": f"{PART}.evaluation.metric",
-                        "equals": "other"}],
+     "when": [*TRAINED, {"id": f"{PART}.evaluation.metric",
+                         "equals": "other"}],
      "choices": [{"value": "lower", "label": "小さいほど良い"},
                  {"value": "higher", "label": "大きいほど良い"}],
      "title": "その指標は, 小さいほど良いですか, 大きいほど良いですか",
      "help": "最良のモデルを選ぶ向き"},
     {"id": f"{PART}.evaluation.link", "section": 8, "kind": "text",
-     "required": False, "when": USES_ML,
+     "required": False, "when": TRAINED,
      "title": "その指標が良くなると, 課題の指標はどう良くなりますか",
      "help": "例: 誤差が小さいほど作る量の外れが減り, 廃棄と欠品の損が減る"},
     {"id": f"{PART}.evaluation.current", "section": 8, "kind": "number",
@@ -767,7 +804,8 @@ QUESTIONS: list[dict[str, Any]] = [
 ]
 
 # 1 行の名前で答える文の問い (人や部署, 数字と単位, 処理と指標と環境と
-# 信号の名前, クラス, 比べる相手, 頻度, 決めた行動). 他の文の問いは複数行
+# 信号の名前, クラス, 比べる相手, 頻度, 決めた行動, 既製のモデルと重みの
+# 名前と hash). 他の文の問いは複数行
 ONE_LINE = {
     "issue.owner", "issue.kpi.name", "issue.kpi.unit", "issue.guard.name",
     "issue.guard.unit", "action.who", "action.when",
@@ -775,6 +813,7 @@ ONE_LINE = {
     f"{PART}.baseline", f"{PART}.policy.fallback_action",
     f"{PART}.policy.safety_key", f"{PART}.policy.approver",
     f"{PART}.evaluation.name", "operation.review", "operation.approver",
+    f"{PART}.ready.model", f"{PART}.ready.weights", f"{PART}.ready.sha256",
 }
 
 # 答えの欄の形 (文の問いだけ multiline が真か偽. 他の種類の問いは偽)

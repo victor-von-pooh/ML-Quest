@@ -4,7 +4,7 @@ from ml_quest.problem import answer, new_problem
 from ml_quest.questions import PART
 
 # 見本の答え (架空の課題. 問いの順). 量を決める予測, 対象を選ぶ分類,
-# 機械学習を使わない出口
+# 既製のモデルをそのまま使う画像の分類, 機械学習を使わない出口
 EXAMPLES: dict[str, list[tuple[str, Any]]] = {
     "総菜の作る量": [
         ("issue.owner", "店長"),
@@ -123,6 +123,50 @@ EXAMPLES: dict[str, list[tuple[str, Any]]] = {
         ("operation.review", "月に 1 回"),
         ("operation.stop", "2 か月続けて差が出ないか, 引き止めの連絡への"
                            "苦情が月 5 件を超えたら止める"),
+    ],
+    "写真の仕分け (既製のモデル)": [
+        ("issue.owner", "写真の整理の担当"),
+        ("issue.pain", "届く写真に何が写っているかを人が見て仕分けていて, "
+                       "1 日に何時間もかかる"),
+        ("issue.current", "担当が 1 枚ずつ見て, 写っているものの名前を付ける"),
+        ("issue.kpi.name", "仕分けにかかる時間"),
+        ("issue.kpi.unit", "時間 / 日"),
+        ("issue.kpi.better", "lower"),
+        ("issue.kpi.current", 3),
+        ("issue.kpi.target", 1),
+        ("decomposition", [
+            {"cause": "写っているものの名前を人が 1 枚ずつ付ける",
+             "lever": "既製のモデルで名前の候補を付け, 人は確かめるだけに"
+                      "する", "ml": True},
+            {"cause": "仕分け先の決まりが人ごとに違う",
+             "lever": "種類ごとの仕分け先の表を作る", "ml": False},
+        ]),
+        ("action.what", "写真の仕分け先"),
+        ("action.who", "写真の整理の担当"),
+        ("action.when", "写真が届いたとき"),
+        ("ml.use", True),
+        ("ml.reason", "写っているものは多くの種類があり, 決まりでは分けられ"
+                      "ない. ImageNet の種類で足りるので学習しない"),
+        (f"{PART}.role", "predict"),
+        (f"{PART}.unit", "row"),
+        (f"{PART}.output", "class"),
+        (f"{PART}.target.source", "none"),
+        (f"{PART}.method", "pretrained"),
+        (f"{PART}.target.kind", "column"),
+        (f"{PART}.ready.library", "torchvision"),
+        (f"{PART}.ready.model", "resnet18"),
+        (f"{PART}.ready.weights", "IMAGENET1K_V1"),
+        (f"{PART}.ready.sha256", "8ec1484cdbb88ded96d21c3a5936faf3cdcc665aef"
+                                 "92f331f675d0c63038f0ba"),
+        (f"{PART}.what", "写真に写っているものの種類 (ImageNet の 1000 種類)"),
+        (f"{PART}.item", "写真 1 枚"),
+        (f"{PART}.baseline", "担当が 1 枚ずつ見て名前を付ける"),
+        (f"{PART}.consumer", "human"),
+        ("verification.method", "trial"),
+        ("verification.trial", "1 週間, 候補を見ながら仕分ける"),
+        ("verification.success", "仕分けにかかる時間が 1 日 1 時間になる"),
+        ("operation.review", "月に 1 回"),
+        ("operation.stop", "候補の直しが半分を超えたら止める"),
     ],
     "問い合わせの振り分け (機械学習を使わない)": [
         ("issue.owner", "サポートの窓口"),

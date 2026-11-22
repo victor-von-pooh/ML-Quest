@@ -3,7 +3,7 @@ from typing import Any, Optional
 
 from ml_quest.check import (
     check, env_id_of, is_column_part, is_generate_part, is_items_part,
-    split_errors
+    is_pretrained_part, sha256_of, split_errors
 )
 from ml_quest.data import EXPORT_FUNCTIONS
 from ml_quest.problem import (
@@ -99,7 +99,8 @@ def handoff(problem: dict) -> dict:
     ----------
     stages: dict
         data (データの分析), model (モデルの作成), training (学習・評価),
-        inference (推論) ごとの値と, part (受け持ちの答え), requires (要る
+        inference (推論. 既製のモデルをそのまま使う予測は ready に一式
+        づくりに渡す値) ごとの値と, part (受け持ちの答え), requires (要る
         機能の名前), policy (方策の守り. 方策でなければ None), project
         (書き出したプロジェクトの path. データセットとモデルの定義の場所は
         data の project_dataset と model の project_model_spec. 記録が無け
@@ -241,7 +242,7 @@ def build_stages(problem: dict) -> dict:
                       "project_model_spec": project["model_spec"]},
             "training": training,
             "inference": {"decision": None, "conclusion": {},
-                          "horizon": None},
+                          "horizon": None, "ready": ready_of(problem)},
             "requires": required_features(problem),
             "policy": policy_of(problem),
             "project": {"path": project["path"]},
@@ -261,7 +262,8 @@ def build_stages(problem: dict) -> dict:
         "training": training,
         "inference": {"decision": decision_of(problem),
                       "conclusion": conclusion_of(problem),
-                      "horizon": value(problem, f"{PART}.horizon")},
+                      "horizon": value(problem, f"{PART}.horizon"),
+                      "ready": None},
         "requires": required_features(problem),
         "policy": policy_of(problem),
         "project": {"path": project["path"]},
@@ -357,6 +359,35 @@ def part_of(problem: dict) -> dict:
     return part
 
 
+def ready_of(problem: dict) -> Optional[dict]:
+    """
+    既製のモデルの一式づくり (ML-Inference の make_ready_bundle) に渡す値
+    をまとめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    ready: Optional[dict]
+        library, model, weights (前後の空白を除いた名前), sha256 (決めて
+        いなければ None) (既製のモデルをそのまま使う予測でなければ None)
+    """
+    # 予測するで既製のモデルをそのまま使うときだけ (要らなくなった問いの
+    # 古い答えは除外)
+    if not is_pretrained_part(problem):
+        return None
+    ready: dict[str, Any] = {}
+    for key in ("library", "model", "weights"):
+        found = active_value(problem, f"{PART}.ready.{key}")
+        ready[key] = found.strip() if isinstance(found, str) else found
+    ready["sha256"] = sha256_of(problem)
+
+    return ready
+
+
 def policy_of(problem: dict) -> Optional[dict]:
     """
     続けて行動を選ぶ方策の守りの答えをまとめる関数
@@ -401,11 +432,17 @@ def training_of(problem: dict) -> dict:
     ----------
     training: dict
         metric (その他は書いた名前), monitor (valid/<指標>), mode (min か
-        max)
+        max). 既製のモデルをそのまま使う (学習しない) 場合は全て None
     """
+    # 学習しない場合は指標を問わない
+    metric = active_value(problem, f"{PART}.evaluation.metric")
+    if active_value(problem, f"{PART}.method") == "pretrained":
+        training: dict[str, Any] = {"metric": None, "monitor": None,
+                                    "mode": None}
+        return training
+
     # 学習の監視は, バッチの平均で書ける指標 (RMSE は二乗誤差で選ぶ).
     # その他は書いた名前と向き
-    metric = active_value(problem, f"{PART}.evaluation.metric")
     better = next((item["better"] for item in METRICS
                    if item["value"] == metric), "lower")
     monitor = "valid/mse" if metric == "rmse" else f"valid/{metric}"
@@ -669,6 +706,9 @@ def describe(problem: dict) -> list[str]:
     env_id = env_id_of(problem)
     if env_id:
         sentences.append(f"方策を学ぶ環境: Gymnasium の {env_id}")
+    ready = ready_of(problem)
+    if ready and ready["model"]:
+        sentences.append(ready_text(ready))
     features = required_features(problem)
     if features:
         sentences.append("要る機能: " + ", ".join(features))
@@ -678,6 +718,31 @@ def describe(problem: dict) -> list[str]:
         )
 
     return sentences
+
+
+def ready_text(ready: dict) -> str:
+    """
+    既製のモデルの出どころ, 名前, 重みを文にする関数
+
+    Parameters
+    ----------
+    ready: dict
+        一式づくりに渡す値 (ready_of の結果. モデルの名前があるもの)
+
+    Returns
+    ----------
+    text: str
+        要約の文 (hash は頭の 12 文字)
+    """
+    # 出どころ, モデル, 重み, hash の答えた部分
+    where = f"{ready['library']} の " if ready["library"] else ""
+    weights = f" (重み {ready['weights']})" if ready["weights"] else ""
+    sha256 = (f". 重みの hash {ready['sha256'][:12]}…" if ready["sha256"]
+              else "")
+    text = (f"学習せずに使う既製のモデル: {where}{ready['model']}{weights}"
+            f"{sha256}")
+
+    return text
 
 
 def policy_text(problem: dict) -> str:
