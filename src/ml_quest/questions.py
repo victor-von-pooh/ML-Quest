@@ -722,5 +722,21 @@ QUESTIONS: list[dict[str, Any]] = [
      "help": "外れ方は時間とともに変わる. 例: 月に 1 回, 前の月の実績で"},
 ]
 
+# 1 行の名前で答える文の問い (人や部署, 数字と単位, 処理と指標と環境と
+# 信号の名前, クラス, 比べる相手, 頻度, 決めた行動). 他の文の問いは複数行
+ONE_LINE = {
+    "issue.owner", "issue.kpi.name", "issue.kpi.unit", "issue.guard.name",
+    "issue.guard.unit", "action.who", "action.when",
+    f"{PART}.target.process.name", f"{PART}.env_id", f"{PART}.positive",
+    f"{PART}.baseline", f"{PART}.policy.fallback_action",
+    f"{PART}.policy.safety_key", f"{PART}.policy.approver",
+    f"{PART}.evaluation.name", "operation.review", "operation.approver",
+}
+
+# 答えの欄の形 (文の問いだけ multiline が真か偽. 他の種類の問いは偽)
+for question in QUESTIONS:
+    question["multiline"] = (question["kind"] == "text"
+                             and question["id"] not in ONE_LINE)
+
 # 問いの識別子から問い
 BY_ID = {question["id"]: question for question in QUESTIONS}
