@@ -2,7 +2,8 @@ from pathlib import PurePath
 from typing import Any, Optional
 
 from ml_quest.check import (
-    check, env_id_of, is_column_part, is_items_part, split_errors
+    check, env_id_of, is_column_part, is_generate_part, is_items_part,
+    split_errors
 )
 from ml_quest.problem import (
     DECISION_NAMES, DECISION_OPTIONS, FIELD_NAMES, OPTION_NAMES,
@@ -232,6 +233,7 @@ def build_stages(problem: dict) -> dict:
             "part": part,
             "data": {**column_data(problem, None),
                      **items_data(problem),
+                     **generate_data(problem),
                      "project_dataset": project["dataset"]},
             "model": {"task": None, "outputs": None, "role": part["role"],
                       "target_kind": part["target_kind"],
@@ -485,6 +487,34 @@ def items_data(problem: dict) -> dict:
     data = {"split": export_split(saved),
             "groups": dict(groups) if isinstance(groups, dict) and groups
             else None}
+
+    return data
+
+
+def generate_data(problem: dict) -> dict:
+    """
+    画像の生成の受け持ちの, データの分析の段階に渡す分割を作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    data: dict
+        split (書き戻したレシピの split.method. 無ければ random. 画像の
+        生成でなければ空)
+    """
+    # 目的の列が無いので層別にも時刻の順にもしない
+    data: dict = {}
+    if not is_generate_part(problem):
+        return data
+    saved = get_value(problem, "data.recipe")
+    split = saved.get("split") if isinstance(saved, dict) else None
+    method = split.get("method") if isinstance(split, dict) else None
+    data = {"split": method if isinstance(method, str) and method
+            else "random"}
 
     return data
 

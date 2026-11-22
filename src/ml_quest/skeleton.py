@@ -14,10 +14,13 @@ from ml_quest.baseline_skeleton import (
     predict_log, reported_code, reported_hint, reported_sentence,
     reported_value
 )
-from ml_quest.check import is_column_part, split_errors
+from ml_quest.check import is_column_part, is_generate_part, split_errors
 from ml_quest.data import (
     ITEMS_KINDS, content_kind, copy_data, dataset_info, inspect_data,
     inspect_key, items_message
+)
+from ml_quest.generate_skeleton import (
+    GENERATE_LIBRARIES, generate_config, generate_readme, generate_script
 )
 from ml_quest.handoff import build_stages, describe, export_stages
 from ml_quest.items_skeleton import (
@@ -1021,13 +1024,20 @@ def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
         message = str(error)
         return message, exportable
 
-    # 列の予測と, 予測するの画像の領域と点群だけ
-    if not is_column_part(upgraded) and skeleton_kind(upgraded) is None:
+    # 列の予測と, 予測するの画像の領域と点群と, 作るの画像だけ
+    generate = is_generate_part(upgraded)
+    if not is_column_part(upgraded) and skeleton_kind(upgraded) is None and (
+        not generate
+    ):
         message = ("骨組みを書き出せるのは, 予測するで正解の種類が表の列, "
-                   "画像の領域, 点群の場合だけです (作る, 並べる, まとめる, "
-                   "効果を見積もるの受け持ちと, 他の正解の種類はまだ扱えま"
-                   "せん)")
+                   "画像の領域, 点群の場合と, 作るで正解の種類が画像の場合"
+                   "だけです (並べる, まとめる, 効果を見積もるの受け持ちと, "
+                   "他の正解の種類はまだ扱えません)")
         return message, exportable
+    if generate:
+        message = generate_message(upgraded)
+        if message is not None:
+            return message, exportable
 
     # 骨組みが記録できる指標だけ
     if active_value(upgraded, f"{PART}.evaluation.metric") == "other":
@@ -1041,6 +1051,41 @@ def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
     message = items_message(upgraded)
 
     return message, exportable
+
+
+def generate_message(problem: dict) -> Optional[str]:
+    """
+    画像の生成の骨組みを書き出せない理由を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 作るで正解の種類が画像)
+
+    Returns
+    ----------
+    message: Optional[str]
+        誤りの文 (出力の形が画像でない, 指標が損失でない, 入れたデータが
+        画像のディレクトリでない. 書き出せるなら None)
+    """
+    # 条件の無い拡散のモデルで, 画像を作り, 損失で選び, 画像を読む
+    output = active_value(problem, f"{PART}.output")
+    metric = active_value(problem, f"{PART}.evaluation.metric")
+    loader = active_value(problem, "data.loader")
+    message = None
+    if output != "image":
+        message = ("画像の生成の骨組みは, 出力の形が画像の場合だけです (今は "
+                   f"{output})")
+    elif metric not in ("loss", "other"):
+        message = (f"画像の生成の骨組みは, 最良を選ぶ指標が loss の場合だけ"
+                   f"です (今は {metric}. 作った画像は損失と見本の画像で見"
+                   "ます. FID はまだ数えません)")
+    elif get_value(problem, "data.source") and loader != "image_folder":
+        message = ("画像の生成の骨組みは, 画像のディレクトリ (ML-EDA の "
+                   f"image_folder) のデータで学びます (入れたデータの読み方は "
+                   f"{loader})")
+
+    return message
 
 
 def open_errors(
@@ -1225,6 +1270,22 @@ def project_files(
     files: dict
         README.md, configs/default/train.yaml, train.py の中身
     """
+    # 画像の生成 (入れた画像のディレクトリは data に写し, データセットは
+    # データの分析の段階が outputs/dataset に書き出す)
+    if is_generate_part(problem):
+        files = {
+            "README.md": generate_readme(
+                problem, stages, "outputs/dataset",
+                data_file.as_posix() if data_file else None
+            ),
+            "configs/default/train.yaml": generate_config(
+                experiment_name(problem, name), stages, "outputs/dataset",
+                requires_text(GENERATE_LIBRARIES, stages)
+            ),
+            "train.py": generate_script(problem, literal),
+        }
+        return files
+
     # 列の予測
     kind = skeleton_kind(problem)
     if kind is None:

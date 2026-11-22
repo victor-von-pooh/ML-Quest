@@ -2,7 +2,9 @@ import copy
 from pathlib import Path
 from typing import Any, Optional
 
-from ml_quest.check import finding, is_column_part, is_items_part
+from ml_quest.check import (
+    finding, is_column_part, is_generate_part, is_items_part
+)
 from ml_quest.data import ITEMS_LOADER
 from ml_quest.handoff import export_split, export_stages
 from ml_quest.problem import (
@@ -41,7 +43,7 @@ STEP_ENTRIES = {
 
 def require_column_part(problem: dict, purpose: str) -> None:
     """
-    列の予測かファイルの組の受け持ちでなければ止める関数
+    列の予測, ファイルの組, 画像の生成の受け持ちでなければ止める関数
 
     Parameters
     ----------
@@ -57,13 +59,16 @@ def require_column_part(problem: dict, purpose: str) -> None:
     Raises
     ----------
     ValueError
-        列の予測でもファイルの組の受け持ちでもない場合
+        列の予測でも, ファイルの組でも, 画像の生成の受け持ちでもない場合
     """
     # 他の受け持ちのデータの約束は, データの分析の段階の版の上げの後
-    if not is_column_part(problem) and not is_items_part(problem):
+    if not is_column_part(problem) and not is_items_part(problem) and (
+        not is_generate_part(problem)
+    ):
         raise ValueError(
             f"{purpose}は, 予測するで正解の種類が表の列, 画像の領域, 点群の"
-            "場合だけです (他の受け持ちと正解の種類はまだ扱えません)"
+            "場合と, 作るで正解の種類が画像の場合だけです (他の受け持ちと"
+            "正解の種類はまだ扱えません)"
         )
 
 
@@ -114,7 +119,10 @@ def recipe_from(problem: dict) -> dict:
         recipe = copy.deepcopy(saved)
         notes += [item["message"] for item in recipe_conflicts(
             problem, recipe
-        )[0] if item["id"] == f"{PART}.group_column"]
+        )[0] if item["id"] == f"{PART}.group_column"
+            and not is_generate_part(problem)]
+    elif is_generate_part(problem):
+        recipe = generate_recipe(notes)
     else:
         recipe = skeleton_recipe(problem, data, notes)
 
@@ -332,6 +340,32 @@ def skeleton_recipe(problem: dict, data: dict, notes: list) -> dict:
     return recipe
 
 
+def generate_recipe(notes: list) -> dict:
+    """
+    画像の生成の受け持ちのレシピの雛形を作る関数
+
+    Parameters
+    ----------
+    notes: list
+        知らせの文の並び (書き足す)
+
+    Returns
+    ----------
+    recipe: dict
+        ML-EDA のレシピ (目的の列の無い task: none と, 無作為の分割)
+    """
+    # 条件の無い生成なので目的の列もタスクも無い. 大きさはデータの分析で
+    # 決める
+    notes.append("画像の大きさがそろわないなら, 中身の手順 (item_steps) に "
+                 "resize (width, height) を足してください")
+    split = {"method": "random", "valid": VALID_RATIO, "test": TEST_RATIO,
+             "seed": 0}
+    recipe = {"format_version": 1, "task": "none", "steps": [],
+              "split": split}
+
+    return recipe
+
+
 def recipe_columns(recipe: dict) -> tuple[set[str], int]:
     """
     レシピで落とす列と, 過去の値の最も小さいずらし幅を集める関数
@@ -394,6 +428,9 @@ def apply_recipe(problem: dict, recipe: dict) -> dict:
     if is_items_part(updated):
         result = apply_export(updated, recipe)
         return result
+    if is_generate_part(updated):
+        result = apply_generate(updated, recipe)
+        return result
     changes = []
     old_target = get_value(updated, f"{PART}.target.column")
     task = recipe.get("task")
@@ -429,6 +466,46 @@ def apply_recipe(problem: dict, recipe: dict) -> dict:
     set_value(updated, "data.recipe", copy.deepcopy(recipe))
     result = {"problem": updated, "changes": changes,
               "conflicts": conflicts, "choices": choices}
+
+    return result
+
+
+def apply_generate(problem: dict, recipe: dict) -> dict:
+    """
+    画像の生成の受け持ちのレシピを問題の設定に書き戻す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 画像の生成の受け持ち. 写したもの)
+    recipe: dict
+        ML-EDA のレシピ
+
+    Returns
+    ----------
+    result: dict
+        apply_recipe と同じ形 (他の答えは変えず, 選ぶ問いは無い)
+    """
+    # 条件の無い生成は目的の列を使わない. 検証用の分割が無いと骨組みの
+    # 学習が止まる
+    conflicts = []
+    if recipe.get("target") or recipe.get("task") not in (None, "none"):
+        conflicts.append(finding(
+            "error", "data.recipe",
+            "画像の生成は条件の無い生成なので, レシピに目的の列とタスクを書か"
+            "ないでください (task: none)"
+        ))
+    split = recipe.get("split")
+    split = split if isinstance(split, dict) else {}
+    if split.get("method", "random") == "none" or split.get("valid", 1) == 0:
+        conflicts.append(finding(
+            "warning", "data.recipe",
+            "検証用の分割がありません. 骨組みの学習は最も良いモデルを選べず"
+            "止まるので, 検証用の割合を 0 より大きくしてください"
+        ))
+    set_value(problem, "data.recipe", copy.deepcopy(recipe))
+    result = {"problem": problem, "changes": [], "conflicts": conflicts,
+              "choices": []}
 
     return result
 
