@@ -507,7 +507,8 @@ def questions(problem: dict) -> list[dict]:
     Returns
     ----------
     items: list[dict]
-        問い (id, section, kind, title, help, required, choices) に,
+        問い (id, section, kind, multiline, title, help, required,
+        choices) に,
         value, answered, applies を足したものの並び
     """
     # 画面に出す順 (版 1 は先に版 2 へ移行)
@@ -815,6 +816,8 @@ def clean_answer(problem: dict, question: dict, value: Any) -> Any:
     cleaned: Any
     if kind == "text":
         cleaned = clean_text(value, key)
+        if cleaned is not None and not question.get("multiline", True):
+            cleaned = " ".join(cleaned.split())
         return cleaned
     if kind == "number":
         cleaned = clean_number(value, key)

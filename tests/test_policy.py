@@ -445,3 +445,43 @@ def test_features_match_ml_found() -> None:
     names = [item["value"] for item in FEATURES]
     missing = [name for name in names if name not in registered]
     assert not missing, f"ML-Found の登録簿に無い機能: {missing}"
+
+
+def test_question_lines() -> None:
+    """
+    問いが答えの欄の形 (multiline) を返し, 名前の問いが 1 行で, 1 行の問い
+    の答えの改行は空白になることを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 全ての問いが真偽値を持ち, 文でない問いは偽
+    from ml_quest.questions import ONE_LINE, QUESTIONS
+
+    items = {item["id"]: item for item in questions(policy_problem())}
+    assert all(isinstance(item["multiline"], bool) for item in items.values())
+    assert not any(item["multiline"] for item in items.values()
+                   if item["kind"] != "text")
+    kinds = {question["id"]: question["kind"] for question in QUESTIONS}
+    assert all(kinds[key] == "text" for key in ONE_LINE)
+
+    # 名前の問いは 1 行, 文の問いは複数行
+    for key in (f"{PART}.env_id", f"{PART}.policy.safety_key",
+                f"{PART}.evaluation.name", f"{PART}.policy.approver",
+                "issue.owner", "issue.kpi.unit"):
+        assert items[key]["multiline"] is False, key
+    for key in ("issue.pain", f"{PART}.what", f"{PART}.policy.stop",
+                "verification.success", "operation.stop"):
+        assert items[key]["multiline"] is True, key
+
+    # 1 行の問いの改行は空白に, 複数行の問いの改行は残す
+    problem = answer(policy_problem(), f"{PART}.policy.approver",
+                     "設備の\n責任者")
+    assert problem["ml"]["parts"][0]["policy"]["approver"] == "設備の 責任者"
+    problem = answer(problem, "issue.pain", "廃棄が多い\n品切れも出る")
+    assert problem["issue"]["pain"] == "廃棄が多い\n品切れも出る"
