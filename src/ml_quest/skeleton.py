@@ -393,7 +393,8 @@ DECISION_LOG = (
     "ました\"\n    )"
 )
 
-# 学習の記録の入力の文 (表と時系列は学習に使う列, 画像と文は 1 件の形)
+# 学習の記録の入力の文 (表と時系列は学習に使う列, 画像, 文, 音声は 1 件の
+# 形)
 INPUTS_LOG = {
     None: ('学習に使う列 "\n        f"{len(dataset.features)}: '
            '{dataset.features}'),
@@ -401,9 +402,12 @@ INPUTS_LOG = {
               'f"{tuple(x_train.shape[1:])}'),
     "text": ('1 件の文の形 (語の番号の長さ): "\n        '
              'f"{tuple(x_train.shape[1:])}'),
+    "audio": ('1 件の音声の形 (チャンネル, 標本の数): "\n        '
+              'f"{tuple(x_train.shape[1:])}'),
 }
 
-# README のデータの分析の, 画像と文で学ぶもの (表の列でなく 1 件の中身)
+# README のデータの分析の, 画像, 文, 音声で学ぶもの (表の列でなく 1 件の
+# 中身)
 CONTENT_DATA = {
     "image": ("学ぶのは 1 件の画像の中身で, 読み込みが作る表の列 (`path`, "
               "`width`, `height` など) は学習に使わない. 画像の大きさがそろ"
@@ -415,6 +419,17 @@ CONTENT_DATA = {
              "手順 (`item_steps`) の `vocabulary` で語の番号の並びにする "
              "(例 `[{op: vocabulary, length: 64}]`. `length` は 1 件の長さ,"
              " `max_tokens` は語彙の上限. 無いと ML-EDA が書き出さない)"),
+    "audio": ("学ぶのは 1 件の音声の中身で, 読み込みが作る表の列 (`path`, "
+              "`sample_rate`, `duration` など) は学習に使わない. 標本化の"
+              "周波数, チャンネルの数, 長さがそろわないなら, レシピの中身の"
+              "手順 (`item_steps`) に `resample` (`rate`), `mix_channels` "
+              "(`channels`), `fix_length` (`seconds`) をこの順に足してそろ"
+              "える (例 `[{op: resample, rate: 16000}, {op: mix_channels, "
+              "channels: 1}, {op: fix_length, seconds: 1.0}]`. そろわない"
+              "まま ML-EDA は書き出さない). 読めない件 (`error` の列に理由"
+              "のある件) は表の手順 `filter_rows` で除く. WAVE の他の形式 "
+              "(FLAC, MP3, Ogg, AIFF) を読むには soundfile が要る (ML-EDA "
+              "の任意の依存 `ml-eda[audio]`. `ml-quest[data]` でも入る)"),
 }
 
 # README のモデルの作成の, 入力の形の案内 (データの種類ごと. None は表と
@@ -423,8 +438,8 @@ CONTENT_INPUTS = {
     None: ("入力の形は書き出したデータセットから決まる (ML-EDA の "
            "`model_inputs(<データセット>)` の `inputs` の `shape`). 表と時系列"
            "では学習に使う列の数 (`dataset.yaml` の features. ワンホットや"
-           "過去の値の列で元の列より増える), 画像, 文, 点群の列では 1 件の"
-           "配列の形 (`dataset.yaml` の splits の `shape` の 2 つ目から. 列の"
+           "過去の値の列で元の列より増える), 画像, 文, 音声, 点群の列では 1 件"
+           "の配列の形 (`dataset.yaml` の splits の `shape` の 2 つ目から. 列の"
            "数ではない)"),
     "image": ("入力の形は書き出したデータセットから決まる (ML-EDA の "
               "`model_inputs(<データセット>)` の `inputs` の `shape` と "
@@ -438,6 +453,11 @@ CONTENT_INPUTS = {
              "語彙に無い語 `<unk>` を含む. ML-CreateArchitecture の「データ"
              "セットから入力と出力を作る」は, 入力に直につながる埋め込みの数"
              "をこれにする)"),
+    "audio": ("入力の形は書き出したデータセットから決まる (ML-EDA の "
+              "`model_inputs(<データセット>)` の `inputs` の `shape` と "
+              "`dtype`). 音声は `[None, チャンネル, 標本の数]` の float32 "
+              "(値は -1 から 1 ほど. 標本の数は周波数 × 秒. 学習に使う列の"
+              "数ではない)"),
 }
 
 # 回帰と予測の指標 (step の名前, step の式, テスト用の式, 名前)
@@ -644,8 +664,8 @@ def training_script(
                    "\n    compare_baseline(trainer.model, dataset, "
                    "experiment, center, scale)\n")
     elif reported is not None:
-        # 画像と文の, 答えた今のやり方での指標の値とテスト用の値の並べ (テスト
-        # 用の分割が無ければ, 並べないことを train.log に)
+        # 1 件の中身で学ぶデータの, 答えた今のやり方での指標の値とテスト用の
+        # 値の並べ (テスト用の分割が無ければ, 並べないことを train.log に)
         key = "accuracy" if task == "classification" else metric
         value = "accuracy" if task == "classification" else "value"
         baseline = "\n\n" + reported_code(problem, literal, key)
@@ -653,7 +673,8 @@ def training_script(
                 f'save_reported(experiment, "{key}", {value}.item())')
         compare = ""
     elif kind is not None:
-        # 画像と文で答えていなければ, 比べない理由をコメントと train.log に
+        # 1 件の中身で学ぶデータで答えていなければ, 比べない理由をコメント
+        # と train.log に
         hint = content_hint(problem, task)
         baseline = "\n" + baseline_note(problem, str(reason), comment_lines,
                                         retry=False, hint=hint)
@@ -723,8 +744,8 @@ def training_script(
 
 def content_hint(problem: dict, task: Optional[str]) -> str:
     """
-    画像と文で, 今のやり方での指標の値を答えれば並べられることの文を作る
-    関数
+    1 件の中身で学ぶデータで, 今のやり方での指標の値を答えれば並べられる
+    ことの文を作る関数
 
     Parameters
     ----------

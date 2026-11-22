@@ -25,10 +25,12 @@ PART = "ml.parts.0"
 COLUMN_TARGET = [USES_ML, {"id": f"{PART}.role", "equals": "predict"},
                  {"id": f"{PART}.target.kind", "equals": "column"}]
 
-# 入れたデータが画像か文 (1 件の中身で学ぶ) の場合と, 骨組みが今のやり方の
-# 結果を 1 件ずつ並べられない場合 (画像か文の列の予測と, 画像の領域と点群).
-# 読み込みの名前は data.CONTENT_LOADERS と同じ (食い違いはテストで確かめる)
-CONTENT_DATA = [{"id": "data.loader", "in": ["image_folder", "text_lines"]},
+# 入れたデータが画像, 文か音声 (1 件の中身で学ぶ) の場合と, 骨組みが今の
+# やり方の結果を 1 件ずつ並べられない場合 (画像, 文か音声の列の予測と, 画像
+# の領域と点群). 読み込みの名前は data.CONTENT_LOADERS と同じ (食い違いは
+# テストで確かめる)
+CONTENT_DATA = [{"id": "data.loader",
+                 "in": ["image_folder", "text_lines", "audio_folder"]},
                 {"id": "data.options.text_column", "filled": True}]
 REPORTED_BASELINE = [
     USES_ML, {"id": f"{PART}.role", "equals": "predict"},

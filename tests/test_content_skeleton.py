@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import wave
 
+import numpy as np
 import pytest
 import yaml
 
@@ -15,8 +17,9 @@ from ml_quest import (
 from ml_quest.data import CONTENT_LOADERS, content_kind
 from ml_quest.questions import REPORTED_BASELINE
 
-# 画像と文の 2 クラスの合成のデータの, クラスの名前と当たりのクラス
-CLASSES = {"image": ["circle", "square"], "text": ["good", "bad"]}
+# 画像, 文, 音声の 2 クラスの合成のデータの, クラスの名前と当たりのクラス
+CLASSES = {"image": ["circle", "square"], "text": ["good", "bad"],
+           "audio": ["low", "high"]}
 
 # 文のクラスごとの語 (クラスで語を分け, 学習できるように)
 WORDS = {"good": ["great", "nice", "love", "happy"],
@@ -26,6 +29,11 @@ WORDS = {"good": ["great", "nice", "love", "happy"],
 COUNT = 12
 SIZE = 16
 LENGTH = 16
+
+# 音声の標本化の周波数と, クラスごとの音の高さ (Hz) と, そろえる長さ (秒)
+RATE = 8000
+PITCHES = {"low": 220.0, "high": 1760.0}
+SECONDS = 0.1
 
 # 学習と推論の一式まで通すのに要るもの (CI の train のジョブで入れる)
 TRAINING = ("torch", "ml_found", "ml_modelcontrol", "ml_inference")
@@ -92,14 +100,49 @@ def write_texts(root: Path) -> Path:
     return path
 
 
+def write_audio(root: Path) -> Path:
+    """
+    低い音と高い音の正弦波の, 2 クラスの短い音声のディレクトリを作る関数
+
+    Parameters
+    ----------
+    root: Path
+        書き出す場所
+
+    Returns
+    ----------
+    path: Path
+        <クラス>/<音声>.wav のディレクトリ (16 bit, 1 チャンネル. 長さは
+        そろえる長さの前後にばらつかせる)
+    """
+    # 位相と長さを少しずつずらした正弦波を 16 bit の整数で
+    path = root / "audio"
+    for name in CLASSES["audio"]:
+        (path / name).mkdir(parents=True)
+        for index in range(COUNT):
+            frames = int(RATE * SECONDS * (0.8 + 0.1 * (index % 5)))
+            times = np.arange(frames) / RATE
+            wave_values = 0.5 * np.sin(2 * np.pi * PITCHES[name] * times
+                                       + index)
+            samples = (wave_values * 32767).astype("<i2")
+            with wave.open(str(path / name / f"{index}.wav"), "wb") as out:
+                out.setnchannels(1)
+                out.setsampwidth(2)
+                out.setframerate(RATE)
+                out.writeframes(samples.tobytes())
+
+    return path
+
+
 def content_problem(kind: str, root: Path) -> dict:
     """
-    見本の課題から, 画像か文の分類の問題の設定を作り, データを入れる関数
+    見本の課題から, 画像, 文か音声の分類の問題の設定を作り, データを入れる
+    関数
 
     Parameters
     ----------
     kind: str
-        データの種類 (image か text)
+        データの種類 (image, text か audio)
     root: Path
         データと写しを置く場所
 
@@ -110,7 +153,9 @@ def content_problem(kind: str, root: Path) -> dict:
     """
     # ML-EDA の読み込みの列から, 目的の列と分かる列を答える
     eda = pytest.importorskip("ml_eda")
-    source = write_images(root) if kind == "image" else write_texts(root)
+    writers = {"image": write_images, "text": write_texts,
+               "audio": write_audio}
+    source = writers[kind](root)
     columns = [str(name) for name in eda.load_data(source).frame.columns]
     problem = example_problem("解約の引き止め")
     answers = [
@@ -130,8 +175,8 @@ def content_problem(kind: str, root: Path) -> dict:
 
 def export(problem: dict, project: Path, kind: str) -> dict:
     """
-    レシピの雛形 (文は vocabulary を足す) で, 骨組みの場所にデータセットを
-    書き出す関数
+    レシピの雛形 (文は vocabulary, 音声は fix_length を足す) で, 骨組みの
+    場所にデータセットを書き出す関数
 
     Parameters
     ----------
@@ -156,6 +201,8 @@ def export(problem: dict, project: Path, kind: str) -> dict:
     assert recipe["split"]["method"] == "stratified"
     if kind == "text":
         recipe["item_steps"] = [{"op": "vocabulary", "length": LENGTH}]
+    if kind == "audio":
+        recipe["item_steps"] = [{"op": "fix_length", "seconds": SECONDS}]
     load = start["load"]
     data = eda.load_data(load["path"], loader=load["loader"],
                          **(load["options"] or {}))
@@ -207,7 +254,8 @@ def model_spec(kind: str, inputs: dict, vocabulary: int) -> dict:
     Returns
     ----------
     spec: dict
-        画像は畳み込み, 文は埋め込みの平均の小さなモデルの定義
+        画像は畳み込み, 文は埋め込みの平均, 音声は 1 次元の畳み込みの小さな
+        モデルの定義
     """
     # 入力の形の 1 つ目 (件数) を 2 にした例
     shape = [2, *inputs["inputs"][0]["shape"][1:]]
@@ -232,6 +280,26 @@ def model_spec(kind: str, inputs: dict, vocabulary: int) -> dict:
             "outputs": {"logits": "head"},
         }
         return spec
+    if kind == "audio":
+        # 時間の向きの畳み込みと, 時間の平均 (標本の数に依らない幅)
+        spec = {
+            "format_version": 1, "name": "audio_classifier",
+            "inputs": {"audio": {"shape": shape}},
+            "nodes": {
+                "conv": {"unit": "nn.Conv1d", "inputs": "audio",
+                         "params": {"in_channels": shape[1],
+                                    "out_channels": 8, "kernel_size": 9,
+                                    "stride": 2, "padding": 4}},
+                "act": {"unit": "nn.ReLU", "inputs": "conv"},
+                "pool": {"unit": "op.Mean", "inputs": "act",
+                         "params": {"dim": 2}},
+                "head": {"unit": "nn.Linear", "inputs": "pool",
+                         "params": {"in_features": 8,
+                                    "out_features": classes}},
+            },
+            "outputs": {"logits": "head"},
+        }
+        return spec
     spec = {
         "format_version": 1, "name": "text_classifier",
         "inputs": {"ids": {"shape": shape, "dtype": "int64"}},
@@ -250,11 +318,11 @@ def model_spec(kind: str, inputs: dict, vocabulary: int) -> dict:
     return spec
 
 
-@pytest.mark.parametrize("kind", ["image", "text"])
+@pytest.mark.parametrize("kind", ["image", "text", "audio"])
 def test_content_project(tmp_path: Path, kind: str) -> None:
     """
-    画像と文の分類の問題の設定から, 中身で学ぶ案内の骨組みを書き出せ, 案内
-    どおりにデータセットを書き出せることを確かめる関数
+    画像, 文, 音声の分類の問題の設定から, 中身で学ぶ案内の骨組みを書き出せ,
+    案内どおりにデータセットを書き出せることを確かめる関数
 
     Parameters
     ----------
@@ -281,9 +349,12 @@ def test_content_project(tmp_path: Path, kind: str) -> None:
     assert ("`resize`" in readme) == (kind == "image")
     assert ("`vocabulary`" in readme) == (kind == "text")
     assert ("`num_embeddings`" in readme) == (kind == "text")
+    assert ("`fix_length`" in readme) == (kind == "audio")
+    assert ("`ml-eda[audio]`" in readme) == (kind == "audio")
     assert "学習に使う列の数 (`dataset.yaml`" not in readme
     shape = {"image": "`[None, チャンネル, 高さ, 幅]` の float32",
-             "text": "`[None, 長さ]` の int64"}[kind]
+             "text": "`[None, 長さ]` の int64",
+             "audio": "`[None, チャンネル, 標本の数]` の float32"}[kind]
     assert shape in readme
     assert "今のやり方とは比べない (入れたデータが 1 件の中身で学ぶ" in readme
 
@@ -293,7 +364,7 @@ def test_content_project(tmp_path: Path, kind: str) -> None:
     assert max(len(line) for line in script.splitlines()) <= 79
     assert "dataset.features" not in script
     assert "tuple(x_train.shape[1:])" in script
-    assert "入れたデータが 1 件の中身で学ぶ画像か文" in script
+    assert "入れたデータが 1 件の中身で学ぶ画像, 文か音声" in script
     assert "答えて骨組みを書き出し直すと" not in script
     assert "evaluation.current" in script and "save_reported" not in script
     hint = "8 の「今のやり方 (人の目視や今の仕組み) で, 正解率は幾つですか (分かれば)」"
@@ -308,11 +379,13 @@ def test_content_project(tmp_path: Path, kind: str) -> None:
     )
     assert config["trainer"]["monitor"] == "valid/accuracy"
 
-    # 雛形のレシピ (文は vocabulary を足す) で書き出せ, 入力の形が案内どおり
+    # 雛形のレシピ (文は vocabulary, 音声は fix_length を足す) で書き出せ,
+    # 入力の形が案内どおり
     inputs = export(problem, project, kind)
     assert inputs["outputs"] == 2
     expected = {"image": ([None, 3, SIZE, SIZE], "float32"),
-                "text": ([None, LENGTH], "int64")}[kind]
+                "text": ([None, LENGTH], "int64"),
+                "audio": ([None, 1, round(RATE * SECONDS)], "float32")}[kind]
     assert (inputs["inputs"][0]["shape"],
             inputs["inputs"][0]["dtype"]) == expected
     if kind == "text":
@@ -323,11 +396,11 @@ def test_content_project(tmp_path: Path, kind: str) -> None:
         assert inputs["inputs"][0]["vocabulary"] == size
 
 
-@pytest.mark.parametrize("kind", ["image", "text"])
+@pytest.mark.parametrize("kind", ["image", "text", "audio"])
 def test_content_reported(tmp_path: Path, kind: str) -> None:
     """
-    画像と文で今のやり方での指標の値を問い, 答えれば骨組みがテスト用の値と
-    並べることを確かめる関数
+    画像, 文, 音声で今のやり方での指標の値を問い, 答えれば骨組みがテスト用の
+    値と並べることを確かめる関数
 
     Parameters
     ----------
@@ -340,7 +413,8 @@ def test_content_reported(tmp_path: Path, kind: str) -> None:
     ----------
     None
     """
-    # 画像と文で, 比べられる指標のときだけ問う (表の課題と loss は問わない)
+    # 画像, 文, 音声で, 比べられる指標のときだけ問う (表の課題と loss は問わ
+    # ない)
     key = "ml.parts.0.evaluation.current"
     problem = content_problem(kind, tmp_path)
     applies = {item["id"]: item["applies"] for item in questions(problem)}
@@ -396,22 +470,25 @@ def test_content_reported(tmp_path: Path, kind: str) -> None:
     assert "別のデータで数えた値との比べで目安です" in readme
 
 
-def test_content_questions(tmp_path: Path) -> None:
+@pytest.mark.parametrize("kind", ["image", "audio"])
+def test_content_questions(tmp_path: Path, kind: str) -> None:
     """
-    画像と文では予測の時点で分かる列を問わず, 今のやり方での指標の値の問い
-    の題が指標を名指すことを確かめる関数
+    画像, 文, 音声では予測の時点で分かる列を問わず, 今のやり方での指標の値
+    の問いの題が指標を名指すことを確かめる関数
 
     Parameters
     ----------
     tmp_path: Path
         一時ディレクトリ
+    kind: str
+        データの種類
 
     Returns
     ----------
     None
     """
     # 表の列を学習に使わないので, 分かる列は要らない (答えなくても誤りなし)
-    problem = answer(content_problem("image", tmp_path),
+    problem = answer(content_problem(kind, tmp_path),
                      "information.known", None)
     items = {item["id"]: item for item in questions(problem)}
     assert items["information.known"]["applies"] is False
@@ -478,12 +555,12 @@ def test_content_predict_log(tmp_path: Path) -> None:
     assert "予測すること: {PREDICT}" not in script
 
 
-@pytest.mark.parametrize("kind", ["image", "text"])
+@pytest.mark.parametrize("kind", ["image", "text", "audio"])
 def test_content_training(tmp_path: Path, kind: str) -> None:
     """
-    画像と文の分類の骨組みで案内どおりに学習し, 推論の一式の確かめが学習の
-    記録と合うことを確かめる関数 (PyTorch と段階のライブラリが無ければ
-    飛ばす)
+    画像, 文, 音声の分類の骨組みで案内どおりに学習し, 推論の一式の確かめが
+    学習の記録と合うことを確かめる関数 (PyTorch と段階のライブラリが無け
+    れば飛ばす)
 
     Parameters
     ----------
@@ -623,8 +700,8 @@ def check_spec_weights(project: Path, place: Path, inputs: dict) -> None:
 
 def test_content_loaders() -> None:
     """
-    写して持つ画像と文の読み込みの名前が, ML-EDA の読み込みの登録簿の
-    kind と合い, 表の中の文の列も文とすることを確かめる関数 (ML-EDA が
+    写して持つ画像, 文, 音声の読み込みの名前が, ML-EDA の読み込みの登録簿
+    の kind と合い, 表の中の文の列も文とすることを確かめる関数 (ML-EDA が
     無ければ登録簿との突き合わせだけ飛ばす)
 
     Parameters
@@ -639,6 +716,7 @@ def test_content_loaders() -> None:
     sources = [
         ({"loader": "image_folder"}, "image"),
         ({"loader": "text_lines"}, "text"),
+        ({"loader": "audio_folder"}, "audio"),
         ({"loader": "csv"}, None),
         ({"loader": "csv", "options": {"text_column": "review"}}, "text"),
     ]
@@ -646,19 +724,19 @@ def test_content_loaders() -> None:
         assert content_kind({"data": {"source": source}}) == expected
     assert content_kind({"data": {}}) is None
 
-    # ML-EDA の登録簿で kind が画像か文の読み込みと, 写した対応が同じ
+    # ML-EDA の登録簿で kind が画像, 文か音声の読み込みと, 写した対応が同じ
     eda = pytest.importorskip("ml_eda")
     kinds = {
         name: loader.kind for name, loader in eda.LOADERS.items()
-        if getattr(loader, "kind", None) in ("image", "text")
+        if getattr(loader, "kind", None) in ("image", "text", "audio")
     }
     assert kinds == CONTENT_LOADERS
 
 
 def test_reported_loaders() -> None:
     """
-    今のやり方での指標の値の問いが, 写して持つ画像と文の読み込みの名前と
-    同じ名前で要るかを決めることを確かめる関数
+    今のやり方での指標の値の問いが, 写して持つ画像, 文, 音声の読み込みの
+    名前と同じ名前で要るかを決めることを確かめる関数
 
     Parameters
     ----------
