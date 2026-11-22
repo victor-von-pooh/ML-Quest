@@ -453,10 +453,9 @@ QUESTIONS: list[dict[str, Any]] = [
      "when": [*AUTONOMOUS, {"none": [{"id": f"{PART}.collect",
                                       "equals": "log"}]}],
      "title": "Gymnasium の環境の登録名は (あれば)",
-     "help": "例: CartPole-v1, Pendulum-v1. 答えると, 学習のスクリプトが"
-             "その環境を作って方策を学ぶ. 自分で作る環境 (実機とのつなぎ, "
-             "自作のシミュレータ) なら空のまま. 骨組みに環境の雛形 (env.py) "
-             "を書き出す"},
+     "help": "例: CartPole-v1, Pendulum-v1. 答えると学習の段階に渡す. "
+             "自分で作る環境 (実機とのつなぎ, 自作のシミュレータ) なら空の"
+             "まま"},
     {"id": f"{PART}.ros2", "section": 5, "kind": "boolean",
      "required": False, "when": AUTONOMOUS,
      "title": "機械を ROS2 で動かしますか",
