@@ -19,7 +19,7 @@
 | ML-Fathom (データの分析) | データの分析の受け渡しの値 (`handoff`), レシピの下書きと書き戻し (`recipe_from`, `apply_recipe`) |
 | ML-CreateArchitecture (モデルの作成) | モデルの作成の受け渡しの値 (出力の大きさ, 受け持ちに合う雛形 `example`. `model_example` でも求まる), プロジェクトのモデルの定義の置き場 |
 | ML-Dashboard (学習・評価) | 学習・評価の受け渡しの値 (骨組みの外の学習でも使う監視する指標と向き), 要る機能, 書き出した骨組みのプロジェクト |
-| ML-Provide (推論) | 損得と制約, 今のやり方, 元の問題の設定の場所 (`problem_origin`) |
+| ML-Provide (推論) | 損得と制約 (文は `decision_text`), 今のやり方, 元の問題の設定の場所 (`problem_origin`), 書き出したプロジェクトの記録 (`project_of`), 要る問いの答え (`active_value`) |
 
 このライブラリが依存するのは, データの候補を出すときの ML-EDA (任意) だけ. 書き出した学習のスクリプトは, ML-EDA, ML-ModelControl, ML-Found, ML-Inference を使う.
 

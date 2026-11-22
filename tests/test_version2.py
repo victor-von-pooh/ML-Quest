@@ -1,4 +1,5 @@
 import copy
+import importlib
 from pathlib import Path
 
 import pytest
@@ -730,3 +731,38 @@ def test_screen_names() -> None:
     with pytest.raises(ValueError, match="lag, mean, column"):
         answer(example_problem("総菜の作る量"), "action.current",
                {"type": "median", "periods": 3})
+
+
+def test_screen_names() -> None:
+    """
+    画面 (ML-Provide) が使う名前が公開され, 中の名前と同じものかを確かめる
+    関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    import ml_quest
+
+    # 公開の口は中の名前と同じもの (ml_quest.handoff は関数なので, 中の
+    # モジュールは import_module で読む)
+    assert {"active_value", "decision_text", "project_of"} <= set(
+        ml_quest.__all__
+    )
+    handoff_module = importlib.import_module("ml_quest.handoff")
+    problem_module = importlib.import_module("ml_quest.problem")
+    assert ml_quest.decision_text is handoff_module.decision_text
+    assert ml_quest.project_of is handoff_module.project_of
+    assert ml_quest.active_value is problem_module.active_value
+
+    # 記録の無い問題の設定の場所は None, 意思決定は型の文
+    problem = example_problem("総菜の作る量")
+    assert ml_quest.project_of(problem) == {
+        "path": None, "dataset": None, "model_spec": None
+    }
+    decision = get_value(problem, "action.decision")
+    assert isinstance(ml_quest.decision_text(decision), str)
