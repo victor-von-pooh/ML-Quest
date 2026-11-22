@@ -23,11 +23,12 @@ SIZE = 8
 # 学習と推論の一式まで通すのに要るもの (CI の train のジョブで入れる)
 TRAINING = ("torch", "ml_found", "ml_modelcontrol", "ml_inference")
 
-# 骨組みを書き換えずに短く学ぶ config の差分 (少ない時刻と繰り返し. FID
-# は重みを取らない画素の特徴)
+# 骨組みを書き換えずに短く学ぶ config の差分 (少ない時刻と繰り返し)
 SHORT = ["trainer.epochs=2", "experiment.device=cpu",
-         "diffusion.train_steps=50", "diffusion.sample_steps=5",
-         "fid.features=pixels"]
+         "diffusion.train_steps=50", "diffusion.sample_steps=5"]
+
+# FID を数える骨組みの差分 (重みを取らない画素の特徴で, 毎エポック検証)
+FID_SHORT = ("fid.features=pixels", "trainer.valid_every_n_epochs=1")
 
 
 def generate_problem() -> dict:
@@ -213,9 +214,9 @@ def train(project: Path, extra: tuple = ()) -> tuple[Path, str]:
     return run, done.stdout
 
 
-def fid_column(run: Path) -> list[str]:
+def history_rows(run: Path) -> list[dict]:
     """
-    実験の history.csv の valid/fid の列を読む関数
+    実験の history.csv を読む関数
 
     Parameters
     ----------
@@ -224,14 +225,14 @@ def fid_column(run: Path) -> list[str]:
 
     Returns
     ----------
-    values: list[str]
-        エポックの順の valid/fid (検証しないエポックは空)
+    rows: list[dict]
+        エポックの順の行 (列の名前から値の文字)
     """
     # エポックごとの行
     with open(run / "history.csv", encoding="utf-8", newline="") as file:
-        values = [row["valid/fid"] for row in csv.DictReader(file)]
+        rows = list(csv.DictReader(file))
 
-    return values
+    return rows
 
 
 def test_generate_handoff() -> None:
@@ -371,12 +372,13 @@ def test_generate_project(tmp_path: Path) -> None:
     # 場所, FID の特徴
     config = yaml.safe_load((project / "configs" / "default" / "train.yaml")
                             .read_text(encoding="utf-8"))
-    assert config["requires"] == ["eda", "modelcontrol", "inference", "fid"]
+    assert config["requires"] == ["eda", "modelcontrol", "inference"]
     assert (config["trainer"]["monitor"], config["trainer"]["mode"]) == (
         "valid/loss", "min"
     )
-    assert config["trainer"]["valid_every_n_epochs"] == 5
-    assert config["fid"] == {"features": "inception", "dims": 2048}
+    assert "valid_every_n_epochs" not in config["trainer"]
+    assert "fid" not in config
+    assert "COUNT_FID = False" in script
     assert config["trainer"]["ema"] == {"decay": 0.995}
     assert config["data"]["dataset"] == "outputs/dataset"
     assert config["model"]["spec"] == "models/model.yaml"
@@ -385,9 +387,8 @@ def test_generate_project(tmp_path: Path) -> None:
 
     # README: データの分析, モデルの入力, FID, 雑音だけの一式
     readme = (project / "README.md").read_text(encoding="utf-8")
-    for words in ("task: none", "data/images", "int64", "`valid/fid`",
-                  "pytorch-fid", "fid.features: pixels", "版 5", "見本",
-                  "grayscale", "1 / (1 - decay)"):
+    for words in ("task: none", "data/images", "int64", "FID を選んで",
+                  "版 5", "見本", "grayscale", "1 / (1 - decay)"):
         assert words in readme, words
 
     # 案内どおりの書き出しで, 目的の列の無い画像のデータセット
@@ -426,15 +427,17 @@ def test_generate_placeholder(tmp_path: Path) -> None:
     assert (run / "evaluations" / "test_loss.json").is_file()
     assert (run / "samples" / "generated_0" / "final.png").is_file()
 
-    # FID は検証するエポック (間隔 5 なので最後の 2 だけ) に残る
-    values = fid_column(run)
-    assert values[0] == "" and float(values[1]) > 0
+    # 損失で選ぶので FID は数えない (毎エポック検証)
+    rows = history_rows(run)
+    assert len(rows) == 2 and all(row["valid/loss"] for row in rows)
+    assert "valid/fid" not in rows[0]
 
 
 def test_generate_fid_monitor(tmp_path: Path) -> None:
     """
-    FID を最良を選ぶ指標にした骨組みが, 検証ごとの valid/fid で最良の
-    モデルを選ぶことを確かめる関数 (PyTorch と ML-Found が無ければ飛ばす)
+    FID を最良を選ぶ指標にした骨組みが, fid の機能と検証の間隔を書き,
+    検証するエポックの valid/fid で最良のモデルを選ぶことを確かめる関数
+    (PyTorch と ML-Found が無ければ飛ばす)
 
     Parameters
     ----------
@@ -445,7 +448,7 @@ def test_generate_fid_monitor(tmp_path: Path) -> None:
     ----------
     None
     """
-    # FID の監視で, 毎エポック検証する
+    # config: fid の機能, 検証の間隔, FID の設定. README に FID の数え方
     for name in ("torch", "ml_found"):
         pytest.importorskip(name)
     problem = answer(attached(tmp_path), f"{PART}.evaluation.metric", "fid")
@@ -453,23 +456,48 @@ def test_generate_fid_monitor(tmp_path: Path) -> None:
     make_project(problem, project)
     config = yaml.safe_load((project / "configs" / "default" / "train.yaml")
                             .read_text(encoding="utf-8"))
+    assert config["requires"] == ["eda", "modelcontrol", "inference", "fid"]
     assert (config["trainer"]["monitor"], config["trainer"]["mode"]) == (
         "valid/fid", "min"
     )
+    assert config["trainer"]["valid_every_n_epochs"] == 5
+    assert config["fid"] == {"features": "inception", "dims": 2048}
+    script = (project / "train.py").read_text(encoding="utf-8")
+    assert "COUNT_FID = True" in script
+    readme = (project / "README.md").read_text(encoding="utf-8")
+    for words in ("`valid/fid`", "pytorch-fid", "fid.features: pixels",
+                  "小さな画像の確かめ用"):
+        assert words in readme, words
     export(problem, project)
-    run, stdout = train(project, ("trainer.valid_every_n_epochs=1",))
+
+    # FID の特徴の誤りは出力先を作る前に止まる
+    done = subprocess.run([sys.executable, "train.py", "fid.features=vgg"],
+                          cwd=project, capture_output=True, text=True,
+                          timeout=600)
+    assert done.returncode == 1
+    assert "fid.features は inception か pixels" in done.stdout
+    assert not (project / "outputs").exists() or not any(
+        (project / "outputs").glob("*/*/*/train.log")
+    )
 
     # 最良は記録した FID の小さいエポック
-    values = [float(value) for value in fid_column(run)]
+    run, stdout = train(project, FID_SHORT)
+    values = [float(row["valid/fid"]) for row in history_rows(run)]
     assert len(values) == 2 and min(values) > 0
     assert f"ベストの valid/fid: {min(values)}" in stdout
+
+    # 間隔 5 のままなら, 2 エポックでは最後のエポックだけ数える
+    for path in (project / "outputs").glob("*/*/*/train.log"):
+        path.unlink()
+    run, _ = train(project, ("fid.features=pixels",))
+    rows = history_rows(run)
+    assert rows[0]["valid/fid"] == "" and float(rows[1]["valid/fid"]) > 0
 
 
 def test_generate_sample_steps(tmp_path: Path) -> None:
     """
-    繰り返しの回数が学習の時刻の数より多い config と, FID の特徴の誤りの
-    config は, 出力先を作る前に止まることを確かめる関数 (PyTorch と
-    ML-Found が無ければ飛ばす)
+    繰り返しの回数が学習の時刻の数より多い config は, 出力先を作る前に
+    止まることを確かめる関数 (PyTorch と ML-Found が無ければ飛ばす)
 
     Parameters
     ----------
@@ -480,26 +508,23 @@ def test_generate_sample_steps(tmp_path: Path) -> None:
     ----------
     None
     """
-    # 時刻 50 に繰り返し 60 と, FID の特徴の誤り
+    # 時刻 50 に繰り返し 60
     for name in ("torch", "ml_found"):
         pytest.importorskip(name)
     problem = attached(tmp_path)
     project = tmp_path / "project"
     make_project(problem, project)
     export(problem, project)
-    cases = [(["diffusion.train_steps=50", "diffusion.sample_steps=60"],
-              "diffusion.sample_steps は 1 から"),
-             (["fid.features=vgg"], "fid.features は inception か pixels")]
-    for overrides, words in cases:
-        done = subprocess.run(
-            [sys.executable, "train.py", *overrides],
-            cwd=project, capture_output=True, text=True, timeout=600
-        )
-        assert done.returncode == 1
-        assert words in done.stdout, done.stdout
-        assert not (project / "outputs").exists() or not any(
-            (project / "outputs").glob("*/*/*/train.log")
-        )
+    done = subprocess.run(
+        [sys.executable, "train.py", "diffusion.train_steps=50",
+         "diffusion.sample_steps=60"],
+        cwd=project, capture_output=True, text=True, timeout=600
+    )
+    assert done.returncode == 1
+    assert "diffusion.sample_steps は 1 から" in done.stdout
+    assert not (project / "outputs").exists() or not any(
+        (project / "outputs").glob("*/*/*/train.log")
+    )
 
 
 def test_generate_training(tmp_path: Path) -> None:

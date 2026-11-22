@@ -23,7 +23,8 @@ from ml_quest.data import (
     inspect_key, items_message
 )
 from ml_quest.generate_skeleton import (
-    GENERATE_LIBRARIES, generate_config, generate_readme, generate_script
+    FID_LIBRARIES, FID_MONITOR, GENERATE_LIBRARIES, generate_config,
+    generate_readme, generate_script
 )
 from ml_quest.handoff import build_stages, describe, export_stages
 from ml_quest.items_skeleton import (
@@ -1397,7 +1398,10 @@ def project_files(
             ),
             "configs/default/train.yaml": generate_config(
                 experiment_name(problem, name), stages, "outputs/dataset",
-                requires_text(GENERATE_LIBRARIES, stages)
+                requires_text(GENERATE_LIBRARIES + (
+                    FID_LIBRARIES
+                    if stages["training"]["monitor"] == FID_MONITOR else []
+                ), stages)
             ),
             "train.py": generate_script(problem, literal),
         }

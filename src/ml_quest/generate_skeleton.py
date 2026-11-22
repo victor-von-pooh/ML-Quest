@@ -7,10 +7,16 @@ from ml_quest.problem import active_value
 from ml_quest.questions import PART
 
 # 学習のスクリプトが読み込むライブラリの, ML-Found の登録簿の機能の名前
-# (ml_eda, ml_modelcontrol, ml_inference と, FID の Inception の
-# pytorch-fid. config の model.spec の定義が無いうちは ml_modelcontrol と
-# ml_inference を読まない)
-GENERATE_LIBRARIES = ["eda", "modelcontrol", "inference", "fid"]
+# (ml_eda, ml_modelcontrol, ml_inference. config の model.spec の定義が
+# 無いうちは ml_modelcontrol と ml_inference を読まない)
+GENERATE_LIBRARIES = ["eda", "modelcontrol", "inference"]
+
+# 最良を選ぶ指標が FID のときに足す機能の名前 (FID の Inception の
+# pytorch-fid)
+FID_LIBRARIES = ["fid"]
+
+# FID を最良を選ぶ指標にするときの監視の名前
+FID_MONITOR = "valid/fid"
 
 # 学習のスクリプトの頭 (読み込みと, 問題の設定から決まる既定値). 答えの
 # 文字は JSON の文字列で埋め込み
@@ -59,7 +65,9 @@ EVALUATION_BETTER = {"loss": "lower"}
 SAMPLES = 8
 REAL_SAMPLES = 4
 
-# FID の特徴の種類 (config の fid.features)
+# 検証で FID を数えるか (最良を選ぶ指標が FID のときだけ) と, FID の特徴
+# の種類 (config の fid.features)
+COUNT_FID = $count_fid
 FID_FEATURES = ("inception", "pixels")
 '''
 
@@ -153,15 +161,19 @@ class DiffusionTrainer(Trainer):
 
         # FID の本物の画像 (検証用の分割), 作る繰り返しの回数と種, バッチの
         # 大きさと, FID を数えるもの (inception は初めて使うときに重みを
-        # 取得)
+        # 取得. 数えないなら None)
         self.real = real
         self.sample_steps = cfg.diffusion.sample_steps
         self.sample_seed = cfg.diffusion.sample_seed
         self.batch_size = cfg.data.batch_size
-        features = PixelFeatures() if cfg.fid.features == "pixels" else None
-        self.fid = FrechetInceptionDistance(
-            feature_model=features, dims=cfg.fid.dims, device=self.device
-        )
+        self.fid = None
+        if COUNT_FID:
+            features = (PixelFeatures() if cfg.fid.features == "pixels"
+                        else None)
+            self.fid = FrechetInceptionDistance(
+                feature_model=features, dims=cfg.fid.dims,
+                device=self.device
+            )
 
     def on_epoch_start(self, phase: str) -> None:
         """
@@ -218,10 +230,12 @@ class DiffusionTrainer(Trainer):
         Returns
         ----------
         metrics: dict
-            検証なら fid (valid/fid として記録. 小さいほど良い). 他は空
+            FID を数えるときの検証なら fid (valid/fid として記録. 小さいほど
+            良い). 他は空
         """
-        # 検証するエポック (trainer.valid_every_n_epochs ごとと最後) だけ
-        if phase != "valid":
+        # FID を数えるときの, 検証するエポック (trainer.valid_every_n_epochs
+        # ごとと最後) だけ
+        if self.fid is None or phase != "valid":
             return {}
 
         # 本物の特徴は 1 回だけ足して使い回す
@@ -770,11 +784,11 @@ def main() -> None:
         sys.exit(1)
 
     # 画像 (データセットの 0 から 1 の値のまま学ぶ. 作る画像も同じ尺度).
-    # FID は共分散を求めるので, 検証用の画像が 2 件以上要る
+    # FID は共分散を求めるので, 数えるなら検証用の画像が 2 件以上要る
     x_train = dataset.tensors("train")[0]
     x_valid = dataset.tensors("valid")[0]
     shape = list(x_train.shape[1:])
-    if len(x_valid) < 2:
+    if COUNT_FID and len(x_valid) < 2:
         print("検証用の画像が 2 件より少ないので FID を数えられません. 検証用"
               "の割合を大きくして書き出してください")
         sys.exit(1)
@@ -786,7 +800,7 @@ def main() -> None:
               f"diffusion.train_steps ({cfg.diffusion.train_steps}) に"
               f"してください (今は {cfg.diffusion.sample_steps})")
         sys.exit(1)
-    if cfg.fid.features not in FID_FEATURES:
+    if COUNT_FID and cfg.fid.features not in FID_FEATURES:
         print(f"config の fid.features は {' か '.join(FID_FEATURES)} に"
               f"してください (今は {cfg.fid.features})")
         sys.exit(1)
@@ -891,10 +905,7 @@ trainer:
   # 小さいほど良い)
   monitor: $monitor
   mode: $mode
-  # 検証するエポックの間隔 (検証のたびに FID を数えるので間を空ける. 予定
-  # の最後のエポックは必ず検証する)
-  valid_every_n_epochs: 5
-  # 重みの指数移動平均. 検証, 最良のモデル, final_model.pt はこの重み.
+$valid_every  # 重みの指数移動平均. 検証, 最良のモデル, final_model.pt はこの重み.
   # 更新の回数 (エポック数 × 1 エポックのバッチ数) が 1 / (1 - decay) (0.995
   # なら 200) より十分多くなるようにする (少ないと初めの重みのまま)
   ema:
@@ -927,18 +938,25 @@ diffusion:
   # 始まりの雑音の乱数の種
   sample_steps: 50
   sample_seed: 0
+$fid_section''')
 
+# 最良を選ぶ指標が FID のときの, 検証の間隔と FID の設定
+GENERATE_FID_EVERY = '''  # 検証するエポックの間隔 (検証のたびに FID を数えるので間を空ける. 予定
+  # の最後のエポックは必ず検証する)
+  valid_every_n_epochs: 5
+'''
+GENERATE_FID_CONFIG = '''
 fid:
   # 検証のたびに, 見本と同じ種と回数で検証用の画像と同じ件数を作り, 検証用
   # の画像との FID を数える. 特徴は inception (pytorch-fid の学習済みの
   # Inception. 初めて使うときに重み (約 91 MB) を取る) か pixels (画素を
   # そのまま並べたもの. 重みを取らずに動くことを確かめるだけで, 他の FID
-  # と比べられない)
+  # と比べられない. 画素の次元の共分散を求めるので, 小さな画像の確かめ用)
   features: inception
   # Inception の特徴の次元 (64, 192, 768, 2048. 論文などの FID と比べる
   # のは 2048). FID は件数で偏るので, 比べる FID は同じ件数で数える
   dims: 2048
-''')
+'''
 
 
 def generate_script(problem: dict, literal: Callable) -> str:
@@ -957,11 +975,14 @@ def generate_script(problem: dict, literal: Callable) -> str:
     script: str
         train.py の中身
     """
-    # 頭と学習の流れ
+    # 頭と学習の流れ (FID は最良を選ぶ指標が FID のときだけ数える)
     head = Template(GENERATE_HEAD).substitute(
         name=literal(str(problem.get("name", ""))),
         predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         method=literal(active_value(problem, f"{PART}.method")),
+        count_fid=literal(
+            active_value(problem, f"{PART}.evaluation.metric") == "fid"
+        ),
     )
     # train.log の初めの行の作るもの (空なら省く)
     made = ("作るもの: {PREDICT}. "
@@ -993,12 +1014,16 @@ def generate_config(
     text: str
         configs/default/train.yaml の中身
     """
-    # 監視は受け渡しの値 (valid/loss と min)
+    # 監視は受け渡しの値 (valid/loss か valid/fid と min). FID のときだけ
+    # 検証の間隔と FID の設定
     training = stages["training"]
+    fid = training["monitor"] == FID_MONITOR
     text = GENERATE_CONFIG.substitute(
         experiment=json.dumps(experiment, ensure_ascii=False),
         monitor=training["monitor"], mode=training["mode"],
         dataset=json.dumps(dataset, ensure_ascii=False), requires=requires,
+        valid_every=GENERATE_FID_EVERY if fid else "",
+        fid_section=GENERATE_FID_CONFIG if fid else "",
     )
 
     return text
@@ -1034,8 +1059,24 @@ def generate_readme(
              "条件の無い拡散のモデルを学ぶ).", "", "## 課題から行動まで", ""]
     lines += [f"- {sentence}" for sentence in describe(problem)]
 
-    # 1 から 4. データ, モデル, 学習, 推論
+    # 1 から 4. データ, モデル, 学習, 推論 (FID は最良を選ぶ指標が FID の
+    # ときだけ)
     monitor = stages["training"]["monitor"]
+    fid = monitor == FID_MONITOR
+    fid_text = (
+        "検証は `trainer.valid_every_n_epochs` (既定 5) ごとと最後のエポック"
+        "で, 損失 (`valid/loss`. 毎回同じ時刻と雑音で数える) と, 見本と同じ"
+        "種と回数で検証用の画像と同じ件数を作った FID (`valid/fid`. 作った"
+        "画像と検証用の画像の分布の近さ. 小さいほど良い) を `history.csv` "
+        "に残す. FID の特徴は ML-Found の追加の依存 `fid` (pytorch-fid) の "
+        "Inception で, 初めて使うときに学習済みの重み (約 91 MB) を取る "
+        "(ネットワークの無い計算機には, 一度取った PyTorch のキャッシュを"
+        "写す). FID は件数で偏るので, 比べる FID は同じ件数で数え, 件数は"
+        "特徴の次元 (`fid.dims`. 既定 2048) より多くする (少ないと目安に"
+        "とどまる). `fid.features: pixels` は画素をそのまま特徴にして重みを"
+        "取らずに動くことを確かめるだけのもので, 画素の次元の共分散を求める"
+        "ので小さな画像の確かめ用 (大きな画像では重い). "
+    )
     lines += [
         "", "## 次にすること", "",
         "学習する環境には ML-EDA, ML-Found (と, 定義を使うなら "
@@ -1066,19 +1107,11 @@ def generate_readme(
         "し (更新の回数 (エポック数 × 1 エポックのバッチ数) が "
         "1 / (1 - decay) より十分多くなるようにする. 少ないと初めの重みの"
         "ままで, 損失がほとんど動かない), 検証用の "
-        f"`{monitor}` が最も良いモデルを選ぶ. 検証は "
-        "`trainer.valid_every_n_epochs` (既定 5) ごとと最後のエポックで, "
-        "損失 (`valid/loss`. 毎回同じ時刻と雑音で数える) と, 見本と同じ種と"
-        "回数で検証用の画像と同じ件数を作った FID (`valid/fid`. 作った画像"
-        "と検証用の画像の分布の近さ. 小さいほど良い) を `history.csv` に"
-        "残す. FID の特徴は ML-Found の追加の依存 `fid` (pytorch-fid) の "
-        "Inception で, 初めて使うときに学習済みの重み (約 91 MB) を取る "
-        "(ネットワークの無い計算機には, 一度取った PyTorch のキャッシュを"
-        "写す). FID は件数で偏るので, 比べる FID は同じ件数で数え, 件数は"
-        "特徴の次元 (`fid.dims`. 既定 2048) より多くする (少ないと目安に"
-        "とどまる). `fid.features: pixels` は画素をそのまま特徴にして重みを"
-        "取らずに動くことを確かめるだけのもの. 結果は "
-        "`outputs/<実験の名前>/<日付>/<時刻>/` に残る (`task.yaml`, "
+        f"`{monitor}` が最も良いモデルを選ぶ. "
+        + (fid_text if fid else "損失 (`valid/loss`) は毎回同じ時刻と雑音で"
+           "数える. 作った画像の FID は, 最良を選ぶ指標に FID を選んで書き"
+           "出したときだけ数える. ")
+        + "結果は `outputs/<実験の名前>/<日付>/<時刻>/` に残る (`task.yaml`, "
         "テスト用の分割があればテスト用の損失の `evaluations/`, 作った画像 "
         "8 件と見比べる検証用の本物の画像 4 件の見本 `samples/`). 損失と "
         "FID は今のやり方で数えられないので, 今のやり方とは比べない",
