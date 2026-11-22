@@ -16,6 +16,11 @@ from ml_quest.questions import (
 # その他の指標の名前 (学習の記録の名前と曲線のファイルの名前)
 METRIC_NAME = re.compile(r"[A-Za-z0-9_.@-]+")
 
+# Gymnasium の環境の登録名 (CartPole-v1 など. 前に読み込むモジュールの
+# "module:" と名前空間の "namespace/" は任意. 名前空間は Gymnasium と同じ
+# く英数字と _ と -)
+ENV_ID = re.compile(r"(?:[\w.]+:)?(?:[\w-]+/)?[\w.-]+", re.ASCII)
+
 # 骨組みを組める error の項目の場所 (同じ場所か, その下の項目). 課題, 分解,
 # 決めることの文, 確かめ方, 運用, 受け持ちの文の答えは, README の要約の文に
 # しか使わないので, 「それでも書き出す」と指定すれば書き出せる. 損得と制約
@@ -53,7 +58,7 @@ PART_CHOICES = {
 # 方策の守りの, 文で書く項目
 POLICY_TEXTS = [f"{PART}.policy.{name}" for name in (
     "action_limits", "stop", "safety_key", "approver"
-)]
+)] + [f"{PART}.env_id"]
 
 # はいかいいえで答える項目
 BOOLEANS = [f"{PART}.autonomous", f"{PART}.ros2", "ml.gpu"]
@@ -1119,6 +1124,16 @@ def check_part(problem: dict) -> list[dict]:
                 "に合いません"
             ))
 
+    # 環境の登録名の形 (学習の段階で Gymnasium に渡すため)
+    env_id = env_id_of(problem)
+    if env_id is not None and not ENV_ID.fullmatch(env_id):
+        found.append(finding(
+            "error", f"{PART}.env_id",
+            f"環境の登録名 {env_id} は Gymnasium の登録名の形 (CartPole-v1, "
+            "ALE/Pong-v5 など. 英数字と _ . -. 前に名前空間の namespace/ と, "
+            "読み込むモジュールの module: を付けてよい) で書いてください"
+        ))
+
     # 列の予測の正解の種類と出力の形 (表の列はクラスか値か分布)
     task = active_value(problem, f"{PART}.task")
     output = active_value(problem, f"{PART}.output")
@@ -1141,6 +1156,29 @@ def check_part(problem: dict) -> list[dict]:
                              "です"))
 
     return found
+
+
+def env_id_of(problem: dict) -> Optional[str]:
+    """
+    答えた環境の登録名を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    env_id: Optional[str]
+        前後の空白を除いた登録名 (要らない問いか, 答えていないか, 空か
+        空白だけの文字なら None)
+    """
+    # 手で書いた空の文字と空白だけの値も, 答えていない扱い
+    value = active_value(problem, f"{PART}.env_id")
+    env_id = value.strip() if isinstance(value, str) else None
+    env_id = env_id or None
+
+    return env_id
 
 
 def check_consumer(problem: dict) -> list[dict]:

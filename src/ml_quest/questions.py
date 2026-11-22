@@ -448,6 +448,14 @@ QUESTIONS: list[dict[str, Any]] = [
      "when": [*EFFECT, {"id": f"{PART}.collect", "equals": "simulator"}],
      "choices": SIMULATORS, "title": "どのシミュレータを使いますか",
      "help": "MuJoCo は pip で入るが, 描画には OpenGL が要る"},
+    {"id": f"{PART}.env_id", "section": 5, "kind": "text",
+     "required": False,
+     "when": [*AUTONOMOUS, {"none": [{"id": f"{PART}.collect",
+                                      "equals": "log"}]}],
+     "title": "Gymnasium の環境の登録名は (あれば)",
+     "help": "例: CartPole-v1, Pendulum-v1. 答えると学習の段階に渡す. "
+             "自分で作る環境 (実機とのつなぎ, 自作のシミュレータ) なら空の"
+             "まま"},
     {"id": f"{PART}.ros2", "section": 5, "kind": "boolean",
      "required": False, "when": AUTONOMOUS,
      "title": "機械を ROS2 で動かしますか",
