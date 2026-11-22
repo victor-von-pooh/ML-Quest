@@ -16,7 +16,7 @@
 pip install "ml-quest @ git+https://github.com/victor-von-pooh/ML-Quest.git"
 ```
 
-Python 3.10 以上. 依存は PyYAML と pandas だけ. 手元のデータから答えの候補を出す (`attach_data`, `inspect_data`) には, ML-EDA を入れる (`pip install "ml-quest[data] @ git+..."`).
+Python 3.10 以上. 依存は PyYAML と pandas だけ. 手元のデータから答えの候補を出す (`attach_data`, `inspect_data`) には, ML-EDA を入れる (`pip install "ml-quest[data] @ git+..."`. 画像と, WAVE の他の音声 (FLAC, MP3 など) を読む Pillow と soundfile も入る).
 
 ## 使い方
 

@@ -350,6 +350,7 @@ def test_content_project(tmp_path: Path, kind: str) -> None:
     assert ("`vocabulary`" in readme) == (kind == "text")
     assert ("`num_embeddings`" in readme) == (kind == "text")
     assert ("`fix_length`" in readme) == (kind == "audio")
+    assert ("`ml-eda[audio]`" in readme) == (kind == "audio")
     assert "学習に使う列の数 (`dataset.yaml`" not in readme
     shape = {"image": "`[None, チャンネル, 高さ, 幅]` の float32",
              "text": "`[None, 長さ]` の int64",

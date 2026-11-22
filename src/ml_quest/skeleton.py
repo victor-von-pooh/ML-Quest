@@ -427,7 +427,9 @@ CONTENT_DATA = {
               "える (例 `[{op: resample, rate: 16000}, {op: mix_channels, "
               "channels: 1}, {op: fix_length, seconds: 1.0}]`. そろわない"
               "まま ML-EDA は書き出さない). 読めない件 (`error` の列に理由"
-              "のある件) は表の手順 `filter_rows` で除く"),
+              "のある件) は表の手順 `filter_rows` で除く. WAVE の他の形式 "
+              "(FLAC, MP3, Ogg, AIFF) を読むには soundfile が要る (ML-EDA "
+              "の任意の依存 `ml-eda[audio]`. `ml-quest[data]` でも入る)"),
 }
 
 # README のモデルの作成の, 入力の形の案内 (データの種類ごと. None は表と
