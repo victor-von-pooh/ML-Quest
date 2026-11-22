@@ -816,3 +816,100 @@ def test_items_spec_weights(tmp_path: Path) -> None:
     assert done.returncode == 1
     assert "定義に誤りがあります" in done.stdout and "repeat" in done.stdout
     assert len(list((project / "outputs").glob("*/*/*"))) == 1
+
+
+class FakeLogger:
+    def __init__(self):
+        # 警告の文を貯める
+        self.warnings: list[str] = []
+
+    def warning(self, text: str) -> None:
+        """
+        警告の文を貯める関数
+
+        Parameters
+        ----------
+        text: str
+            警告の文
+
+        Returns
+        ----------
+        None
+        """
+        # 並びに足す
+        self.warnings.append(text)
+
+
+class FakeExperiment:
+    def __init__(self):
+        # 警告を貯める記録
+        self.logger = FakeLogger()
+
+
+def test_samples_checked_before_writing(tmp_path: Path) -> None:
+    """
+    見本の 3 つのどれかが書けない件は, 3 つとも書かずに警告し, 他の件は
+    書くことを, 書き出したスクリプトの関数で確かめる関数 (ML-Found と
+    PyTorch が無ければ飛ばす)
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 領域の骨組みのスクリプトを読み込む
+    for name in TRAINING:
+        pytest.importorskip(name)
+    pytest.importorskip("PIL")
+    eda = pytest.importorskip("ml_eda")
+    synthetic = pytest.importorskip("ml_eda.synthetic")
+    import numpy as np
+    synthetic.write_image_masks(tmp_path / "raw", count=6, size=(16, 16))
+    eda.export_image_masks(tmp_path / "raw" / "images",
+                           tmp_path / "raw" / "masks", tmp_path / "masks",
+                           split={"method": "random", "valid": 0.5})
+    problem = attach_data(kind_problem("mask"), str(tmp_path / "masks"))
+    project = tmp_path / "project"
+    make_project(problem, project)
+    spec = importlib.util.spec_from_file_location(
+        "generated_samples", project / "train.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    # 値の確かめ
+    assert module.sample_problem("mask", np.array([[0, 255]])) is None
+    assert "255" in module.sample_problem("mask", np.array([[0, 300]]))
+    assert module.sample_problem("mask", np.array([[0.5]])) is not None
+    assert module.sample_problem("image", np.full((3, 2, 2), np.nan))
+    assert module.sample_problem("point_cloud", np.zeros((4, 3))) is None
+    assert module.sample_problem("point_cloud", np.zeros((4, 2)))
+    cloud = np.zeros((4, 3))
+    cloud[0, 0] = np.nan
+    assert module.sample_problem("point_cloud", cloud)
+
+    # 1 件目の正解の値を 300 にした検証用の分割で, 書いた見本を記録
+    dataset = eda.load_items(project / "data" / "masks")
+    part = module.make_datasets(dataset, None)["valid"]
+    first = dict(part.items[0])
+    first[part.names[1]] = np.full((16, 16), 300)
+    items = [first, *[part.items[i] for i in range(1, len(part))]]
+    part.items = items
+    written = []
+    module.save_sample = lambda experiment, name, *args, **kwargs: (
+        written.append(name)
+    )
+    trainer = type("FakeTrainer", (), {})()
+    trainer.model = module.placeholder(dataset, None)
+    experiment = FakeExperiment()
+    module.save_samples(trainer, part, dataset, experiment)
+    assert not any(name.startswith("valid_0_") for name in written)
+    assert {"valid_1_input", "valid_1_predicted", "valid_1_target"} <= set(
+        written
+    )
+    assert len(experiment.logger.warnings) == 1
+    assert "valid_0" in experiment.logger.warnings[0]
