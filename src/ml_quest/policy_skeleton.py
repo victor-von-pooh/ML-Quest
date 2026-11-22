@@ -482,7 +482,8 @@ def definition_errors(spec: Path, args: dict) -> list[str]:
     except Exception as error:
         errors.append(f"観測 (要素 {args['obs_dim']}) を入れられません "
                       f"({type(error).__name__}: {error}). 定義の入力の形"
-                      f"を (1, {args['obs_dim']}) にしてください")
+                      f"を (1, {args['obs_dim']}) にし, 最初の層が要素 "
+                      f"{args['obs_dim']} つを受け取るようにしてください")
         return errors
     if tuple(output.shape) != (1, args["action_dim"]):
         errors.append(f"出力の形 {tuple(output.shape)} が (バッチ, 行動の"
@@ -519,8 +520,8 @@ def policy_definition(cfg: Any, args: dict) -> Optional[Path]:
     errors = definition_errors(spec, args)
     if errors:
         print(f"{spec} の定義に誤りがあります. README の「次にすること」"
-              "の 3 で, ML-CreateArchitecture で開いて直すか, ファイルを"
-              "消すと次の学習で既定の定義を書き直します")
+              "の 3 のとおり, ML-CreateArchitecture で開いて直してください "
+              "(ファイルを消すと次の学習で既定の定義を書き直します)")
         for message in errors:
             print(f"- {message}")
         return None
