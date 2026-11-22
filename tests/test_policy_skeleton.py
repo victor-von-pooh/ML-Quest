@@ -286,6 +286,72 @@ def test_policy_config_errors(tmp_path: Path) -> None:
     assert not (project / "outputs").exists()
 
 
+# 扱えない空間の自作の環境 ({observation} と {action} に空間の式)
+SPACE_ENV = """
+import gymnasium
+from gymnasium import spaces
+import numpy as np
+
+
+class ProjectEnv(gymnasium.Env):
+    def __init__(self):
+        super(ProjectEnv, self).__init__()
+        self.observation_space = {observation}
+        self.action_space = {action}
+"""
+
+# 扱える観測と, 扱えない行動の空間と, 扱えない観測の空間
+BOX = "spaces.Box(-1.0, 1.0, (2,), np.float32)"
+SPACES = {
+    "dict": (BOX, 'spaces.Dict({"a": spaces.Discrete(2)})'),
+    "scalar_box": (BOX, "spaces.Box(-1.0, 1.0, (), np.float32)"),
+    "box_2d": (BOX, "spaces.Box(-1.0, 1.0, (2, 2), np.float32)"),
+    "discrete_start": (BOX, "spaces.Discrete(3, start=1)"),
+    "tuple_obs": ("spaces.Tuple((spaces.Discrete(2), spaces.Discrete(3)))",
+                  "spaces.Discrete(2)"),
+}
+
+
+@pytest.mark.parametrize("env_id", ["FrozenLake-v1", *SPACES])
+def test_policy_space_errors(tmp_path: Path, env_id: str) -> None:
+    """
+    扱えない観測の空間 (Discrete) と行動の空間 (Dict) が, 出力先を作る前
+    に「環境の空間を扱えません」で止まることを確かめる関数 (ML-Found と
+    Gymnasium が無ければ飛ばす)
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+    env_id: str
+        観測が Discrete の環境の登録名か, 自作の環境の空間の組の名前
+        (SPACES)
+
+    Returns
+    ----------
+    None
+    """
+    # 書き出して, 自作の環境は Dict の行動の空間に書き換える
+    for name in TRAINING:
+        pytest.importorskip(name)
+    project = tmp_path / "project"
+    make_project(policy_problem(None if env_id in SPACES else env_id),
+                 project)
+    if env_id in SPACES:
+        observation, action = SPACES[env_id]
+        (project / "env.py").write_text(
+            SPACE_ENV.replace("{observation}", observation)
+            .replace("{action}", action), encoding="utf-8"
+        )
+    done = subprocess.run([sys.executable, "train.py"], cwd=project,
+                          capture_output=True, text=True, timeout=600)
+    assert done.returncode == 1, done.stderr[-2000:]
+    assert "環境の空間を扱えません" in done.stdout, done.stdout
+    assert "guards" not in done.stdout and "形 None" not in done.stdout
+    assert "Traceback" not in done.stderr
+    assert not (project / "outputs").exists()
+
+
 def test_policy_guards_numbers(tmp_path: Path) -> None:
     """
     守りに数を書くと, 守り付きの評価で clipped と fallback が数えられ,
