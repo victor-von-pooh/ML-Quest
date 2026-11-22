@@ -1085,13 +1085,20 @@ def sample_problem(kind: str, value: np.ndarray) -> Optional[str]:
     reason: Optional[str]
         書けない理由 (書けるなら None)
     """
-    # 画像は (チャンネル, 高さ, 幅) か (高さ, 幅) の有限の値, 領域は (高さ,
-    # 幅) の 0 から 255 の整数, 点群は (点の数, 3) の有限の座標
+    # 画像は (高さ, 幅), (チャンネル, 高さ, 幅), (高さ, 幅, チャンネル) で
+    # チャンネルが 1, 3, 4 の有限の値, 領域は (高さ, 幅) の 0 から 255 の
+    # 整数, 点群は (点の数, 3) の有限の座標 (ML-Found の save_sample と同じ)
     array = np.asarray(value)
     reason = None
-    if kind == "image" and (array.ndim not in (2, 3)
-                            or not np.isfinite(array).all()):
-        reason = "画像の形か値が書けません (有限でない値があるなど)"
+    channels = (1, 3, 4)
+    shaped = array.ndim == 2 or array.ndim == 3 and (
+        array.shape[0] in channels or array.shape[-1] in channels
+    )
+    if kind == "image" and not shaped:
+        reason = (f"画像の形 {array.shape} が書けません (チャンネルは 1, 3, "
+                  "4)")
+    elif kind == "image" and not np.isfinite(array).all():
+        reason = "画像に有限でない値があります"
     elif kind == "mask" and (
         array.ndim != 2 or array.size == 0
         or not np.issubdtype(array.dtype, np.integer)
@@ -1106,6 +1113,7 @@ def sample_problem(kind: str, value: np.ndarray) -> Optional[str]:
         reason = "点群の形が (点の数, 3) でないか, 有限でない座標があります"
 
     return reason
+
 
 def entry_names(dataset: ItemDataset) -> tuple[str, str]:
     """

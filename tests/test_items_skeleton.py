@@ -881,11 +881,21 @@ def test_samples_checked_before_writing(tmp_path: Path) -> None:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
+    # 書き出したスクリプトは関数の間に空行が 2 つ (PEP 8)
+    script = (project / "train.py").read_text(encoding="utf-8")
+    assert "    return reason\n\n\ndef entry_names" in script
+
     # 値の確かめ
     assert module.sample_problem("mask", np.array([[0, 255]])) is None
     assert "255" in module.sample_problem("mask", np.array([[0, 300]]))
     assert module.sample_problem("mask", np.array([[0.5]])) is not None
     assert module.sample_problem("image", np.full((3, 2, 2), np.nan))
+    assert module.sample_problem("image", np.zeros((3, 4, 4))) is None
+    assert module.sample_problem("image", np.zeros((4, 4, 1))) is None
+    assert module.sample_problem("image", np.zeros((4, 4))) is None
+    assert "チャンネル" in module.sample_problem("image", np.zeros((2, 4, 5)))
+    assert module.sample_problem("image", np.zeros((2, 4, 2)))
+    assert module.sample_problem("image", np.zeros(4))
     assert module.sample_problem("point_cloud", np.zeros((4, 3))) is None
     assert module.sample_problem("point_cloud", np.zeros((4, 2)))
     cloud = np.zeros((4, 3))
