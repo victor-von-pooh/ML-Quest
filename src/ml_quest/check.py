@@ -790,7 +790,7 @@ def check_evaluation(problem: dict) -> list[dict]:
         )
         found.append(finding(
             "error", f"{PART}.evaluation.metric",
-            f"指標 {metric} は{where}に合いません"
+            f"指標{choice_label(METRICS, metric)}は{where}に合いません"
         ))
     name = active_value(problem, f"{PART}.evaluation.name")
     if isinstance(name, str) and (
@@ -1018,6 +1018,44 @@ def is_items_part(problem: dict) -> bool:
     return items
 
 
+def choice_label(
+    choices: list[dict], value: Any, problem: Optional[dict] = None,
+    short: bool = False
+) -> str:
+    """
+    選択肢の値を, 画面の選択肢と同じ言葉にする関数 (誤りの文のため)
+
+    Parameters
+    ----------
+    choices: list[dict]
+        選択肢 (value と label)
+    value: Any
+        値
+    problem: Optional[dict] = None
+        問題の設定 (渡すと, 同じ値の選択肢から今の答えに合うものを選ぶ.
+        指標の loss のように同じ値が 2 つあるため)
+    short: bool = False
+        説明の括弧の前だけにするか (受け持ちの名前など)
+
+    Returns
+    ----------
+    label: str
+        「」で囲んだ選択肢の言葉 (選択肢に無ければ値のまま)
+    """
+    # 今の答えに合う選択肢を先に, 無ければ同じ値の最初の選択肢
+    same = [item for item in choices if item["value"] == value]
+    fitting = [item for item in same
+               if problem is not None and choice_fits(problem, item)]
+    item = (fitting or same or [None])[0]
+    if item is None:
+        label = f"「{value}」"
+        return label
+    text = item["label"].split(" (")[0] if short else item["label"]
+    label = f"「{text}」"
+
+    return label
+
+
 def is_generate_part(problem: dict) -> bool:
     """
     受け持ちが画像の生成 (作るで, 正解の種類が画像) かを返す関数
@@ -1164,10 +1202,11 @@ def check_part(problem: dict) -> list[dict]:
         choice = next((item for item in choices if item["value"] == value),
                       None)
         if choice is not None and not choice_fits(problem, choice):
+            role = get_value(problem, f"{PART}.role")
             found.append(finding(
                 "error", key,
-                f"{value} は受け持ち {get_value(problem, f'{PART}.role')} "
-                "に合いません"
+                f"{choice_label(choices, value)}は受け持ち"
+                f"{choice_label(ROLES, role, short=True)}に合いません"
             ))
 
     # 環境の登録名の形 (学習の段階で Gymnasium に渡すため)
@@ -1188,8 +1227,9 @@ def check_part(problem: dict) -> list[dict]:
     ):
         found.append(finding(
             "error", f"{PART}.output",
-            f"正解の種類が表の列なので, 出力の形は {', '.join(COLUMN_OUTPUTS)}"
-            f" のどれかにしてください (今は {output})"
+            "正解の種類が表の列なので, 出力の形は "
+            + "".join(choice_label(OUTPUTS, name) for name in COLUMN_OUTPUTS)
+            + f"のどれかにしてください (今は{choice_label(OUTPUTS, output)})"
         ))
 
     # 列の予測のタスクと出力の形
