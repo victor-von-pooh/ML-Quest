@@ -6,7 +6,7 @@ import pytest
 import yaml
 
 from ml_quest import (
-    EXAMPLES, QUESTIONS, answer, apply_recipe, check, describe,
+    EXAMPLES, QUESTIONS, SPLITS, answer, apply_recipe, check, describe,
     example_problem, get_value, handoff, is_ready, load_problem,
     make_project, new_problem, questions, read_columns, recipe_from,
     save_problem
@@ -948,3 +948,68 @@ def test_split_time_column() -> None:
     loose = answer(problem, "information.forbidden", forbidden or None)
     assert not any("applied_at" in item["message"]
                    for item in check(loose) if item["level"] == "warning")
+
+
+def test_group_time_and_stratified_group() -> None:
+    """
+    ML-EDA のグループと時刻の組 (group_time) とグループの層化
+    (stratified_group) の分割を書き戻したとき, 時刻の順を守る分割として
+    扱い, 列と分類の要るところだけを食い違いにすることを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 時系列の予測で相手ごとと時刻の順は, 偽の警告にならない
+    sozai = answer(example_problem("総菜の作る量"), "ml.parts.0.group_column",
+                   "store")
+    recipe = recipe_from(sozai)["recipe"]
+    timed = dict(recipe, split={**recipe["split"], "method": "group_time"})
+    result = apply_recipe(sozai, timed)
+    assert result["conflicts"] == []
+    assert handoff(result["problem"])["data"]["split"] == "time"
+
+    # 時系列の予測で相手ごとの層別は誤り (と, 時刻の順でない警告)
+    layered = dict(recipe, split={**recipe["split"],
+                                  "method": "stratified_group"})
+    found = {(c["level"], c["id"]) for c in apply_recipe(
+        sozai, layered
+    )["conflicts"]}
+    assert found == {("warning", "ml.parts.0.task"),
+                     ("error", "ml.parts.0.task")}
+
+    # 分類で時刻の順を決めたなら group_time は警告しない. 層別は分類なら使える
+    problem = example_problem("解約の引き止め")
+    columns = get_value(problem, "information.columns") + ["applied_at"]
+    problem = answer(problem, "information.columns", columns)
+    problem = answer(problem, "information.forbidden",
+                     (get_value(problem, "information.forbidden") or [])
+                     + ["applied_at"])
+    problem = answer(problem, "ml.parts.0.split_time_column", "applied_at")
+    problem = answer(problem, "ml.parts.0.group_column", "member_id")
+    recipe = recipe_from(problem)["recipe"]
+    for method, ids in (("group_time", []),
+                        ("stratified_group",
+                         ["ml.parts.0.split_time_column"])):
+        written = dict(recipe, split={**recipe["split"], "method": method})
+        conflicts = apply_recipe(problem, written)["conflicts"]
+        assert [c["id"] for c in conflicts] == ids, method
+
+    # 相手をまとめる列の無いグループの分割は誤り
+    plain = example_problem("解約の引き止め")
+    recipe = recipe_from(plain)["recipe"]
+    for method in ("group", "group_time", "stratified_group"):
+        written = dict(recipe, split={"method": method})
+        assert ("error", "ml.parts.0.group_column") in {
+            (c["level"], c["id"])
+            for c in apply_recipe(plain, written)["conflicts"]
+        }, method
+
+    # 受け渡しの分割の名前に, 2 つの説明がある
+    names = {item["value"]: item["label"] for item in SPLITS}
+    assert "時刻" in names["group_time"]
+    assert "分類だけ" in names["stratified_group"]
