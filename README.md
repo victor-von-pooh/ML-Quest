@@ -17,8 +17,8 @@
 | --- | --- |
 | [ML-Pathfinder](https://github.com/victor-von-pooh/ML-Pathfinder) (問題の設定) | 問い (`questions`, `answer`), 確かめ (`check`), 要約 (`describe`), データの候補 (`attach_data`, `inspect_data`), 骨組みの書き出し (`make_project`, `record_project`), 見本 (`example_problem`) |
 | ML-Fathom (データの分析) | データの分析の受け渡しの値 (`handoff`), レシピの下書きと書き戻し (`recipe_from`, `apply_recipe`) |
-| ML-CreateArchitecture (モデルの作成) | モデルの作成の受け渡しの値 (出力の大きさ), プロジェクトのモデルの定義の置き場 |
-| ML-Dashboard (学習・評価) | 学習・評価の受け渡しの値, 要る機能, 書き出した骨組みのプロジェクト |
+| ML-CreateArchitecture (モデルの作成) | モデルの作成の受け渡しの値 (出力の大きさ, 受け持ちに合う雛形 `example`. `model_example` でも求まる), プロジェクトのモデルの定義の置き場 |
+| ML-Dashboard (学習・評価) | 学習・評価の受け渡しの値 (骨組みの外の学習でも使う監視する指標と向き), 要る機能, 書き出した骨組みのプロジェクト |
 | ML-Provide (推論) | 損得と制約, 今のやり方, 元の問題の設定の場所 (`problem_origin`) |
 
 このライブラリが依存するのは, データの候補を出すときの ML-EDA (任意) だけ. 書き出した学習のスクリプトは, ML-EDA, ML-ModelControl, ML-Found, ML-Inference を使う.
@@ -51,7 +51,7 @@ for item in check(problem):
 
 # 課題から行動までの要約, 後ろの段階ごとの値
 print("\n".join(describe(problem)))
-stages = handoff(problem)   # part, data, model, training, inference と, 要る機能 (requires), 方策の守り (policy), プロジェクト (project)
+stages = handoff(problem)   # part, data, model (雛形の名前 example も), training (監視する指標 monitor と向き mode), inference と, 要る機能 (requires), 方策の守り (policy), プロジェクト (project)
 
 # ML-Found のプロジェクトの骨組みの書き出しと, その場所の記録 (データセットとモデルの定義の置き場も) の保存
 save_problem(problem, "/work/problem.yaml")

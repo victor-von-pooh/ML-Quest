@@ -25,6 +25,16 @@ POLICY_KEYS = ["action_limits", "stop", "fallback", "fallback_action",
 # 安全の違反の信号の名前の既定 (ML-Found の safety_key の既定)
 DEFAULT_SAFETY_KEY = "cost"
 
+# 一から学習する受け持ちと正解の種類ごとの, モデルの作成の雛形
+# (ML-ModelControl の同梱の例の名前. 並べるとまとめるは正解の種類を問わない
+# ので None)
+MODEL_EXAMPLES = {
+    ("predict", "mask"): "unet_segmentation",
+    ("predict", "point_cloud"): "point_cloud_predictor",
+    ("rank", None): "two_tower_retrieval",
+    ("group", None): "contrastive_encoder",
+}
+
 # 選んで書く意思決定の項目 (値を名前にして文にする)
 OPTION_FIELDS = {
     field for options in DECISION_OPTIONS.values() for field in options
@@ -65,6 +75,34 @@ def decision_of(problem: dict) -> Optional[dict]:
     return decision
 
 
+def model_example(problem: dict) -> Optional[str]:
+    """
+    受け持ちに合う, モデルの作成の雛形 (ML-ModelControl の同梱の例) の名前
+    を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 1 か版 2)
+
+    Returns
+    ----------
+    example: Optional[str]
+        同梱の例の名前 (MODEL_EXAMPLES. 一から学習しないか, 合う例が無い
+        受け持ちは None)
+    """
+    # 同梱の例は学習前の定義なので, 一から学習するときだけ (要らなくなった
+    # 問いの古い答えは除外)
+    problem = upgrade_problem(problem)
+    if active_value(problem, f"{PART}.method") != "scratch":
+        return None
+    key = (active_value(problem, f"{PART}.role"),
+           active_value(problem, f"{PART}.target.kind"))
+    example = MODEL_EXAMPLES.get(key)
+
+    return example
+
+
 def conclusion_of(problem: dict) -> dict:
     """
     問題の設定から, ML-Inference の結論の決め方の既定値を作る関数
@@ -98,9 +136,9 @@ def handoff(problem: dict) -> dict:
     Returns
     ----------
     stages: dict
-        data (データの分析), model (モデルの作成), training (学習・評価),
-        inference (推論. 既製のモデルをそのまま使う予測は ready に一式
-        づくりに渡す値) ごとの値と, part (受け持ちの答え), requires (要る
+        data (データの分析), model (モデルの作成. 雛形の名前 example も),
+        training (学習・評価), inference (推論. 既製のモデルをそのまま使う
+        予測は ready に一式づくりに渡す値) ごとの値と, part (受け持ちの答え), requires (要る
         機能の名前), policy (方策の守り. 方策でなければ None), project
         (書き出したプロジェクトの path. データセットとモデルの定義の場所は
         data の project_dataset と model の project_model_spec. 記録が無け
@@ -239,6 +277,7 @@ def build_stages(problem: dict) -> dict:
                      "project_dataset": project["dataset"]},
             "model": {"task": None, "outputs": None, "role": part["role"],
                       "target_kind": part["target_kind"],
+                      "example": model_example(problem),
                       "project_model_spec": project["model_spec"]},
             "training": training,
             "inference": {"decision": None, "conclusion": {},
@@ -258,6 +297,7 @@ def build_stages(problem: dict) -> dict:
         "model": {"task": task,
                   "outputs": None if task == "classification" else 1,
                   "role": part["role"], "target_kind": part["target_kind"],
+                  "example": model_example(problem),
                   "project_model_spec": project["model_spec"]},
         "training": training,
         "inference": {"decision": decision_of(problem),
