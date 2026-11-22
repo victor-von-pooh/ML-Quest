@@ -5,6 +5,7 @@ from ml_quest.check import (
     check, env_id_of, is_column_part, is_generate_part, is_items_part,
     split_errors
 )
+from ml_quest.data import EXPORT_FUNCTIONS
 from ml_quest.problem import (
     DECISION_NAMES, DECISION_OPTIONS, FIELD_NAMES, OPTION_NAMES,
     active_value, data_location, get_value, upgrade_problem
@@ -20,10 +21,6 @@ NO_ML = "機械学習を使わない問題の設定は, 後ろの段階に渡す
 # 方策の守りの項目 (ML-Found の make_guards と safety_key に渡す答え)
 POLICY_KEYS = ["action_limits", "stop", "fallback", "fallback_action",
                "safety_key", "approver"]
-
-# ファイルの組の正解の種類ごとの, ML-EDA の書き出しの関数
-EXPORT_FUNCTIONS = {"mask": "export_image_masks",
-                    "point_cloud": "export_capture_clouds"}
 
 # 安全の違反の信号の名前の既定 (ML-Found の safety_key の既定)
 DEFAULT_SAFETY_KEY = "cost"

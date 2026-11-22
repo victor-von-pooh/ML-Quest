@@ -50,6 +50,10 @@ VOLATILE_OPTIONS = {"time_column"}
 PAIR_NAMES = {"mask": ("images", "masks"),
               "point_cloud": ("captures", "clouds")}
 
+# ファイルの組の正解の種類ごとの, ML-EDA の書き出しの関数
+EXPORT_FUNCTIONS = {"mask": "export_image_masks",
+                    "point_cloud": "export_capture_clouds"}
+
 # 写しごとのサブディレクトリの名前 (16 進の桁数. 片付けはこの名前だけ)
 COPY_DIGITS = 12
 COPY_NAME = re.compile(f"[0-9a-f]{{{COPY_DIGITS}}}")
@@ -505,9 +509,7 @@ def drafted_dirs(problem: dict) -> set[str]:
     return places
 
 
-def reset_export_dirs(
-    problem: dict, updated: dict, location: Path
-) -> None:
+def reset_export_dirs(problem: dict, updated: dict) -> None:
     """
     データの場所を変えたときに, 前の場所から下書きした書き出しの入力と
     正解のディレクトリを空にする関数
@@ -518,18 +520,17 @@ def reset_export_dirs(
         データを入れる前の問題の設定
     updated: dict
         データを入れた問題の設定 (書き換える)
-    location: Path
-        新しく入れたデータの元の場所
 
     Returns
     ----------
     None
     """
-    # 同じ元の場所を入れ直した場合と, 利用者が選んだ他のディレクトリは残す
+    # データの場所 (data.source) が変わらない入れ直しと, 利用者が選んだ他の
+    # ディレクトリは残す. 同じ元の場所でも, 新しい写しになれば下書きに戻す
     saved = get_value(updated, "data.export")
-    before = {get_value(problem, "data.source"),
-              get_value(problem, "data.origin")}
-    if not isinstance(saved, dict) or str(location) in before:
+    if not isinstance(saved, dict) or get_value(
+        updated, "data.source"
+    ) == get_value(problem, "data.source"):
         return
     drafted = drafted_dirs(problem)
     for key in ("inputs", "targets"):
@@ -592,7 +593,7 @@ def attach_data(
 
     # 場所と読み方と列の名前 (写したなら元の場所も. 時刻の間隔も)
     updated = answer(problem, "data.source", str(copied or location))
-    reset_export_dirs(problem, updated, location)
+    reset_export_dirs(problem, updated)
     origin = None
     if copied == location:
         same = str(location) == get_value(problem, "data.source")
@@ -686,7 +687,7 @@ def attach_items(
 
     # 場所と読み方 (写したなら元の場所も). 列と時刻は持たない
     updated = answer(problem, "data.source", str(place))
-    reset_export_dirs(problem, updated, location)
+    reset_export_dirs(problem, updated)
     origin = None
     if copied == location:
         same = str(location) == get_value(problem, "data.source")

@@ -1,12 +1,11 @@
 import copy
-import math
 from pathlib import Path
 from typing import Any, Optional
 
 from ml_quest.check import (
     finding, is_column_part, is_generate_part, is_items_part, is_policy_part
 )
-from ml_quest.data import ITEMS_LOADER, PAIR_NAMES
+from ml_quest.data import EXPORT_FUNCTIONS, ITEMS_LOADER, PAIR_NAMES
 from ml_quest.handoff import export_split, export_stages
 from ml_quest.problem import (
     active_value, answer, data_location, get_value, set_value,
@@ -20,14 +19,13 @@ TEST_RATIO = 0.15
 
 # 正解の種類から, ML-EDA のファイルの組の書き出しと, 入力と正解のディレク
 # トリの名前 (ML-EDA の合成の見本と同じ)
-EXPORTS = {
-    kind: (function, *PAIR_NAMES[kind])
-    for kind, function in (("mask", "export_image_masks"),
-                           ("point_cloud", "export_capture_clouds"))
-}
+EXPORTS = {kind: (function, *PAIR_NAMES[kind])
+           for kind, function in EXPORT_FUNCTIONS.items()}
 
-# 書き出しの分割のしかた (ML-EDA の split の method)
+# 書き出しの分割のしかた (ML-EDA の split の method) と, 書いていない割合の
+# ML-EDA の既定
 SPLIT_METHODS = ("random", "group", "none")
+SPLIT_DEFAULTS = {"valid": 0.2, "test": 0.0}
 
 # 書き出しの設定の鍵と, 書き出しごとの他の引数 (中身の手順 item_steps を
 # 渡すと ML-EDA は版 3 で書く)
@@ -684,6 +682,28 @@ def checked_steps(function: str, item_steps: Any) -> Optional[dict]:
     return steps
 
 
+def is_ratio(value: Any) -> bool:
+    """
+    分割の割合として書ける値かを返す関数
+
+    Parameters
+    ----------
+    value: Any
+        割合
+
+    Returns
+    ----------
+    ratio: bool
+        0 以上 1 未満の数か (真偽値は除く. 大きな整数も float にせずに
+        比べる)
+    """
+    # nan と無限大は範囲の比べで外れる
+    ratio = (isinstance(value, (int, float)) and not isinstance(value, bool)
+             and 0 <= value < 1)
+
+    return ratio
+
+
 def export_conflicts(problem: dict, settings: dict) -> list[dict]:
     """
     書き出しの設定と問題の設定の食い違いを返す関数
@@ -711,36 +731,32 @@ def export_conflicts(problem: dict, settings: dict) -> list[dict]:
             f"は {function} で書き出します"
         ))
 
-    # 分割のしかたと割合の形 (書き出しの時点で初めて誤りにならないように)
+    # 分割のしかたと割合の形 (書き出しの時点で初めて誤りにならないように).
+    # 割合は ML-EDA と同じく, 書いていなければ既定 (検証用 0.2, テスト用 0)
+    # で見る. 分けない (none) なら ML-EDA は割合を使わないので見ない
     split = settings["split"]
-    if split.get("method") is not None and (
-        split["method"] not in SPLIT_METHODS
-    ):
+    method = split.get("method")
+    if method is not None and method not in SPLIT_METHODS:
         conflicts.append(finding(
             "error", "data.export",
-            f"分割のしかた {split['method']} は "
-            f"{', '.join(SPLIT_METHODS)} のどれかにしてください"
+            f"分割のしかた {method} は {', '.join(SPLIT_METHODS)} のどれかに"
+            "してください"
         ))
-    for key in ("valid", "test"):
-        value = split.get(key)
-        if value is not None and not (
-            isinstance(value, (int, float)) and not isinstance(value, bool)
-            and math.isfinite(value) and 0 <= value < 1
-        ):
-            conflicts.append(finding(
-                "error", "data.export",
-                f"分割の {key} の割合は 0 以上 1 未満の数にしてください (今は "
-                f"{value!r})"
-            ))
-    if all(isinstance(split.get(key), (int, float))
-           and not isinstance(split.get(key), bool)
-           for key in ("valid", "test")) and (
-        split["valid"] + split["test"] >= 1
-    ):
+    ratios = {key: split.get(key, default)
+              for key, default in SPLIT_DEFAULTS.items()}
+    wrong = [key for key, value in ratios.items()
+             if method != "none" and not is_ratio(value)]
+    conflicts += [finding(
+        "error", "data.export",
+        f"分割の {key} の割合は 0 以上 1 未満の数にしてください (今は "
+        f"{ratios[key]!r})"
+    ) for key in wrong]
+    if method != "none" and not wrong and sum(ratios.values()) >= 1:
         conflicts.append(finding(
             "error", "data.export",
-            "検証用とテスト用の割合の和は 1 未満にしてください (学習用が"
-            "残らないため)"
+            "検証用とテスト用の割合の和は 1 未満にしてください (今は "
+            f"{ratios['valid']} と {ratios['test']}. 書いていない割合は "
+            "ML-EDA の既定の検証用 0.2, テスト用 0. 学習用が残らないため)"
         ))
 
     # 検証用の分割と, グループごとの分割のグループ (ML-EDA の既定の割合は

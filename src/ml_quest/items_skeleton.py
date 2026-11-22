@@ -7,7 +7,7 @@ from ml_quest.baseline_skeleton import (
     predict_log, reported_code, reported_hint, reported_sentence,
     reported_value
 )
-from ml_quest.data import describe_steps, entry_steps
+from ml_quest.data import EXPORT_FUNCTIONS, describe_steps, entry_steps
 from ml_quest.handoff import describe
 from ml_quest.problem import active_value, get_value
 from ml_quest.questions import PART
@@ -1728,9 +1728,13 @@ def export_lines(problem: dict, dataset: str) -> list[str]:
         案内の行 (書き戻した設定が無ければ空)
     """
     # 書き出しの関数と, ディレクトリ, 分割, グループの数
+    # 書き出しが今の正解の種類に合う設定だけ (recipe_from と受け渡しと同じ)
     lines: list[str] = []
     saved = get_value(problem, "data.export")
-    if not isinstance(saved, dict) or not saved.get("function"):
+    kind = active_value(problem, f"{PART}.target.kind")
+    if not isinstance(saved, dict) or (
+        saved.get("function") != EXPORT_FUNCTIONS.get(kind)
+    ):
         return lines
     split = saved.get("split") or {}
     groups = saved.get("groups") or {}
@@ -1738,8 +1742,8 @@ def export_lines(problem: dict, dataset: str) -> list[str]:
     steps = options.get("item_steps") if isinstance(options, dict) else None
     lines = [
         "    - データの分析 (ML-Fathom) で書き戻した設定: "
-        f"`{saved['function']}({json.dumps(saved.get('inputs'))}, "
-        f"{json.dumps(saved.get('targets'))}, \"{dataset}\", "
+        f"`{saved['function']}({place_text(saved.get('inputs'), '入力')}, "
+        f"{place_text(saved.get('targets'), '正解')}, \"{dataset}\", "
         f"split={json.dumps(split, ensure_ascii=False)}"
         + (f", item_steps={json.dumps(steps, ensure_ascii=False)}"
            if steps else "") + ")`"
@@ -1749,6 +1753,29 @@ def export_lines(problem: dict, dataset: str) -> list[str]:
     ]
 
     return lines
+
+
+def place_text(value: Optional[str], name: str) -> str:
+    """
+    書き出しの案内の, 入力か正解のディレクトリの書き方を返す関数
+
+    Parameters
+    ----------
+    value: Optional[str]
+        ディレクトリ (選んでいなければ None)
+    name: str
+        入力か正解
+
+    Returns
+    ----------
+    text: str
+        JSON の文字列か, 選んでいなければ <入力のディレクトリ> の印
+    """
+    # 選んでいないディレクトリを null と書かない
+    text = (json.dumps(value, ensure_ascii=False) if value
+            else f"<{name}のディレクトリ>")
+
+    return text
 
 
 def items_name(problem: dict) -> str:

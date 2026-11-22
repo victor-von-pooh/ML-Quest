@@ -249,12 +249,25 @@ def test_apply_export_conflicts() -> None:
         ({"split": {"valid": 0.2, "test": True}}, ("error", "test の割合")),
         ({"split": {"valid": 1.5}}, ("error", "valid の割合")),
         ({"split": {"valid": 0.6, "test": 0.5}}, ("error", "和は 1 未満")),
+        ({"split": {"valid": 1}}, ("error", "valid の割合")),
+        ({"split": {"valid": 0.5, "test": 0.5}}, ("error", "和は 1 未満")),
+        ({"split": {"test": 0.9}}, ("error", "和は 1 未満")),
+        ({"split": {"valid": 10 ** 400}}, ("error", "valid の割合")),
+        ({"split": {"valid": float("nan")}}, ("error", "valid の割合")),
     ]
     for change, (level, words) in cases:
         export = {**copy.deepcopy(base), **change}
         conflicts = apply_recipe(problem, export)["conflicts"]
         assert [item["level"] for item in conflicts] == [level], conflicts
         assert words in conflicts[0]["message"]
+
+    # 分けない (none) なら割合は見ない. 片方だけの割合は既定と足して 1 未満
+    for split in ({"method": "none", "valid": 5}, {"test": 0.7}):
+        export = {**copy.deepcopy(base), "split": split}
+        assert apply_recipe(problem, export)["conflicts"] == [
+            item for item in apply_recipe(problem, export)["conflicts"]
+            if item["level"] == "warning"
+        ], split
 
     # 形の誤りは止める
     for change, words in (({"function": "export_dataset"}, "function"),
@@ -411,3 +424,40 @@ def test_export_dirs_follow_data(tmp_path: Path, kind: str) -> None:
     moved = attach_data(problem, str(new["root"]))
     assert moved["data"]["export"]["inputs"] is None
     assert moved["data"]["export"]["targets"] == str(chosen)
+
+
+def test_export_dirs_follow_copy(tmp_path: Path) -> None:
+    """
+    写して入れたデータの元が変わり, 同じ元の場所を入れ直して新しい写しに
+    なると, 前の写しから下書きしたディレクトリが新しい写しのものに戻ること
+    を確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 写して入れ, 下書きを書き戻す
+    raw = write_raw(tmp_path / "raw", "mask")
+    store = str(tmp_path / "store")
+    problem = attach_data(kind_problem("mask"), str(raw["root"]),
+                          copy_to=store)
+    export = recipe_from(problem)["export"]
+    export.pop("notes", None)
+    problem = apply_recipe(problem, export)["problem"]
+    first = problem["data"]["source"]
+    assert problem["data"]["export"]["inputs"].startswith(first)
+
+    # 元の画像を足して入れ直すと新しい写しになり, ディレクトリは新しい
+    # 写しから
+    extra = next(raw["inputs"].iterdir())
+    (raw["inputs"] / f"copy_{extra.name}").write_bytes(extra.read_bytes())
+    moved = attach_data(problem, str(raw["root"]), copy_to=store)
+    assert moved["data"]["source"] != first
+    assert moved["data"]["export"]["inputs"] is None
+    start = recipe_from(moved)["export"]
+    assert start["inputs"].startswith(moved["data"]["source"])
