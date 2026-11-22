@@ -547,10 +547,22 @@ def save_samples(
             predicted = model(image.unsqueeze(0)).argmax(dim=1)[0]
         target = np.asarray(item[part.names[1]]).astype(np.int64)
         label = f"検証用の {item['id']}"
+
+        # 3 つとも書けるかを先に確かめ, 書けない件は 1 つも書かない (入力
+        # だけの半端な見本を残さないように)
+        shown = values[predicted.numpy()]
+        reason = (sample_problem("image", image.numpy())
+                  or sample_problem("mask", shown)
+                  or sample_problem("mask", target))
+        if reason is not None:
+            experiment.logger.warning(
+                f"見本 valid_{index} ({label}) を書きません: {reason}"
+            )
+            continue
         save_sample(experiment, f"valid_{index}_input", image.numpy(),
                     kind="image", split="valid", caption=f"{label} の入力")
-        save_sample(experiment, f"valid_{index}_predicted",
-                    values[predicted.numpy()], kind="mask", split="valid",
+        save_sample(experiment, f"valid_{index}_predicted", shown,
+                    kind="mask", split="valid",
                     caption=f"{label} の予測", classes=classes)
         save_sample(experiment, f"valid_{index}_target", target,
                     kind="mask", split="valid", caption=f"{label} の正解",
@@ -1032,9 +1044,20 @@ def save_samples(
             predicted = model(points.unsqueeze(0))[0]
         convention = cloud_convention(part, dataset, index)
         label = f"検証用の {part.items.rows.iloc[index]['id']}"
-        for name, text, value in (("input", "入力の点", points),
-                                  ("predicted", "予測", predicted),
-                                  ("target", "正解", target)):
+
+        # 3 つとも書けるかを先に確かめ, 書けない件は 1 つも書かない
+        clouds = (("input", "入力の点", points),
+                  ("predicted", "予測", predicted), ("target", "正解", target))
+        reason = next((problem for problem in (
+            sample_problem("point_cloud", value.numpy())
+            for _, _, value in clouds
+        ) if problem is not None), None)
+        if reason is not None:
+            experiment.logger.warning(
+                f"見本 valid_{index} ({label}) を書きません: {reason}"
+            )
+            continue
+        for name, text, value in clouds:
             save_sample(experiment, f"valid_{index}_{name}", value.numpy(),
                         kind="point_cloud", split="valid",
                         caption=f"{label} の{text}",
@@ -1045,6 +1068,44 @@ $baseline_comment
 
 # 学習の流れ (データセット, モデル, 学習, task.yaml, 評価)
 ITEMS_MAIN = '''
+
+def sample_problem(kind: str, value: np.ndarray) -> Optional[str]:
+    """
+    見本の値が ML-Found の save_sample で書けるかを確かめる関数
+
+    Parameters
+    ----------
+    kind: str
+        見本の種類 (image, mask, point_cloud)
+    value: np.ndarray
+        値
+
+    Returns
+    ----------
+    reason: Optional[str]
+        書けない理由 (書けるなら None)
+    """
+    # 画像は (チャンネル, 高さ, 幅) か (高さ, 幅) の有限の値, 領域は (高さ,
+    # 幅) の 0 から 255 の整数, 点群は (点の数, 3) の有限の座標
+    array = np.asarray(value)
+    reason = None
+    if kind == "image" and (array.ndim not in (2, 3)
+                            or not np.isfinite(array).all()):
+        reason = "画像の形か値が書けません (有限でない値があるなど)"
+    elif kind == "mask" and (
+        array.ndim != 2 or array.size == 0
+        or not np.issubdtype(array.dtype, np.integer)
+        or array.min() < 0 or array.max() > 255
+    ):
+        reason = ("領域の値が 0 から 255 の整数でないので, 見本の PNG に"
+                  "書けません")
+    elif kind == "point_cloud" and (
+        array.ndim != 2 or array.shape[-1] != 3
+        or not np.isfinite(array).all()
+    ):
+        reason = "点群の形が (点の数, 3) でないか, 有限でない座標があります"
+
+    return reason
 
 def entry_names(dataset: ItemDataset) -> tuple[str, str]:
     """
