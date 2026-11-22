@@ -1353,3 +1353,35 @@ def test_data_not_dict(tmp_path: Path, value: Any) -> None:
         with pytest.raises(ValueError, match="辞書"):
             call()
     assert not (tmp_path / "project").exists()
+
+
+def test_public_copy_name_and_key(tmp_path: Path) -> None:
+    """
+    写しの名前の形 (COPY_NAME) と分析の結果の印 (inspect_key) が公開の口
+    から取れ, 写しと結果の印に合うことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 公開の口は中の名前と同じもの
+    import ml_quest
+
+    assert ml_quest.COPY_NAME is data_module.COPY_NAME
+    assert ml_quest.inspect_key is data_module.inspect_key
+    assert {"COPY_NAME", "inspect_key"} <= set(ml_quest.__all__)
+
+    # 写しのサブディレクトリの名前は COPY_NAME の形で, 結果の key と同じ印
+    pytest.importorskip("ml_eda")
+    source = tmp_path / "sales.csv"
+    source.write_text("a,b\n1,2\n3,4\n", encoding="utf-8")
+    problem = attach_data(example_problem("総菜の作る量"), str(source),
+                          copy_to=str(tmp_path / "copies"))
+    copied = Path(problem["data"]["source"])
+    assert ml_quest.COPY_NAME.fullmatch(copied.parent.name)
+    assert inspect_data(problem)["key"] == ml_quest.inspect_key(problem)
