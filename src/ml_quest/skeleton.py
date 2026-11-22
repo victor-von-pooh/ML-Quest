@@ -1153,8 +1153,8 @@ def policy_message(problem: dict) -> Optional[str]:
             "方策の骨組みは, 最良を選ぶ指標が"
             f"{choice_label(METRICS, 'reward', problem)}か"
             f"{choice_label(METRICS, 'loss', problem)}の場合だけです (今は"
-            f"{choice_label(METRICS, metric, problem)}. 方策の損失は評価の"
-            "エピソードの報酬の和の平均の符号を反転した値です)"
+            f"{choice_label(METRICS, metric, problem)}. 方策の報酬は評価の"
+            "エピソードの報酬の和の平均, 損失はその符号を反転した値です)"
         )
 
     return message

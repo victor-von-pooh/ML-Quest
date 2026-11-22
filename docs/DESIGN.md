@@ -207,7 +207,7 @@ origin: /work/problems/sozai/problem.yaml # 元の問題の設定 (写しだけ�
 | 作る | `loss` (小さい). 画像は `fid` (小さい) も |
 | 並べる | `recall_at_k` (大きい), `ndcg` (大きい), `loss` (小さい) |
 | まとめる | `silhouette` (大きい), `loss` (小さい) |
-| 効果を見積もる | `qini` (大きい), `loss` (小さい) |
+| 効果を見積もる | `qini` (大きい), `loss` (小さい) (方策かを答える前は `reward` も先頭に出る) |
 | 効果を見積もるで方策 | `reward` 評価のエピソードの報酬の和の平均 (大きい. 方策の既定), `loss` 報酬の和の平均の符号を反転した値 (小さい), `qini` (大きい) |
 | 全て | `other` その他 (名前 `evaluation.name` と向き `evaluation.better` を書く) |
 
