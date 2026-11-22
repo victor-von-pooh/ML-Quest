@@ -1,6 +1,8 @@
 from ml_quest.bridge import apply_recipe, recipe_from, resolve_choice
 from ml_quest.check import check, is_column_part, is_items_part, is_ready
-from ml_quest.data import attach_data, inspect_data, prune_copies
+from ml_quest.data import (
+    COPY_NAME, attach_data, inspect_data, inspect_key, prune_copies
+)
 from ml_quest.examples import EXAMPLES, example_problem
 from ml_quest.handoff import describe, handoff, problem_origin
 from ml_quest.problem import (
@@ -17,14 +19,15 @@ from ml_quest.skeleton import (
 )
 
 __all__ = [
-    "BASELINE_TYPES", "EXAMPLES", "FEATURES", "FORMAT_VERSION",
+    "BASELINE_TYPES", "COPY_NAME", "EXAMPLES", "FEATURES", "FORMAT_VERSION",
     "LEGACY_KEYS", "METHODS", "METRICS", "OUTPUTS", "PART", "QUESTIONS",
     "ROLES", "SECTIONS", "SPLITS", "TARGET_KINDS", "TARGET_SOURCES", "TASKS",
     "UNITS", "answer",
     "apply_recipe", "attach_data", "check", "describe", "example_problem",
-    "get_value", "handoff", "inspect_data", "is_column_part", "is_items_part",
-    "is_ready", "load_problem", "make_project", "new_problem",
-    "open_errors", "problem_origin", "project_error", "prune_copies",
-    "questions", "read_columns", "recipe_from", "record_project",
-    "required_features", "resolve_choice", "save_problem", "upgrade_problem"
+    "get_value", "handoff", "inspect_data", "inspect_key", "is_column_part",
+    "is_items_part", "is_ready", "load_problem", "make_project",
+    "new_problem", "open_errors", "problem_origin", "project_error",
+    "prune_copies", "questions", "read_columns", "recipe_from",
+    "record_project", "required_features", "resolve_choice", "save_problem",
+    "upgrade_problem"
 ]

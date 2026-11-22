@@ -52,11 +52,13 @@ save_problem(problem, "/work/problem.yaml")
 手元のデータは, 課題, 指標, 分解, 決めること (1 から 4) に答えた後, 機械学習の受け持ち (5) で入れる. 写し先を渡すとデータを写し, 写した場所と元の場所と ML-EDA の読み方を持つ.
 
 ```python
-from ml_quest import answer, attach_data, inspect_data
+from ml_quest import COPY_NAME, answer, attach_data, inspect_data, inspect_key
 
 problem = attach_data(problem, "/data/sozai.csv", copy_to="/work/problem/data")   # 写して (写し先は絶対パス), 場所, 読み方, 列の名前
 problem = answer(problem, "action.current", {"type": "lag", "periods": 7})   # 今のやり方 (前の週の同じ曜日と同じ)
 found = inspect_data(problem)    # 概要, 答えの候補, 確かめ, 今のやり方の損 (指標の今の値の候補)
+found["key"] == inspect_key(problem)   # 覚えておいた結果が今の問題の設定とデータのものか (変われば False)
+COPY_NAME.fullmatch("5a75d2e92f54")    # attach_data が作る写しのサブディレクトリの名前の形 (12 桁の 16 進)
 ```
 
 データの分析の段階とつなぐ部品 (全体のシステムで使う):
