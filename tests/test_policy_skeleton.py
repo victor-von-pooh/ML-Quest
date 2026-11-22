@@ -149,7 +149,10 @@ def test_policy_project(tmp_path: Path) -> None:
     readme = (project / "README.md").read_text(encoding="utf-8")
     for words in ("`CartPole-v1`", "設備の責任者", "policy/",
                   "`valid/reward` (評価のエピソードの報酬の和の平均. 大きい",
-                  "guarded_episodes", "データの分析の段階は無い"):
+                  "guarded_episodes", "データの分析の段階は無い",
+                  "ML-ModelControl (`modelcontrol`)",
+                  "全結合と Tanh を 2 段と, 行動の数の全結合",
+                  "既にある定義は書き直さない"):
         assert words in readme, words
     assert "env.py" not in readme
 
@@ -324,8 +327,8 @@ def test_policy_config_errors(tmp_path: Path) -> None:
 
 def test_policy_definition_errors(tmp_path: Path) -> None:
     """
-    方策の頭の定義の誤り (読めない, 出力が 2 つ, 行動の数と違う) が, 出力先
-    を作る前に止まることを確かめる関数 (ML-Found, ML-ModelControl,
+    方策の頭の定義の誤り (ノードと出力が無い, 出力が 2 つ, 行動の数と違う,
+    観測を入れられない) が, 出力先を作る前に止まることを確かめる関数 (ML-Found, ML-ModelControl,
     Gymnasium が無ければ飛ばす)
 
     Parameters
@@ -346,11 +349,16 @@ def test_policy_definition_errors(tmp_path: Path) -> None:
     linear = {"unit": "nn.Linear", "inputs": "x",
               "params": {"in_features": 4, "out_features": 3}}
     cases = (
-        ({"inputs": {"x": {"shape": [1, 4]}}, "nodes": {}}, "誤り"),
+        ({"inputs": {"x": {"shape": [1, 4]}}, "nodes": {}},
+         "outputs に 1 つ以上の出力を書いてください"),
         ({"inputs": {"x": {"shape": [1, 4]}}, "nodes": {"fc": linear},
           "outputs": {"a": "fc", "b": "fc"}}, "1 つずつ"),
         ({"inputs": {"x": {"shape": [1, 4]}}, "nodes": {"fc": linear},
           "outputs": {"a": "fc"}}, "行動の数 2"),
+        ({"inputs": {"x": {"shape": [1, 4]}},
+          "nodes": {"fc": {**linear, "params": {"in_features": 5,
+                                                 "out_features": 2}}},
+          "outputs": {"a": "fc"}}, "入力の形を (1, 4) に"),
     )
     for definition, words in cases:
         (project / "models" / "policy.yaml").write_text(
@@ -360,6 +368,7 @@ def test_policy_definition_errors(tmp_path: Path) -> None:
                               capture_output=True, text=True, timeout=600)
         assert done.returncode == 1, done.stderr[-2000:]
         assert "定義に誤りがあります" in done.stdout, done.stdout
+        assert "「次にすること」の 3" in done.stdout
         assert words in done.stdout, done.stdout
         assert "Traceback" not in done.stderr
     assert not (project / "outputs").exists()

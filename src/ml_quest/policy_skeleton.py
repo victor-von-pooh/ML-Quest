@@ -481,7 +481,8 @@ def definition_errors(spec: Path, args: dict) -> list[str]:
             output = model(torch.zeros(1, args["obs_dim"]))
     except Exception as error:
         errors.append(f"観測 (要素 {args['obs_dim']}) を入れられません "
-                      f"({type(error).__name__}: {error})")
+                      f"({type(error).__name__}: {error}). 定義の入力の形"
+                      f"を (1, {args['obs_dim']}) にしてください")
         return errors
     if tuple(output.shape) != (1, args["action_dim"]):
         errors.append(f"出力の形 {tuple(output.shape)} が (バッチ, 行動の"
@@ -517,7 +518,9 @@ def policy_definition(cfg: Any, args: dict) -> Optional[Path]:
         print(f"{spec} に観測と行動の空間から既定の定義を書きました")
     errors = definition_errors(spec, args)
     if errors:
-        print(f"{spec} の定義に誤りがあります. 直してください")
+        print(f"{spec} の定義に誤りがあります. README の「次にすること」"
+              "の 3 で, ML-CreateArchitecture で開いて直すか, ファイルを"
+              "消すと次の学習で既定の定義を書き直します")
         for message in errors:
             print(f"- {message}")
         return None
@@ -1323,9 +1326,9 @@ def policy_readme(problem: dict, stages: dict) -> str:
     approver = one_line(policy["approver"]) or "承認する人"
     lines += [
         "", "## 次にすること", "",
-        "学習する環境には ML-Found と Gymnasium (ML-Found の追加の依存 `rl`)"
-        " を入れる (config の `requires` で足りなければ入れ方を示して止まる)"
-        ". データの分析の段階は無い (行動の結果は環境とのやり取りで集める).",
+        "学習する環境には ML-Found, Gymnasium (ML-Found の追加の依存 `rl`)"
+        ", ML-ModelControl (`modelcontrol`) を入れる (config の `requires` "
+        "で足りなければ入れ方を示して止まる). データの分析の段階は無い (行動の結果は環境とのやり取りで集める).",
         "",
         environment,
         "2. **守り**: config の `guards` に, 問題の設定の守り (文) を観測と"
@@ -1338,9 +1341,14 @@ def policy_readme(problem: dict, stages: dict) -> str:
         f"`{policy['safety_key']}` に 0 より大きい値を入れた歩で数える",
         "3. **学習** (ML-Found, ML-Dashboard): `python train.py`. 方策の"
         "頭 (観測から行動のスコアか平均) は ML-ModelControl の定義 "
-        "`models/policy.yaml` (config の `model.spec`) から組み立てる. 無けれ"
-        "ば最初の学習で観測と行動の空間から既定の定義 (全結合 2 層) を書くの"
-        "で, ML-CreateArchitecture で開いて直せる. 価値の関数は `model.py` "
+        "`models/policy.yaml` (config の `model.spec`) から組み立てる. 1 回"
+        "目の `python train.py` で, 定義が無ければ観測と行動の空間から既定の"
+        "定義 (全結合と Tanh を 2 段と, 行動の数の全結合) を書く. 直すなら "
+        "ML-CreateArchitecture で開いて同じ場所に保存し, もう一度学習する "
+        "(既にある定義は書き直さない. 消すと次の学習で既定の定義を書き直す)"
+        ". 定義は入力 (観測) と出力 (行動) を 1 つずつにし, (1, 観測の要素の"
+        "数) の観測から (1, 行動の数) の出力を出す (違えば学習の前に止まる)"
+        ". 価値の関数は `model.py` "
         "の `PolicyNet` (印 TODO). 学習の方法は config "
         "の `algorithm` (`auto` は番号で選ぶ行動なら REINFORCE の "
         "`ReinforceStep`, 連続の行動なら `ActorCriticStep`). 検証用の "
