@@ -23,7 +23,8 @@ from ml_quest.data import (
     inspect_key, items_message
 )
 from ml_quest.generate_skeleton import (
-    GENERATE_LIBRARIES, generate_config, generate_readme, generate_script
+    FID_LIBRARIES, FID_MONITOR, GENERATE_LIBRARIES, generate_config,
+    generate_readme, generate_script
 )
 from ml_quest.handoff import build_stages, describe, export_stages
 from ml_quest.items_skeleton import (
@@ -1113,23 +1114,24 @@ def generate_message(problem: dict) -> Optional[str]:
     Returns
     ----------
     message: Optional[str]
-        誤りの文 (出力の形が画像でない, 指標が損失でない, 入れたデータが
-        画像のディレクトリでない. 書き出せるなら None)
+        誤りの文 (出力の形が画像でない, 指標が損失か FID でない, 入れた
+        データが画像のディレクトリでない. 書き出せるなら None)
     """
-    # 条件の無い拡散のモデルで, 画像を作り, 損失で選び, 画像を読む
+    # 条件の無い拡散のモデルで, 画像を作り, 損失か FID で選び, 画像を読む
     output = active_value(problem, f"{PART}.output")
     metric = active_value(problem, f"{PART}.evaluation.metric")
     loader = active_value(problem, "data.loader")
     source = get_value(problem, "data.source")
     loss = choice_label(METRICS, "loss", problem)
+    fid = choice_label(METRICS, "fid", problem)
     message = None
     if output != "image":
         message = ("画像の生成の骨組みは, 出力の形が「画像」の場合だけです (今"
                    f"は{choice_label(OUTPUTS, output, problem)})")
-    elif metric not in ("loss", "other"):
-        message = (f"画像の生成の骨組みは, 最良を選ぶ指標が{loss}の場合だけ"
-                   f"です (今は{choice_label(METRICS, metric, problem)}. 作った"
-                   "画像は損失と見本の画像で見ます. FID は数えません)")
+    elif metric not in ("loss", "fid", "other"):
+        message = (f"画像の生成の骨組みは, 最良を選ぶ指標が{loss}か{fid}の"
+                   "場合だけです (今は"
+                   f"{choice_label(METRICS, metric, problem)})")
     elif source and loader != "image_folder":
         message = ("画像の生成の骨組みは, 画像のディレクトリのデータで学びます"
                    f" (入れたデータ {Path(str(source)).name} は画像のディレクト"
@@ -1396,7 +1398,10 @@ def project_files(
             ),
             "configs/default/train.yaml": generate_config(
                 experiment_name(problem, name), stages, "outputs/dataset",
-                requires_text(GENERATE_LIBRARIES, stages)
+                requires_text(GENERATE_LIBRARIES + (
+                    FID_LIBRARIES
+                    if stages["training"]["monitor"] == FID_MONITOR else []
+                ), stages)
             ),
             "train.py": generate_script(problem, literal),
         }
