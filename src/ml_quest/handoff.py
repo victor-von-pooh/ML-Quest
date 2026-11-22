@@ -5,6 +5,7 @@ from ml_quest.check import (
     check, env_id_of, is_column_part, is_generate_part, is_items_part,
     split_errors
 )
+from ml_quest.data import EXPORT_FUNCTIONS
 from ml_quest.problem import (
     DECISION_NAMES, DECISION_OPTIONS, FIELD_NAMES, OPTION_NAMES,
     active_value, data_location, get_value, upgrade_problem
@@ -481,8 +482,13 @@ def items_data(problem: dict) -> dict:
     data: dict = {}
     if not is_items_part(problem):
         return data
+    # 書き出しが正解の種類に合う設定だけ (recipe_from と同じ扱い)
     saved = get_value(problem, "data.export")
-    saved = saved if isinstance(saved, dict) else {}
+    function = EXPORT_FUNCTIONS.get(
+        active_value(problem, f"{PART}.target.kind")
+    )
+    saved = (saved if isinstance(saved, dict)
+             and saved.get("function") == function else {})
     groups = saved.get("groups")
     data = {"split": export_split(saved),
             "groups": dict(groups) if isinstance(groups, dict) and groups
