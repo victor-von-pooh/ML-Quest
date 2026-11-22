@@ -499,7 +499,10 @@ QUESTIONS: list[dict[str, Any]] = [
      "required": True, "when": READY, "title": "重みの名前 (版) は",
      "help": "出どころでの学習済みの重みの名前. 名前ごとに重みが決まる. "
              "例: IMAGENET1K_V1 (torchvision の ImageNet で学んだ重み). "
-             "DEFAULT は一式を作るときの名前に直す"},
+             "DEFAULT と書くと, 一式を作るときの出どころの既定の重みを使い, "
+             "一式にはその版の名前 (IMAGENET1K_V1 など) を残す. 出どころの"
+             "既定が変わると別の重みになるので, 決まった重みを使うなら版"
+             "まで書く"},
     {"id": f"{PART}.ready.sha256", "section": 5, "kind": "text",
      "required": False, "when": READY,
      "title": "重みの hash (SHA-256) は (決めておくなら)",
