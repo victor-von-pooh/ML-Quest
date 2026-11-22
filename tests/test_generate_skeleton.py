@@ -1,4 +1,5 @@
 import ast
+import csv
 import json
 from pathlib import Path
 import subprocess
@@ -22,9 +23,11 @@ SIZE = 8
 # 学習と推論の一式まで通すのに要るもの (CI の train のジョブで入れる)
 TRAINING = ("torch", "ml_found", "ml_modelcontrol", "ml_inference")
 
-# 骨組みを書き換えずに短く学ぶ config の差分 (少ない時刻と繰り返し)
+# 骨組みを書き換えずに短く学ぶ config の差分 (少ない時刻と繰り返し. FID
+# は重みを取らない画素の特徴)
 SHORT = ["trainer.epochs=2", "experiment.device=cpu",
-         "diffusion.train_steps=50", "diffusion.sample_steps=5"]
+         "diffusion.train_steps=50", "diffusion.sample_steps=5",
+         "fid.features=pixels"]
 
 
 def generate_problem() -> dict:
@@ -180,7 +183,7 @@ def denoiser_spec() -> dict:
     return spec
 
 
-def train(project: Path) -> Path:
+def train(project: Path, extra: tuple = ()) -> tuple[Path, str]:
     """
     書き出した骨組みを書き換えずに, 別のプロセスで短く学習する関数
 
@@ -188,21 +191,47 @@ def train(project: Path) -> Path:
     ----------
     project: Path
         プロジェクトのディレクトリ
+    extra: tuple = ()
+        SHORT に足す config の差分
 
     Returns
     ----------
     run: Path
         実験のディレクトリ
+    stdout: str
+        学習のスクリプトの表示
     """
     # config の差分だけを渡す
-    done = subprocess.run([sys.executable, "train.py", *SHORT], cwd=project,
-                          capture_output=True, text=True, timeout=600)
+    done = subprocess.run([sys.executable, "train.py", *SHORT, *extra],
+                          cwd=project, capture_output=True, text=True,
+                          timeout=600)
     assert done.returncode == 0, done.stderr[-2000:]
     runs = sorted((project / "outputs").glob("*/*/*/train.log"))
     assert len(runs) == 1
     run = runs[0].parent
 
-    return run
+    return run, done.stdout
+
+
+def fid_column(run: Path) -> list[str]:
+    """
+    実験の history.csv の valid/fid の列を読む関数
+
+    Parameters
+    ----------
+    run: Path
+        実験のディレクトリ
+
+    Returns
+    ----------
+    values: list[str]
+        エポックの順の valid/fid (検証しないエポックは空)
+    """
+    # エポックごとの行
+    with open(run / "history.csv", encoding="utf-8", newline="") as file:
+        values = [row["valid/fid"] for row in csv.DictReader(file)]
+
+    return values
 
 
 def test_generate_handoff() -> None:
@@ -231,6 +260,12 @@ def test_generate_handoff() -> None:
     assert stages["inference"]["decision"] is None
     assert stages["policy"] is None
 
+    # FID を選んでも書き出せ, 監視は valid/fid
+    fid = answer(problem, f"{PART}.evaluation.metric", "fid")
+    assert project_error(fid) is None
+    assert (handoff(fid)["training"]["monitor"],
+            handoff(fid)["training"]["mode"]) == ("valid/fid", "min")
+
 
 def test_generate_errors(tmp_path: Path) -> None:
     """
@@ -246,12 +281,10 @@ def test_generate_errors(tmp_path: Path) -> None:
     ----------
     None
     """
-    # FID の指標, 画像でない出力の形, 画像のディレクトリでないデータ
-    fid = answer(generate_problem(), f"{PART}.evaluation.metric", "fid")
+    # 画像のディレクトリでないデータ, 画像でない出力の形
     table = generate_problem()
     table["data"] = {"source": str(tmp_path / "a.csv"), "loader": "csv"}
-    cases = [(fid, "「作った画像と本物の分布の近さ (FID"),
-             (table, "画像のディレクトリとして読んでいません")]
+    cases = [(table, "画像のディレクトリとして読んでいません")]
     text = answer(generate_problem(), f"{PART}.target.kind", "text")
     text = answer(text, f"{PART}.output", "text")
     text = answer(text, f"{PART}.evaluation.metric", "loss")
@@ -262,9 +295,8 @@ def test_generate_errors(tmp_path: Path) -> None:
         with pytest.raises(ValueError) as raised:
             make_project(problem, tmp_path / "project")
         assert str(raised.value) == message
-    assert "「検証用の分割での損失 (小さいほど良い)」" in project_error(fid)
-    for raw in ("fid", "loader", "csv)", "image_folder"):
-        assert raw not in project_error(fid) + project_error(table), raw
+    for raw in ("loader", "csv)", "image_folder"):
+        assert raw not in project_error(table), raw
     assert not (tmp_path / "project").exists()
 
 
@@ -335,23 +367,27 @@ def test_generate_project(tmp_path: Path) -> None:
     assert 'ROLE = "generate"' in script and "PlaceholderModel" in script
     assert 'PREDICT = "丸の画像"' in script
 
-    # config: 要る機能, 監視, EMA, データセットとモデルの定義の場所
+    # config: 要る機能, 監視, 検証の間隔, EMA, データセットとモデルの定義の
+    # 場所, FID の特徴
     config = yaml.safe_load((project / "configs" / "default" / "train.yaml")
                             .read_text(encoding="utf-8"))
-    assert config["requires"] == ["eda", "modelcontrol", "inference"]
+    assert config["requires"] == ["eda", "modelcontrol", "inference", "fid"]
     assert (config["trainer"]["monitor"], config["trainer"]["mode"]) == (
         "valid/loss", "min"
     )
+    assert config["trainer"]["valid_every_n_epochs"] == 5
+    assert config["fid"] == {"features": "inception", "dims": 2048}
     assert config["trainer"]["ema"] == {"decay": 0.995}
     assert config["data"]["dataset"] == "outputs/dataset"
     assert config["model"]["spec"] == "models/model.yaml"
     assert config["model"]["placeholder"] is True
     assert config["diffusion"]["train_steps"] == 1000
 
-    # README: データの分析, モデルの入力, FID を数えないこと, 雑音だけの一式
+    # README: データの分析, モデルの入力, FID, 雑音だけの一式
     readme = (project / "README.md").read_text(encoding="utf-8")
-    for words in ("task: none", "data/images", "int64", "FID", "版 5",
-                  "見本", "grayscale", "1 / (1 - decay)"):
+    for words in ("task: none", "data/images", "int64", "`valid/fid`",
+                  "pytorch-fid", "fid.features: pixels", "版 5", "見本",
+                  "grayscale", "1 / (1 - decay)"):
         assert words in readme, words
 
     # 案内どおりの書き出しで, 目的の列の無い画像のデータセット
@@ -382,7 +418,7 @@ def test_generate_placeholder(tmp_path: Path) -> None:
     project = tmp_path / "project"
     make_project(problem, project)
     export(problem, project)
-    run = train(project)
+    run, _ = train(project)
     log = (run / "train.log").read_text(encoding="utf-8")
     assert "仮のモデル (PlaceholderModel) で学習します" in log
     assert "推論の一式を作りません" in log
@@ -390,11 +426,15 @@ def test_generate_placeholder(tmp_path: Path) -> None:
     assert (run / "evaluations" / "test_loss.json").is_file()
     assert (run / "samples" / "generated_0" / "final.png").is_file()
 
+    # FID は検証するエポック (間隔 5 なので最後の 2 だけ) に残る
+    values = fid_column(run)
+    assert values[0] == "" and float(values[1]) > 0
 
-def test_generate_sample_steps(tmp_path: Path) -> None:
+
+def test_generate_fid_monitor(tmp_path: Path) -> None:
     """
-    繰り返しの回数が学習の時刻の数より多い config は, 出力先を作る前に
-    止まることを確かめる関数 (PyTorch と ML-Found が無ければ飛ばす)
+    FID を最良を選ぶ指標にした骨組みが, 検証ごとの valid/fid で最良の
+    モデルを選ぶことを確かめる関数 (PyTorch と ML-Found が無ければ飛ばす)
 
     Parameters
     ----------
@@ -405,23 +445,61 @@ def test_generate_sample_steps(tmp_path: Path) -> None:
     ----------
     None
     """
-    # 時刻 50 に繰り返し 60
+    # FID の監視で, 毎エポック検証する
+    for name in ("torch", "ml_found"):
+        pytest.importorskip(name)
+    problem = answer(attached(tmp_path), f"{PART}.evaluation.metric", "fid")
+    project = tmp_path / "project"
+    make_project(problem, project)
+    config = yaml.safe_load((project / "configs" / "default" / "train.yaml")
+                            .read_text(encoding="utf-8"))
+    assert (config["trainer"]["monitor"], config["trainer"]["mode"]) == (
+        "valid/fid", "min"
+    )
+    export(problem, project)
+    run, stdout = train(project, ("trainer.valid_every_n_epochs=1",))
+
+    # 最良は記録した FID の小さいエポック
+    values = [float(value) for value in fid_column(run)]
+    assert len(values) == 2 and min(values) > 0
+    assert f"ベストの valid/fid: {min(values)}" in stdout
+
+
+def test_generate_sample_steps(tmp_path: Path) -> None:
+    """
+    繰り返しの回数が学習の時刻の数より多い config と, FID の特徴の誤りの
+    config は, 出力先を作る前に止まることを確かめる関数 (PyTorch と
+    ML-Found が無ければ飛ばす)
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 時刻 50 に繰り返し 60 と, FID の特徴の誤り
     for name in ("torch", "ml_found"):
         pytest.importorskip(name)
     problem = attached(tmp_path)
     project = tmp_path / "project"
     make_project(problem, project)
     export(problem, project)
-    done = subprocess.run(
-        [sys.executable, "train.py", "diffusion.train_steps=50",
-         "diffusion.sample_steps=60"],
-        cwd=project, capture_output=True, text=True, timeout=600
-    )
-    assert done.returncode == 1
-    assert "diffusion.sample_steps は 1 から" in done.stdout
-    assert not (project / "outputs").exists() or not any(
-        (project / "outputs").glob("*/*/*/train.log")
-    )
+    cases = [(["diffusion.train_steps=50", "diffusion.sample_steps=60"],
+              "diffusion.sample_steps は 1 から"),
+             (["fid.features=vgg"], "fid.features は inception か pixels")]
+    for overrides, words in cases:
+        done = subprocess.run(
+            [sys.executable, "train.py", *overrides],
+            cwd=project, capture_output=True, text=True, timeout=600
+        )
+        assert done.returncode == 1
+        assert words in done.stdout, done.stdout
+        assert not (project / "outputs").exists() or not any(
+            (project / "outputs").glob("*/*/*/train.log")
+        )
 
 
 def test_generate_training(tmp_path: Path) -> None:
@@ -452,7 +530,7 @@ def test_generate_training(tmp_path: Path) -> None:
     place = Path(record_project(problem, project)["project"]["model_spec"])
     place.write_text(yaml.safe_dump(denoiser_spec(), allow_unicode=True),
                      encoding="utf-8")
-    run = train(project)
+    run, _ = train(project)
 
     # 何の実験か, EMA の重み, テスト用の損失
     task = yaml.safe_load((run / "task.yaml").read_text(encoding="utf-8"))

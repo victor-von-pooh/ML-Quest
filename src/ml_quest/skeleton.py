@@ -1113,23 +1113,24 @@ def generate_message(problem: dict) -> Optional[str]:
     Returns
     ----------
     message: Optional[str]
-        誤りの文 (出力の形が画像でない, 指標が損失でない, 入れたデータが
-        画像のディレクトリでない. 書き出せるなら None)
+        誤りの文 (出力の形が画像でない, 指標が損失か FID でない, 入れた
+        データが画像のディレクトリでない. 書き出せるなら None)
     """
-    # 条件の無い拡散のモデルで, 画像を作り, 損失で選び, 画像を読む
+    # 条件の無い拡散のモデルで, 画像を作り, 損失か FID で選び, 画像を読む
     output = active_value(problem, f"{PART}.output")
     metric = active_value(problem, f"{PART}.evaluation.metric")
     loader = active_value(problem, "data.loader")
     source = get_value(problem, "data.source")
     loss = choice_label(METRICS, "loss", problem)
+    fid = choice_label(METRICS, "fid", problem)
     message = None
     if output != "image":
         message = ("画像の生成の骨組みは, 出力の形が「画像」の場合だけです (今"
                    f"は{choice_label(OUTPUTS, output, problem)})")
-    elif metric not in ("loss", "other"):
-        message = (f"画像の生成の骨組みは, 最良を選ぶ指標が{loss}の場合だけ"
-                   f"です (今は{choice_label(METRICS, metric, problem)}. 作った"
-                   "画像は損失と見本の画像で見ます. FID は数えません)")
+    elif metric not in ("loss", "fid", "other"):
+        message = (f"画像の生成の骨組みは, 最良を選ぶ指標が{loss}か{fid}の"
+                   "場合だけです (今は"
+                   f"{choice_label(METRICS, metric, problem)})")
     elif source and loader != "image_folder":
         message = ("画像の生成の骨組みは, 画像のディレクトリのデータで学びます"
                    f" (入れたデータ {Path(str(source)).name} は画像のディレクト"

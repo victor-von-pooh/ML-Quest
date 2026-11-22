@@ -53,8 +53,10 @@ jobs:
           PY
 
   # 書き出した骨組みを学習と推論の一式まで通すテスト (CPU の PyTorch と,
-  # 骨組みが使う段階のライブラリの main と, 方策の骨組みの Gymnasium). 上のジョブではこれらを入れないので
-  # 飛ばされる. 飛ばしたテストがあれば誤りにする
+  # 骨組みが使う段階のライブラリの main と, 方策の骨組みの Gymnasium と,
+  # 画像の生成の骨組みの FID の pytorch-fid. FID の重みは取らない). 上の
+  # ジョブではこれらを入れないので飛ばされる. 飛ばしたテストがあれば誤りに
+  # する
   train:
     runs-on: ubuntu-latest
     steps:
@@ -69,7 +71,7 @@ jobs:
       - run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -e ".[dev,data]" pyarrow gymnasium \
-            "ml-found @ git+https://github.com/victor-von-pooh/ML-Found.git" \
+            "ml-found[fid] @ git+https://github.com/victor-von-pooh/ML-Found.git" \
             "ml-modelcontrol @ git+https://github.com/victor-von-pooh/ML-ModelControl.git"
           pip install --no-deps \
             "ml-inference @ git+https://github.com/victor-von-pooh/ML-Inference.git"
@@ -78,7 +80,7 @@ jobs:
       # 新しい ML-EDA を要るようになったら, data の ML-EDA の固定を上げる
       - run: |
           pip check
-          python -c "import ml_found, ml_modelcontrol, ml_inference, ml_eda, torch, PIL, pyarrow, gymnasium"
+          python -c "import ml_found, ml_modelcontrol, ml_inference, ml_eda, torch, PIL, pyarrow, gymnasium, pytorch_fid"
       # pipefail で pytest の誤りを止める
       - shell: bash
         run: pytest -q -rs | tee pytest.log

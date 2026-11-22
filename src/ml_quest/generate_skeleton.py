@@ -7,9 +7,10 @@ from ml_quest.problem import active_value
 from ml_quest.questions import PART
 
 # 学習のスクリプトが読み込むライブラリの, ML-Found の登録簿の機能の名前
-# (ml_eda, ml_modelcontrol, ml_inference. config の model.spec の定義が
-# 無いうちは ml_modelcontrol と ml_inference を読まない)
-GENERATE_LIBRARIES = ["eda", "modelcontrol", "inference"]
+# (ml_eda, ml_modelcontrol, ml_inference と, FID の Inception の
+# pytorch-fid. config の model.spec の定義が無いうちは ml_modelcontrol と
+# ml_inference を読まない)
+GENERATE_LIBRARIES = ["eda", "modelcontrol", "inference", "fid"]
 
 # 学習のスクリプトの頭 (読み込みと, 問題の設定から決まる既定値). 答えの
 # 文字は JSON の文字列で埋め込み
@@ -32,8 +33,8 @@ import yaml
 
 from ml_eda import Dataset, load_dataset
 from ml_found import (
-    Experiment, Trainer, load_project_config, save_evaluation, save_sample,
-    start_experiment, write_task
+    Experiment, FrechetInceptionDistance, Trainer, load_project_config,
+    save_evaluation, save_sample, start_experiment, write_task
 )
 
 # このプロジェクトのディレクトリ (ML-Found のプロジェクト)
@@ -57,6 +58,9 @@ EVALUATION_BETTER = {"loss": "lower"}
 # 学習の後に作る見本の件数と, 見比べる検証用の本物の画像の件数
 SAMPLES = 8
 REAL_SAMPLES = 4
+
+# FID の特徴の種類 (config の fid.features)
+FID_FEATURES = ("inception", "pixels")
 '''
 
 # 拡散のモデルの部品, Trainer, 学習の流れ
@@ -107,10 +111,32 @@ class PlaceholderModel(nn.Module):
         return noise
 
 
+class PixelFeatures(nn.Module):
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        """
+        画素をそのまま並べて特徴にする関数 (FID が動くことを重みを取らずに
+        確かめるためのもの)
+
+        Parameters
+        ----------
+        images: torch.Tensor
+            (N, 3, H, W) の [0, 1] の画像
+
+        Returns
+        ----------
+        features: torch.Tensor
+            (N, 3 * H * W) の特徴
+        """
+        # 平らにした画素
+        features = images.flatten(1)
+
+        return features
+
+
 class DiffusionTrainer(Trainer):
     def __init__(
         self, model: nn.Module, experiment: Experiment, inputs: tuple,
-        schedule: torch.Tensor, seed: int
+        schedule: torch.Tensor, real: torch.Tensor, cfg: Any
     ):
         # 親クラスのコンストラクタを呼び出す (step を上書きするので
         # step_fn は None)
@@ -122,8 +148,20 @@ class DiffusionTrainer(Trainer):
         self.inputs = inputs
         self.schedule = schedule
         self.mse = nn.MSELoss()
-        self.seed = seed
+        self.seed = cfg.experiment.seed
         self.generator = torch.Generator()
+
+        # FID の本物の画像 (検証用の分割), 作る繰り返しの回数と種, バッチの
+        # 大きさと, FID を数えるもの (inception は初めて使うときに重みを
+        # 取得)
+        self.real = real
+        self.sample_steps = cfg.diffusion.sample_steps
+        self.sample_seed = cfg.diffusion.sample_seed
+        self.batch_size = cfg.data.batch_size
+        features = PixelFeatures() if cfg.fid.features == "pixels" else None
+        self.fid = FrechetInceptionDistance(
+            feature_model=features, dims=cfg.fid.dims, device=self.device
+        )
 
     def on_epoch_start(self, phase: str) -> None:
         """
@@ -167,6 +205,44 @@ class DiffusionTrainer(Trainer):
         outputs = {"loss": loss}
 
         return outputs
+
+    def on_epoch_end(self, phase: str) -> dict:
+        """
+        検証のときに, 作った画像と検証用の本物の画像の FID を数える関数
+
+        Parameters
+        ----------
+        phase: str
+            train, valid, train_eval のどれか
+
+        Returns
+        ----------
+        metrics: dict
+            検証なら fid (valid/fid として記録. 小さいほど良い). 他は空
+        """
+        # 検証するエポック (trainer.valid_every_n_epochs ごとと最後) だけ
+        if phase != "valid":
+            return {}
+
+        # 本物の特徴は 1 回だけ足して使い回す
+        if not self.fid.has_real:
+            for (images,) in DataLoader(TensorDataset(self.real),
+                                        batch_size=self.batch_size):
+                self.fid.update_real(images)
+
+        # 作った画像は毎回入れ替える. 見本と同じ種と回数で本物と同じ件数を
+        # 作り (始まりの雑音が同じなのでエポックの間で比べられる), FID が
+        # 受け取る 0 から 1 に収める
+        self.fid.reset_fake()
+        noise = start_noise(list(self.real.shape[1:]), len(self.real),
+                            self.sample_seed)
+        for chunk in noise.split(self.batch_size):
+            images = sample(self.eval_model(), self.inputs, self.schedule,
+                            chunk, self.sample_steps)
+            self.fid.update_fake(images.clamp(0, 1))
+        metrics = {"fid": self.fid.compute()}
+
+        return metrics
 
 
 def time_embedding(t: torch.Tensor, width: int) -> torch.Tensor:
@@ -286,10 +362,37 @@ def noise_loss(
     return loss
 
 
+def start_noise(shape: list, count: int, seed: int) -> torch.Tensor:
+    """
+    作る画像の始まりの雑音を引く関数
+
+    Parameters
+    ----------
+    shape: list
+        1 件の形 (チャンネル, 高さ, 幅)
+    count: int
+        作る件数
+    seed: int
+        始まりの雑音の乱数の種
+
+    Returns
+    ----------
+    noise: torch.Tensor
+        (件数, チャンネル, 高さ, 幅) の cpu の雑音
+    """
+    # 推論の一式と同じく, 種の生成器から 1 件ずつ引く (先頭の件は件数に
+    # よらず同じ)
+    generator = torch.Generator().manual_seed(seed)
+    noise = torch.cat([torch.randn((1, *shape), generator=generator)
+                       for _ in range(count)])
+
+    return noise
+
+
 @torch.no_grad()
 def sample(
-    model: nn.Module, inputs: tuple, schedule: torch.Tensor, shape: list,
-    count: int, steps: int, seed: int
+    model: nn.Module, inputs: tuple, schedule: torch.Tensor,
+    noise: torch.Tensor, steps: int
 ) -> torch.Tensor:
     """
     雑音から DDIM のサンプリング (決まった道) で画像を作る関数
@@ -297,32 +400,27 @@ def sample(
     Parameters
     ----------
     model: nn.Module
-        雑音を当てるモデル (cpu)
+        雑音を当てるモデル
     inputs: tuple
         モデルの入力の名前
     schedule: torch.Tensor
         時刻ごとの累積の alpha
-    shape: list
-        1 件の形 (チャンネル, 高さ, 幅)
-    count: int
-        作る件数
+    noise: torch.Tensor
+        (件数, チャンネル, 高さ, 幅) の始まりの雑音 (start_noise)
     steps: int
         繰り返しの回数 (学習の時刻の数以下)
-    seed: int
-        始まりの雑音の乱数の種
 
     Returns
     ----------
     x: torch.Tensor
-        (件数, チャンネル, 高さ, 幅) の作った画像 (データセットの値の尺度)
+        (件数, チャンネル, 高さ, 幅) の作った画像 (モデルのデバイス.
+        データセットの値の尺度)
     """
-    # 始まりの雑音は推論の一式と同じく, 種の生成器から 1 件ずつ引く. 間引
-    # いた時刻 (大きい順) で, 見積もった元の画像から 1 つ前の時刻へ (推論の
-    # 一式の ddim の eta 0 と同じ道)
+    # 雑音をモデルのデバイスへ. 間引いた時刻 (大きい順) で, 見積もった元の
+    # 画像から 1 つ前の時刻へ (推論の一式の ddim の eta 0 と同じ道)
     model.eval()
-    generator = torch.Generator().manual_seed(seed)
-    x = torch.cat([torch.randn((1, *shape), generator=generator)
-                   for _ in range(count)])
+    device = next(model.parameters(), torch.empty(0)).device
+    x = noise.to(device)
     times = torch.linspace(len(schedule) - 1, 0, steps).round().long()
     times = torch.unique_consecutive(times).tolist()
     for index, t in enumerate(times):
@@ -330,7 +428,8 @@ def sample(
         before = (float(schedule[times[index + 1]])
                   if index + 1 < len(times) else 1.0)
         eps = call_model(model, inputs, x,
-                         torch.full((count,), t, dtype=torch.long))
+                         torch.full((len(x),), t, dtype=torch.long,
+                                    device=device))
         x0 = (x - math.sqrt(1 - now) * eps) / math.sqrt(now)
         x = math.sqrt(before) * x0 + math.sqrt(1 - before) * eps
 
@@ -569,8 +668,9 @@ def save_samples(
     """
     # 推論の一式と同じ種と回数で作り, 0 から 1 に収めて画像に
     model = trainer.model.cpu().eval()
-    images = sample(model, trainer.inputs, trainer.schedule, shape, SAMPLES,
-                    cfg.diffusion.sample_steps, cfg.diffusion.sample_seed)
+    noise = start_noise(shape, SAMPLES, cfg.diffusion.sample_seed)
+    images = sample(model, trainer.inputs, trainer.schedule, noise,
+                    cfg.diffusion.sample_steps)
     for index, image in enumerate(images.clamp(0, 1)):
         save_sample(experiment, f"generated_{index}", image.numpy(),
                     kind="image", caption=f"作った画像 {index} (種 "
@@ -669,12 +769,26 @@ def main() -> None:
               "ために, 検証用の割合を 0 より大きくして書き出してください")
         sys.exit(1)
 
+    # 画像 (データセットの 0 から 1 の値のまま学ぶ. 作る画像も同じ尺度).
+    # FID は共分散を求めるので, 検証用の画像が 2 件以上要る
+    x_train = dataset.tensors("train")[0]
+    x_valid = dataset.tensors("valid")[0]
+    shape = list(x_train.shape[1:])
+    if len(x_valid) < 2:
+        print("検証用の画像が 2 件より少ないので FID を数えられません. 検証用"
+              "の割合を大きくして書き出してください")
+        sys.exit(1)
+
     # 繰り返しの回数と, モデルの定義の確かめ (誤りなら出力先を作る前に
     # 止まる)
     if not 1 <= cfg.diffusion.sample_steps <= cfg.diffusion.train_steps:
         print("config の diffusion.sample_steps は 1 から "
               f"diffusion.train_steps ({cfg.diffusion.train_steps}) に"
               f"してください (今は {cfg.diffusion.sample_steps})")
+        sys.exit(1)
+    if cfg.fid.features not in FID_FEATURES:
+        print(f"config の fid.features は {' か '.join(FID_FEATURES)} に"
+              f"してください (今は {cfg.fid.features})")
         sys.exit(1)
     spec = project_spec(cfg)
     errors = spec_errors(spec)
@@ -690,10 +804,7 @@ def main() -> None:
     write_task(experiment, {"role": ROLE, "output": OUTPUT,
                             "what": PREDICT, "method": METHOD})
 
-    # 画像 (データセットの 0 から 1 の値のまま学ぶ. 作る画像も同じ尺度)
-    x_train = dataset.tensors("train")[0]
-    x_valid = dataset.tensors("valid")[0]
-    shape = list(x_train.shape[1:])
+    # 画像の件数と学習と検証の loader
     experiment.logger.info(
         f"問題: {PROBLEM_NAME}. ${predict_log}1 件の画像の形 (チャンネル, "
         f"高さ, 幅): {tuple(shape)}. 学習用 {len(x_train)} 件, 検証用 "
@@ -715,7 +826,7 @@ def main() -> None:
         )
     model = make_model(shape, cfg, spec, base_dir)
     trainer = DiffusionTrainer(model, experiment, noise_inputs(spec),
-                               make_schedule(cfg), cfg.experiment.seed)
+                               make_schedule(cfg), x_valid, cfg)
     trainer.fit(train_loader, valid_loader)
 
     # 実験だけで見直せるように, 問題の設定の写し (元の問題の設定の場所
@@ -775,10 +886,14 @@ optimizer:
 trainer:
   epochs: 30
   grad_clip_norm: 1.0
-  # 問題の設定の「最良を選ぶ指標」(雑音の予測の損失. 検証は毎回同じ時刻と
-  # 雑音で数える)
+  # 問題の設定の「最良を選ぶ指標」(valid/loss は雑音の予測の損失. 検証は
+  # 毎回同じ時刻と雑音で数える. valid/fid は作った画像の FID. どちらも
+  # 小さいほど良い)
   monitor: $monitor
   mode: $mode
+  # 検証するエポックの間隔 (検証のたびに FID を数えるので間を空ける. 予定
+  # の最後のエポックは必ず検証する)
+  valid_every_n_epochs: 5
   # 重みの指数移動平均. 検証, 最良のモデル, final_model.pt はこの重み.
   # 更新の回数 (エポック数 × 1 エポックのバッチ数) が 1 / (1 - decay) (0.995
   # なら 200) より十分多くなるようにする (少ないと初めの重みのまま)
@@ -812,6 +927,17 @@ diffusion:
   # 始まりの雑音の乱数の種
   sample_steps: 50
   sample_seed: 0
+
+fid:
+  # 検証のたびに, 見本と同じ種と回数で検証用の画像と同じ件数を作り, 検証用
+  # の画像との FID を数える. 特徴は inception (pytorch-fid の学習済みの
+  # Inception. 初めて使うときに重み (約 91 MB) を取る) か pixels (画素を
+  # そのまま並べたもの. 重みを取らずに動くことを確かめるだけで, 他の FID
+  # と比べられない)
+  features: inception
+  # Inception の特徴の次元 (64, 192, 768, 2048. 論文などの FID と比べる
+  # のは 2048). FID は件数で偏るので, 比べる FID は同じ件数で数える
+  dims: 2048
 ''')
 
 
@@ -940,13 +1066,22 @@ def generate_readme(
         "し (更新の回数 (エポック数 × 1 エポックのバッチ数) が "
         "1 / (1 - decay) より十分多くなるようにする. 少ないと初めの重みの"
         "ままで, 損失がほとんど動かない), 検証用の "
-        f"`{monitor}` (毎回同じ時刻と雑音で数える) が最も良いモデルを選ぶ. "
-        "結果は `outputs/<実験の名前>/<日付>/<時刻>/` に残る (`task.yaml`, "
+        f"`{monitor}` が最も良いモデルを選ぶ. 検証は "
+        "`trainer.valid_every_n_epochs` (既定 5) ごとと最後のエポックで, "
+        "損失 (`valid/loss`. 毎回同じ時刻と雑音で数える) と, 見本と同じ種と"
+        "回数で検証用の画像と同じ件数を作った FID (`valid/fid`. 作った画像"
+        "と検証用の画像の分布の近さ. 小さいほど良い) を `history.csv` に"
+        "残す. FID の特徴は ML-Found の追加の依存 `fid` (pytorch-fid) の "
+        "Inception で, 初めて使うときに学習済みの重み (約 91 MB) を取る "
+        "(ネットワークの無い計算機には, 一度取った PyTorch のキャッシュを"
+        "写す). FID は件数で偏るので, 比べる FID は同じ件数で数え, 件数は"
+        "特徴の次元 (`fid.dims`. 既定 2048) より多くする (少ないと目安に"
+        "とどまる). `fid.features: pixels` は画素をそのまま特徴にして重みを"
+        "取らずに動くことを確かめるだけのもの. 結果は "
+        "`outputs/<実験の名前>/<日付>/<時刻>/` に残る (`task.yaml`, "
         "テスト用の分割があればテスト用の損失の `evaluations/`, 作った画像 "
-        "8 件と見比べる検証用の本物の画像 4 件の見本 `samples/`). 指標は"
-        "損失と見本の画像で見る (作った画像の良し悪しを 1 つの数にする "
-        "FID は数えない). 損失は今のやり方で数えられないので, 今のやり方"
-        "とは比べない",
+        "8 件と見比べる検証用の本物の画像 4 件の見本 `samples/`). 損失と "
+        "FID は今のやり方で数えられないので, 今のやり方とは比べない",
         "4. **推論** (ML-Inference, ML-Provide): `model.spec` の場所に定義を"
         "置いて学習すると, `train.py` が学習の後に実験の中の `inference/` "
         "に雑音だけの推論の一式 (版 5. データセットを持たず, 件数と種で"
