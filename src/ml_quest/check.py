@@ -185,7 +185,7 @@ def check_shape(problem: dict) -> list[dict]:
         if value is not None and not isinstance(value, str):
             found.append(finding("error", key,
                                  f"{key} は文字列にしてください"))
-    for key in ("data.source", "data.origin"):
+    for key in ("data", "data.source", "data.origin"):
         message = location_message(problem, key)
         if message is not None:
             found.append(finding("error", key, message))
@@ -1024,27 +1024,38 @@ def is_items_part(problem: dict) -> bool:
 
 def location_message(problem: dict, key: str) -> Optional[str]:
     """
-    データの場所 (data.source か data.origin) の型の誤りの文を返す関数
+    手元のデータ (data) と, その場所 (data.source か data.origin) の型の
+    誤りの文を返す関数
 
     Parameters
     ----------
     problem: dict
         問題の設定
     key: str
-        data.source か data.origin
+        data, data.source か data.origin
 
     Returns
     ----------
     message: Optional[str]
-        文字でない場合の誤りの文 (無いか文字なら None)
+        data が辞書でない場合と, 場所が文字でない場合の誤りの文 (無いか
+        合っていれば None)
     """
+    # 手で書いたファイルで, data が辞書でない (場所と読み方を持てない) 場合
+    if key == "data":
+        value = problem.get("data") if isinstance(problem, dict) else None
+        message = None
+        if value is not None and not isinstance(value, dict):
+            message = ("手元のデータの項目は, 場所と読み方の組 (辞書) で"
+                       f"書いてください (今は {value!r})")
+        return message
+
     # 手で書いたファイルで数や並びになった場所 (Path にできない)
     value = get_value(problem, key)
     message = None
     if value is not None and not isinstance(value, str):
         name = "元のデータの場所" if key == "data.origin" else "データの場所"
-        message = (f"{name}は文字の場所 (絶対パス) で書いてください (今は "
-                   f"{value!r})")
+        message = (f"{name}は, ファイルかディレクトリの場所を文字で書いて"
+                   f"ください (今は {value!r})")
 
     return message
 

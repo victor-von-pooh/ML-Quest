@@ -156,7 +156,8 @@ COLLECTS = [
 # シミュレータ
 SIMULATORS = [
     {"value": "mujoco", "label": "MuJoCo (物理のシミュレータ)"},
-    {"value": "other", "label": "その他 (自分で作った環境, 他の道具)"},
+    {"value": "other", "label": "その他 (Gymnasium の環境, 自分で作った環境,"
+     " 他の道具)"},
 ]
 
 # 方策が守りを外れたときの動き (名前は ML-Found の make_guards の fallback)

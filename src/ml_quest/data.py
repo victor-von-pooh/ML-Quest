@@ -1830,7 +1830,7 @@ def analyze_data(problem: dict) -> Optional[dict]:
     # 文字でない場所は読まずに確かめの誤りで返す
     problem = upgrade_problem(problem)
     messages = [(key, location_message(problem, key))
-                for key in ("data.source", "data.origin")]
+                for key in ("data", "data.source", "data.origin")]
     errors = [finding("error", key, message)
               for key, message in messages if message is not None]
     if errors:
