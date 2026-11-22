@@ -641,7 +641,8 @@ def test_content_training(tmp_path: Path, kind: str) -> None:
 def check_spec_weights(project: Path, place: Path, inputs: dict) -> None:
     """
     外部の重みを相対パスで持つ定義でも ML-Found の写しから組み立てて学習
-    でき, 誤りのある定義は実験の出力先を作る前に止まることを確かめる関数
+    でき, 誤りのある定義と空の定義の場所は実験の出力先を作る前に止まる
+    ことを確かめる関数
 
     Parameters
     ----------
@@ -695,6 +696,17 @@ def check_spec_weights(project: Path, place: Path, inputs: dict) -> None:
     )
     assert done.returncode == 1
     assert "定義に誤りがあります" in done.stdout and "repeat" in done.stdout
+    assert set((project / "outputs").glob("*/*/*")) == before
+
+    # 定義の場所が空なら, 型の例外でなく場所を書く案内で止まる
+    done = subprocess.run(
+        [sys.executable, "train.py", "experiment.device=cpu",
+         "model.spec=null"],
+        cwd=project, capture_output=True, text=True, timeout=600
+    )
+    assert done.returncode == 1
+    assert "model.spec に定義の場所を書いてください" in done.stdout
+    assert "Traceback" not in done.stderr
     assert set((project / "outputs").glob("*/*/*")) == before
 
 

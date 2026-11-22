@@ -9,7 +9,7 @@ import yaml
 
 from ml_quest import (
     answer, check, example_problem, make_project, project_error,
-    recipe_from
+    questions, recipe_from
 )
 from ml_quest.policy_skeleton import fallback_value
 
@@ -159,8 +159,9 @@ def test_policy_project(tmp_path: Path) -> None:
 
 def test_policy_loss_metric(tmp_path: Path) -> None:
     """
-    指標に損失 (loss) を選んだ古い方策の問題の設定も, 今まで通り
-    valid/loss を min で監視する骨組みを書き出せることを確かめる関数
+    指標に損失 (loss) を選んだ古い方策の問題の設定も, 選択肢が強化学習の
+    言葉で, 今まで通り valid/loss を min で監視する骨組みを書き出せること
+    を確かめる関数
 
     Parameters
     ----------
@@ -171,8 +172,20 @@ def test_policy_loss_metric(tmp_path: Path) -> None:
     ----------
     None
     """
-    # 誤りが無く, 監視と README の説明が損失の向き
+    # 指標の選択肢の loss は強化学習の言葉で 1 つ (方策でなければ損失)
     problem = policy_problem("CartPole-v1", metric="loss")
+    for value, words in ((True, "評価のエピソードの報酬の和の平均の符号を"
+                                "反転した値"),
+                         (False, "検証用の分割での損失")):
+        items = {item["id"]: item for item in questions(
+            answer(problem, f"{PART}.autonomous", value)
+        )}
+        labels = [choice["label"] for choice
+                  in items[f"{PART}.evaluation.metric"]["choices"]
+                  if choice["value"] == "loss"]
+        assert len(labels) == 1 and labels[0].startswith(words), labels
+
+    # 誤りが無く, 監視と README の説明が損失の向き
     assert [item for item in check(problem) if item["level"] == "error"] == []
     assert project_error(problem) is None
     project = tmp_path / "project"
@@ -243,7 +256,10 @@ def test_policy_errors(tmp_path: Path) -> None:
     uplift = answer(policy_problem(metric="loss"), f"{PART}.autonomous",
                     False)
     assert "「評価のエピソードの報酬の和の平均" in project_error(qini)
-    assert "「検証用の分割での損失" in project_error(qini)
+    assert "「評価のエピソードの報酬の和の平均の符号を反転した値" in (
+        project_error(qini)
+    )
+    assert "検証用の分割での損失" not in project_error(qini)
     assert "今は「効果の順の当たり (Qini" in project_error(qini)
     for problem, words in ((logged, "今ある記録"), (qini, "Qini"),
                            (uplift, "まだ扱えません")):
@@ -297,8 +313,8 @@ def test_policy_approver_lines(tmp_path: Path) -> None:
 
 def test_policy_config_errors(tmp_path: Path) -> None:
     """
-    学習の方法の名前と決めた行動の誤りが, 出力先を作る前に止まることを
-    確かめる関数 (ML-Found と Gymnasium が無ければ飛ばす)
+    学習の方法の名前, 決めた行動, 空の定義の場所の誤りが, 出力先を作る
+    前に止まることを確かめる関数 (ML-Found と Gymnasium が無ければ飛ばす)
 
     Parameters
     ----------
@@ -309,19 +325,22 @@ def test_policy_config_errors(tmp_path: Path) -> None:
     ----------
     None
     """
-    # 知らない方法, 番号で選ぶ行動で決めた行動が無い
+    # 知らない方法, 番号で選ぶ行動で決めた行動が無い, 定義の場所が空
     for name in TRAINING:
         pytest.importorskip(name)
     project = tmp_path / "project"
     make_project(policy_problem("CartPole-v1"), project)
     for override, words in (("algorithm=ppo", "知らない方法"),
                             ("guards.fallback_action=null",
-                             "guards.fallback_action")):
+                             "guards.fallback_action"),
+                            ("model.spec=null",
+                             "model.spec に定義の場所を書いてください")):
         done = subprocess.run([sys.executable, "train.py", override],
                               cwd=project, capture_output=True, text=True,
                               timeout=600)
         assert done.returncode == 1, override
         assert words in done.stdout, done.stdout
+        assert "Traceback" not in done.stderr, done.stderr[-2000:]
     assert not (project / "outputs").exists()
 
 

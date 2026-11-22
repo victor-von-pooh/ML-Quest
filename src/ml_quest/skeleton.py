@@ -308,6 +308,10 @@ def main() -> None:
         print(f"{path} がありません. README の「次にすること」の 1 で, "
               "データセットを書き出してください")
         sys.exit(1)
+    if not cfg.model.spec:
+        print("config の model.spec に定義の場所を書いてください (既定は "
+              "models/model.yaml)")
+        sys.exit(1)
     spec = PROJECT_DIR / cfg.model.spec
     if not spec.is_file():
         print(f"{spec} がありません. README の「次にすること」の 2 で, "
