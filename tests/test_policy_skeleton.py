@@ -204,7 +204,9 @@ def test_policy_errors(tmp_path: Path) -> None:
     logged = answer(policy_problem(), f"{PART}.collect", "log")
     qini = answer(policy_problem(), f"{PART}.evaluation.metric", "qini")
     uplift = answer(policy_problem(), f"{PART}.autonomous", False)
-    for problem, words in ((logged, "今ある記録"), (qini, "qini"),
+    assert "「検証用の分割での損失" in project_error(qini)
+    assert "今は「効果の順の当たり (Qini" in project_error(qini)
+    for problem, words in ((logged, "今ある記録"), (qini, "Qini"),
                            (uplift, "まだ扱えません")):
         message = project_error(problem)
         assert message is not None and words in message, message
@@ -244,7 +246,14 @@ def test_policy_approver_lines(tmp_path: Path) -> None:
     assert config["guards"]["fallback"] == "action"
     assert isinstance(config["guards"], dict)
     assert "fallback" not in config
-    ast.parse((project / "train.py").read_text(encoding="utf-8"))
+    script = (project / "train.py").read_text(encoding="utf-8")
+    ast.parse(script)
+    assert 'APPROVER = "設備の fallback: stop 責任者"' in script
+
+    # README の箇条も 1 行のまま
+    readme = (project / "README.md").read_text(encoding="utf-8")
+    assert "設備の fallback: stop 責任者 が決める" in readme
+    assert "\nfallback: stop" not in readme and "\nguards: null" not in readme
 
 
 def test_policy_config_errors(tmp_path: Path) -> None:

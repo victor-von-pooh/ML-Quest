@@ -15,7 +15,8 @@ from ml_quest.baseline_skeleton import (
     reported_value
 )
 from ml_quest.check import (
-    is_column_part, is_generate_part, is_policy_part, split_errors
+    choice_label, is_column_part, is_generate_part, is_policy_part,
+    split_errors
 )
 from ml_quest.data import (
     ITEMS_KINDS, content_kind, copy_data, dataset_info, inspect_data,
@@ -36,7 +37,7 @@ from ml_quest.policy_skeleton import (
 from ml_quest.problem import (
     active_value, data_location, get_value, set_value, upgrade_problem
 )
-from ml_quest.questions import PART
+from ml_quest.questions import METRICS, OUTPUTS, PART
 
 # 学習のスクリプトの頭 (読み込みと, 問題の設定から決まる既定値). 答えの
 # 文字は, コードを壊さないように JSON の文字列か 1 行のコメントで埋め込み
@@ -1054,8 +1055,8 @@ def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
     if active_value(upgraded, f"{PART}.evaluation.metric") == "other":
         message = ("最良を選ぶ指標がその他の場合は, 骨組みを書き出せません "
                    "(学習のスクリプトがその指標の求め方を知らないため). 候補"
-                   "の指標 (loss など) で書き出し, その指標は学習のスクリプト"
-                   "に足して記録してください")
+                   "の指標 (「検証用の分割での損失」など) で書き出し, その"
+                   "指標は学習のスクリプトに足して記録してください")
         return message, exportable
 
     # 入れたデータセットの版, 受け持ち, 正解の種類
@@ -1083,18 +1084,21 @@ def generate_message(problem: dict) -> Optional[str]:
     output = active_value(problem, f"{PART}.output")
     metric = active_value(problem, f"{PART}.evaluation.metric")
     loader = active_value(problem, "data.loader")
+    source = get_value(problem, "data.source")
+    loss = choice_label(METRICS, "loss", problem)
     message = None
     if output != "image":
-        message = ("画像の生成の骨組みは, 出力の形が画像の場合だけです (今は "
-                   f"{output})")
+        message = ("画像の生成の骨組みは, 出力の形が「画像」の場合だけです (今"
+                   f"は{choice_label(OUTPUTS, output, problem)})")
     elif metric not in ("loss", "other"):
-        message = (f"画像の生成の骨組みは, 最良を選ぶ指標が loss の場合だけ"
-                   f"です (今は {metric}. 作った画像は損失と見本の画像で見"
-                   "ます. FID は数えません)")
-    elif get_value(problem, "data.source") and loader != "image_folder":
-        message = ("画像の生成の骨組みは, 画像のディレクトリ (ML-EDA の "
-                   f"image_folder) のデータで学びます (入れたデータの読み方は "
-                   f"{loader})")
+        message = (f"画像の生成の骨組みは, 最良を選ぶ指標が{loss}の場合だけ"
+                   f"です (今は{choice_label(METRICS, metric, problem)}. 作った"
+                   "画像は損失と見本の画像で見ます. FID は数えません)")
+    elif source and loader != "image_folder":
+        message = ("画像の生成の骨組みは, 画像のディレクトリのデータで学びます"
+                   f" (入れたデータ {Path(str(source)).name} は画像のディレクト"
+                   "リとして読んでいません). 画像を並べたディレクトリを入れて"
+                   "ください")
 
     return message
 
@@ -1124,9 +1128,12 @@ def policy_message(problem: dict) -> Optional[str]:
                    "から方策を学ぶ骨組みはまだありません (行動の結果の集め方"
                    "を, 実際に試すかシミュレータにしてください)")
     elif metric not in ("loss", "other"):
-        message = (f"方策の骨組みは, 最良を選ぶ指標が loss の場合だけです (今"
-                   f"は {metric}. 方策の loss は評価のエピソードの報酬の和の"
-                   "平均の符号を反転した値です)")
+        message = (
+            "方策の骨組みは, 最良を選ぶ指標が"
+            f"{choice_label(METRICS, 'loss', problem)}の場合だけです (今は"
+            f"{choice_label(METRICS, metric, problem)}. 方策の損失は評価の"
+            "エピソードの報酬の和の平均の符号を反転した値です)"
+        )
 
     return message
 

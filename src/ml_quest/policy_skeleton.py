@@ -657,15 +657,20 @@ def main() -> None:
         train_env = make_environment(cfg)
         valid_env = make_environment(cfg)
         guard_env = make_environment(cfg)
-        guards = build_guards(guard_env, cfg)
-        args = model_args(train_env, cfg)
     except MissingRequirementError as error:
         print(error)
         sys.exit(1)
+    try:
+        guards = build_guards(guard_env, cfg)
     except ValueError as error:
         print(f"config の guards を直してください ({error}). 外れたときの"
               "動きが action なら, 番号で選ぶ行動では guards.fallback_action"
               " に決めた行動の番号を書きます")
+        sys.exit(1)
+    try:
+        args = model_args(train_env, cfg)
+    except ValueError as error:
+        print(f"環境の空間を扱えません ({error})")
         sys.exit(1)
     from ml_found.rl import EvaluationLoader, Exploration, RolloutLoader
     algorithm = algorithm_of(train_env, cfg)
@@ -846,6 +851,27 @@ $stop_comment
 ''')
 
 
+def one_line(text: Any) -> Optional[str]:
+    """
+    文の改行と続く空白を, 1 つの空白にする関数
+
+    Parameters
+    ----------
+    text: Any
+        文 (None はそのまま)
+
+    Returns
+    ----------
+    line: Optional[str]
+        1 行の文 (空なら None)
+    """
+    # config のコメント, README の箇条, 一式の metadata を崩さないように
+    line = " ".join(str(text).split()) if text is not None else None
+    line = line or None
+
+    return line
+
+
 def fallback_value(value: Any) -> Any:
     """
     問題の設定の決めた行動を, config に書ける数か数の並びにする関数
@@ -930,7 +956,9 @@ def policy_script(problem: dict, literal: Callable) -> str:
         name=literal(str(problem.get("name", ""))),
         predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         method=literal(active_value(problem, f"{PART}.method")),
-        approver=literal(active_value(problem, f"{PART}.policy.approver")),
+        approver=literal(one_line(
+            active_value(problem, f"{PART}.policy.approver")
+        )),
         action_limits=literal(
             active_value(problem, f"{PART}.policy.action_limits")
         ),
@@ -1008,8 +1036,7 @@ def policy_config(
         monitor=training["monitor"], mode=training["mode"],
         env_id=json.dumps(policy["env_id"]) if policy["env_id"] else "null",
         safety_key=json.dumps(policy["safety_key"], ensure_ascii=False),
-        approver=(f" {' '.join(str(approver).split())} が" if approver
-                  else "人が"),
+        approver=f" {one_line(approver)} が" if approver else "人が",
         limits_comment=yaml_comment("行動の上限", policy["action_limits"])
         + "\n  # TODO: 連続の行動は action_low と action_high, 番号で選ぶ"
         "行動は allowed_actions",
@@ -1066,7 +1093,7 @@ def policy_readme(problem: dict, stages: dict) -> str:
              "ML-Quest の問題の設定 (`problem.yaml`) から書き出した, "
              "ML-Found のプロジェクトの骨組み (Gymnasium の形の環境で方策を"
              "学び, 守りと一緒に書き出す).", "", "## 課題から行動まで", ""]
-    lines += [f"- {sentence}" for sentence in describe(problem)]
+    lines += [f"- {one_line(sentence)}" for sentence in describe(problem)]
 
     # 1 から 4. 環境, 守り, 学習, 推論
     environment = (
@@ -1081,7 +1108,7 @@ def policy_readme(problem: dict, stages: dict) -> str:
         "ときの損に気を付ける. Gymnasium に登録した環境なら, config の "
         "`env.id` にその名前を書けば `env.py` は使わない"
     )
-    approver = policy["approver"] or "承認する人"
+    approver = one_line(policy["approver"]) or "承認する人"
     lines += [
         "", "## 次にすること", "",
         "学習する環境には ML-Found と Gymnasium (ML-Found の追加の依存 `rl`)"
@@ -1091,8 +1118,8 @@ def policy_readme(problem: dict, stages: dict) -> str:
         environment,
         "2. **守り**: config の `guards` に, 問題の設定の守り (文) を観測と"
         "行動の空間に合わせた数の並びで書く (行動の上限: "
-        f"{policy['action_limits'] or '答えなし'}. 止める条件: "
-        f"{policy['stop'] or '答えなし'}). 外れたときの動きは "
+        f"{one_line(policy['action_limits']) or '答えなし'}. 止める条件: "
+        f"{one_line(policy['stop']) or '答えなし'}). 外れたときの動きは "
         f"`{policy['fallback'] or 'stop'}` "
         f"({names.get(str(policy['fallback']), '止める')}). 範囲と方策を"
         f"使ってよいかは {approver} が決める. 安全の違反は環境が info の "

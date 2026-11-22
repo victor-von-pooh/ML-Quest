@@ -378,6 +378,20 @@ def test_each_role_checks() -> None:
         answer(generate, "ml.parts.0.target.kind", "column")
     )
 
+    # 誤りの文は画面の選択肢と同じ言葉
+    found = {item["id"]: item["message"] for item in check(
+        answer(rank, "ml.parts.0.output", "class")
+    )}
+    assert found["ml.parts.0.output"] == (
+        "「クラス」は受け持ち「並べる」に合いません"
+    )
+    found = {item["id"]: item["message"] for item in check(
+        answer(rank, "ml.parts.0.evaluation.metric", "mae")
+    )}
+    assert "指標「外れの大きさの平均 (平均絶対誤差" in found[
+        "ml.parts.0.evaluation.metric"
+    ]
+
     # 受け持ちを答えるまで型ごとの問いは出ず, 知らない値は形の誤り
     fresh = answer(new_problem("試し"), "ml.use", True)
     assert "ml.parts.0.role" in errors_of(fresh)

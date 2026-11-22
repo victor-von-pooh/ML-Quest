@@ -250,7 +250,8 @@ def test_generate_errors(tmp_path: Path) -> None:
     fid = answer(generate_problem(), f"{PART}.evaluation.metric", "fid")
     table = generate_problem()
     table["data"] = {"source": str(tmp_path / "a.csv"), "loader": "csv"}
-    cases = [(fid, "FID"), (table, "image_folder")]
+    cases = [(fid, "「作った画像と本物の分布の近さ (FID"),
+             (table, "画像のディレクトリとして読んでいません")]
     text = answer(generate_problem(), f"{PART}.target.kind", "text")
     text = answer(text, f"{PART}.output", "text")
     text = answer(text, f"{PART}.evaluation.metric", "loss")
@@ -261,6 +262,9 @@ def test_generate_errors(tmp_path: Path) -> None:
         with pytest.raises(ValueError) as raised:
             make_project(problem, tmp_path / "project")
         assert str(raised.value) == message
+    assert "「検証用の分割での損失 (小さいほど良い)」" in project_error(fid)
+    for raw in ("fid", "loader", "csv)", "image_folder"):
+        assert raw not in project_error(fid) + project_error(table), raw
     assert not (tmp_path / "project").exists()
 
 
