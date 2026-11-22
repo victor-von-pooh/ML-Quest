@@ -14,7 +14,9 @@ from ml_quest.baseline_skeleton import (
     predict_log, reported_code, reported_hint, reported_sentence,
     reported_value
 )
-from ml_quest.check import is_column_part, is_generate_part, split_errors
+from ml_quest.check import (
+    is_column_part, is_generate_part, is_policy_part, split_errors
+)
 from ml_quest.data import (
     ITEMS_KINDS, content_kind, copy_data, dataset_info, inspect_data,
     inspect_key, items_message
@@ -26,6 +28,10 @@ from ml_quest.handoff import build_stages, describe, export_stages
 from ml_quest.items_skeleton import (
     ITEMS_LIBRARIES, dataset_place, items_config, items_name, items_readme,
     items_script
+)
+from ml_quest.policy_skeleton import (
+    POLICY_LIBRARIES, POLICY_MODEL, policy_config, policy_env, policy_name,
+    policy_readme, policy_script
 )
 from ml_quest.problem import (
     active_value, data_location, get_value, set_value, upgrade_problem
@@ -760,6 +766,7 @@ def experiment_name(problem: dict, name: Optional[str]) -> str:
     target = active_value(problem, f"{PART}.target.column")
     task = active_value(problem, f"{PART}.task")
     default = (f"{target}_{task}" if is_column_part(problem)
+               else policy_name(problem) if is_policy_part(problem)
                else items_name(problem))
     raw = name or default
     text = re.sub(r"[^\w-]+", "_", raw).strip("_") or "problem"
@@ -1024,18 +1031,22 @@ def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
         message = str(error)
         return message, exportable
 
-    # 列の予測と, 予測するの画像の領域と点群と, 作るの画像だけ
+    # 列の予測と, 予測するの画像の領域と点群と, 作るの画像と, 効果を
+    # 見積もるの方策だけ
     generate = is_generate_part(upgraded)
+    policy = is_policy_part(upgraded)
     if not is_column_part(upgraded) and skeleton_kind(upgraded) is None and (
-        not generate
+        not generate and not policy
     ):
         message = ("骨組みを書き出せるのは, 予測するで正解の種類が表の列, "
-                   "画像の領域, 点群の場合と, 作るで正解の種類が画像の場合"
-                   "だけです (並べる, まとめる, 効果を見積もるの受け持ちと, "
-                   "他の正解の種類はまだ扱えません)")
+                   "画像の領域, 点群の場合と, 作るで正解の種類が画像の場合と,"
+                   " 効果を見積もるで続けて行動を選ぶ方策の場合だけです (並べ"
+                   "る, まとめるの受け持ちと, 方策でない効果の見積もりと, 他"
+                   "の正解の種類はまだ扱えません)")
         return message, exportable
-    if generate:
-        message = generate_message(upgraded)
+    if generate or policy:
+        message = (generate_message(upgraded) if generate
+                   else policy_message(upgraded))
         if message is not None:
             return message, exportable
 
@@ -1084,6 +1095,38 @@ def generate_message(problem: dict) -> Optional[str]:
         message = ("画像の生成の骨組みは, 画像のディレクトリ (ML-EDA の "
                    f"image_folder) のデータで学びます (入れたデータの読み方は "
                    f"{loader})")
+
+    return message
+
+
+def policy_message(problem: dict) -> Optional[str]:
+    """
+    方策の骨組みを書き出せない理由を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 効果を見積もるで方策)
+
+    Returns
+    ----------
+    message: Optional[str]
+        誤りの文 (今ある記録から学ぶ, 指標が損失でない. 書き出せるなら
+        None)
+    """
+    # 環境とやり取りして学び, 評価の報酬 (valid/loss はその符号の反転) で
+    # 選ぶ
+    collect = active_value(problem, f"{PART}.collect")
+    metric = active_value(problem, f"{PART}.evaluation.metric")
+    message = None
+    if collect == "log":
+        message = ("方策の骨組みは, 環境で行動を試して学びます. 今ある記録"
+                   "から方策を学ぶ骨組みはまだありません (行動の結果の集め方"
+                   "を, 実際に試すかシミュレータにしてください)")
+    elif metric not in ("loss", "other"):
+        message = (f"方策の骨組みは, 最良を選ぶ指標が loss の場合だけです (今"
+                   f"は {metric}. 方策の loss は評価のエピソードの報酬の和の"
+                   "平均の符号を反転した値です)")
 
     return message
 
@@ -1270,6 +1313,22 @@ def project_files(
     files: dict
         README.md, configs/default/train.yaml, train.py の中身
     """
+    # 方策 (環境の登録名が無ければ自作の環境の雛形も)
+    if is_policy_part(problem):
+        files = {
+            "README.md": policy_readme(problem, stages),
+            "configs/default/train.yaml": policy_config(
+                problem, experiment_name(problem, name), stages,
+                requires_text(POLICY_LIBRARIES, stages)
+            ),
+            "train.py": policy_script(problem, literal),
+            "model.py": POLICY_MODEL,
+        }
+        env = policy_env(stages)
+        if env is not None:
+            files["env.py"] = env
+        return files
+
     # 画像の生成 (入れた画像のディレクトリは data に写し, データセットは
     # データの分析の段階が outputs/dataset に書き出す)
     if is_generate_part(problem):
