@@ -17,7 +17,7 @@ from ml_quest.policy_skeleton import fallback_value
 PART = "ml.parts.0"
 
 # 学習と方策の一式まで通すのに要るもの (CI の train のジョブで入れる)
-TRAINING = ("torch", "ml_found", "gymnasium")
+TRAINING = ("torch", "ml_found", "ml_modelcontrol", "gymnasium")
 
 # 骨組みを書き換えずに短く学ぶ config の差分 (少ないエピソードと歩数)
 SHORT = ["trainer.epochs=2", "rollout.episodes=4", "rollout.batch_episodes=2",
@@ -124,7 +124,9 @@ def test_policy_project(tmp_path: Path) -> None:
     # config: 要る機能, 監視, 環境, 違反の信号, 守り
     config = yaml.safe_load((project / "configs" / "default" / "train.yaml")
                             .read_text(encoding="utf-8"))
-    assert config["requires"] == ["rl"]
+    assert config["requires"] == ["rl", "modelcontrol"]
+    assert config["model"]["spec"] == "models/policy.yaml"
+    assert not (project / "models" / "policy.yaml").exists()
     assert config["experiment"]["name"] == "CartPole-v1_policy"
     assert (config["trainer"]["monitor"], config["trainer"]["mode"]) == (
         "valid/reward", "max"
@@ -320,6 +322,49 @@ def test_policy_config_errors(tmp_path: Path) -> None:
     assert not (project / "outputs").exists()
 
 
+def test_policy_definition_errors(tmp_path: Path) -> None:
+    """
+    方策の頭の定義の誤り (読めない, 出力が 2 つ, 行動の数と違う) が, 出力先
+    を作る前に止まることを確かめる関数 (ML-Found, ML-ModelControl,
+    Gymnasium が無ければ飛ばす)
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # CartPole は観測 4, 行動 2
+    for name in TRAINING:
+        pytest.importorskip(name)
+    project = tmp_path / "project"
+    make_project(policy_problem("CartPole-v1"), project)
+    (project / "models").mkdir(exist_ok=True)
+    linear = {"unit": "nn.Linear", "inputs": "x",
+              "params": {"in_features": 4, "out_features": 3}}
+    cases = (
+        ({"inputs": {"x": {"shape": [1, 4]}}, "nodes": {}}, "誤り"),
+        ({"inputs": {"x": {"shape": [1, 4]}}, "nodes": {"fc": linear},
+          "outputs": {"a": "fc", "b": "fc"}}, "1 つずつ"),
+        ({"inputs": {"x": {"shape": [1, 4]}}, "nodes": {"fc": linear},
+          "outputs": {"a": "fc"}}, "行動の数 2"),
+    )
+    for definition, words in cases:
+        (project / "models" / "policy.yaml").write_text(
+            yaml.safe_dump(definition), encoding="utf-8"
+        )
+        done = subprocess.run([sys.executable, "train.py"], cwd=project,
+                              capture_output=True, text=True, timeout=600)
+        assert done.returncode == 1, done.stderr[-2000:]
+        assert "定義に誤りがあります" in done.stdout, done.stdout
+        assert words in done.stdout, done.stdout
+        assert "Traceback" not in done.stderr
+    assert not (project / "outputs").exists()
+
+
 # 扱えない空間の自作の環境 ({observation} と {action} に空間の式)
 SPACE_ENV = """
 import gymnasium
@@ -494,7 +539,7 @@ def test_policy_training(tmp_path: Path, env_id: str) -> None:
                       .read_text(encoding="utf-8"))
     assert spec["guards"]["fallback"]["kind"] == "action"
     metadata = spec["metadata"]
-    assert metadata["model"]["class"] == "model.PolicyNet"
+    assert metadata["model"] == {"spec": "model.yaml"}
     assert metadata["approver"] == "設備の責任者"
     assert metadata["env_id"] == env_id
     assert ("entry_point" in metadata) == (env_id is None)
@@ -523,19 +568,30 @@ def test_policy_training(tmp_path: Path, env_id: str) -> None:
         table["rows"][0]
     )
 
-    # ML-Inference でも同じ守りの行動を返す (入っていれば)
-    if env_id != "CartPole-v1":
-        return
+    # 既定の定義をプロジェクトに書き, 一式には実験に写した定義を写す
+    definition = (project / "models" / "policy.yaml").read_bytes()
+    assert (run / "model_spec.yaml").read_bytes() == definition
+    assert (run / "policy" / "model.yaml").read_bytes() == definition
+
+    # ML-Inference がモデルを渡さずに定義から組み立て, ML-Found と同じ守り
+    # の行動を返す (方策の頭の重みだけなので余る重みは無い)
     ml_inference = pytest.importorskip("ml_inference")
     from ml_found.rl import load_policy
-    sys.path.insert(0, str(project))
-    try:
-        from model import PolicyNet
-    finally:
-        sys.path.remove(str(project))
-    sys.modules.pop("model", None)
-    args = metadata["model"]["args"]
-    found = load_policy(run / "policy", PolicyNet(**args))
-    inferred = ml_inference.load_policy(run / "policy", PolicyNet(**args))
-    for observation in ([0.0, 0.1, 0.02, -0.1], [0.5, -0.3, -0.05, 0.2]):
-        assert inferred.act(observation) == found.act(observation)
+    from ml_modelcontrol import build_model
+    read = ml_inference.read_policy_spec(run / "policy")
+    assert read["metadata"]["model"]["spec"] == "model.yaml"
+    inferred = ml_inference.load_policy(run / "policy")
+    assert inferred.unused_keys == []
+    found = load_policy(run / "policy", build_model(
+        run / "policy" / "model.yaml", seed=0, load_weights=False
+    ))
+    size = read["observation_space"]["shape"][0]
+    for observation in ([0.0] * size,
+                        [0.1 * (index + 1) * (-1) ** index
+                         for index in range(size)]):
+        got = inferred.act(observation)
+        want = found.act(observation)
+        assert (got["status"], got["reasons"]) == (
+            want["status"], want["reasons"]
+        )
+        assert got["action"] == pytest.approx(want["action"], abs=1e-5)

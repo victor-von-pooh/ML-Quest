@@ -8,8 +8,9 @@ from ml_quest.handoff import describe
 from ml_quest.problem import active_value
 from ml_quest.questions import FALLBACKS, PART
 
-# 学習のスクリプトが読み込む機能の, ML-Found の登録簿の名前 (Gymnasium)
-POLICY_LIBRARIES = ["rl"]
+# 学習のスクリプトが読み込む機能の, ML-Found の登録簿の名前 (Gymnasium と,
+# 方策の頭を定義から組み立てる ml_modelcontrol)
+POLICY_LIBRARIES = ["rl", "modelcontrol"]
 
 # 骨組みの方策の行動の空間 (ML-Found の RolloutLoader と方策の一式が扱える
 # もの. 番号で選ぶ行動と連続の行動)
@@ -22,12 +23,14 @@ MONITOR_NAMES = {
                   "小さいほど良い",
 }
 
-# 方策のモデル (観測から行動のスコアか平均と, 状態の価値)
+# 方策のモデル (定義から組み立てた方策の頭と, 価値の関数)
 POLICY_MODEL = '''"""
 方策のモデル (ML-Quest が問題の設定から書き出した骨組み)
 
-train.py が観測と行動の空間から大きさを決めて作り, 方策の一式の metadata
-に組み立て方 (model.PolicyNet と引数) を残す. 印 (TODO) の所を書き足す
+方策の頭 (観測から行動のスコアか平均) は ML-ModelControl の定義 (config の
+model.spec) から train.py が組み立てて渡す. このモデルは学習だけに使う価値の
+関数と, 連続の行動の対数の標準偏差を足す. 方策の一式には方策の頭の重みと
+定義だけを写す. 印 (TODO) の所を書き足す
 """
 import torch
 from torch import nn
@@ -35,49 +38,30 @@ from torch import nn
 
 class PolicyNet(nn.Module):
     def __init__(
-        self, obs_dim: int, hidden_dim: int, action_dim: int,
-        continuous: bool
+        self, actor: nn.Module, obs_dim: int, hidden_dim: int,
+        action_dim: int, continuous: bool
     ):
         # 親クラスのコンストラクタを呼び出す
         super(PolicyNet, self).__init__()
 
-        # 観測の次元数, 隠れ層の次元数, 行動の数 (連続の行動は要素の数),
-        # 連続の行動かを保存
+        # 方策の頭 (定義から組み立てたモデル), 観測の次元数, 隠れ層の次元数,
+        # 行動の数 (連続の行動は要素の数), 連続の行動かを保存
+        self.actor = actor
         self.obs_dim = obs_dim
         self.hidden_dim = hidden_dim
         self.action_dim = action_dim
         self.continuous = continuous
 
-        # TODO: 課題に合う大きさと形に直す. 今は共通の隠れ層 2 つから, 方策
-        # の頭 (番号で選ぶ行動はスコア, 連続の行動は平均) と価値の頭
+        # TODO: 課題に合う大きさと形に直す. 今は価値の関数を隠れ層 2 つの
+        # 全結合 (方策の頭とは重みを分ける)
         self.fc1 = nn.Linear(self.obs_dim, self.hidden_dim)
         self.fc2 = nn.Linear(self.hidden_dim, self.hidden_dim)
-        self.policy = nn.Linear(self.hidden_dim, self.action_dim)
         self.critic = nn.Linear(self.hidden_dim, 1)
         self.tanh = nn.Tanh()
 
         # 連続の行動の, 観測によらない対数の標準偏差 (ML-Found の決まり)
         if self.continuous:
             self.log_std = nn.Parameter(torch.zeros(self.action_dim))
-
-    def body(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        方策と価値で共通の隠れ層を求める関数
-
-        Parameters
-        ----------
-        x: torch.Tensor
-            (バッチ, 観測の次元数) の観測
-
-        Returns
-        ----------
-        hidden: torch.Tensor
-            (バッチ, 隠れ層の次元数) の特徴
-        """
-        # 全結合と活性化を 2 段
-        hidden = self.tanh(self.fc2(self.tanh(self.fc1(x))))
-
-        return hidden
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -94,7 +78,7 @@ class PolicyNet(nn.Module):
             (バッチ, 行動の数) の行動ごとのスコアか, 連続の行動の平均
         """
         # 方策の頭
-        output = self.policy(self.body(x))
+        output = self.actor(x)
 
         return output
 
@@ -112,8 +96,9 @@ class PolicyNet(nn.Module):
         values: torch.Tensor
             (バッチ, 1) の状態の価値
         """
-        # 価値の頭
-        values = self.critic(self.body(x))
+        # 全結合と活性化を 2 段と, 価値の頭
+        hidden = self.tanh(self.fc2(self.tanh(self.fc1(x))))
+        values = self.critic(hidden)
 
         return values
 '''
@@ -241,6 +226,7 @@ from ml_found import (
     require, save_evaluation, start_experiment, write_task
 )
 from model import PolicyNet
+import yaml
 
 # このプロジェクトのディレクトリ (ML-Found のプロジェクト)
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -271,6 +257,9 @@ GUARDED_BETTER = {"reward": "higher", "fallback": "lower", "stop": "lower",
 
 # 学習の方法の名前
 ALGORITHMS = ("auto", "reinforce", "actor_critic")
+
+# 方策の一式に写すモデルの定義のファイルの名前 (metadata.model.spec)
+POLICY_SPEC = "model.yaml"
 
 # 守りの数が無いことの知らせ
 NO_LIMITS = ("config の guards に行動の範囲も止める条件も数で書いていない"
@@ -380,7 +369,7 @@ def model_args(env: Any, cfg: Any) -> dict:
     Returns
     ----------
     args: dict
-        PolicyNet の引数 (方策の一式の metadata にも残す)
+        PolicyNet の引数 (方策の頭を除く. 既定の定義の大きさにも使う)
 
     Raises
     ----------
@@ -406,6 +395,175 @@ def model_args(env: Any, cfg: Any) -> dict:
             "action_dim": action_dim, "continuous": continuous}
 
     return args
+
+def default_definition(args: dict) -> dict:
+    """
+    観測と行動の空間から, 方策の頭の既定の定義を作る関数
+
+    Parameters
+    ----------
+    args: dict
+        PolicyNet の引数 (obs_dim, hidden_dim, action_dim)
+
+    Returns
+    ----------
+    definition: dict
+        ML-ModelControl の形のモデルの定義 (観測の 1 つの入力から, 全結合
+        と活性化を 2 段と, 行動ごとのスコアか平均の 1 つの出力)
+    """
+    # 大きさは観測と行動の空間と config の model.hidden_dim から
+    obs_dim = args["obs_dim"]
+    hidden = args["hidden_dim"]
+    action_dim = args["action_dim"]
+    definition = {
+        "format_version": 1,
+        "name": "policy",
+        "description": "観測から行動ごとのスコアか連続の行動の平均",
+        "inputs": {"observation": {"shape": [1, obs_dim]}},
+        "nodes": {
+            "fc1": {"unit": "nn.Linear",
+                    "params": {"in_features": obs_dim,
+                               "out_features": hidden},
+                    "inputs": "observation"},
+            "act1": {"unit": "nn.Tanh", "inputs": "fc1"},
+            "fc2": {"unit": "nn.Linear",
+                    "params": {"in_features": hidden,
+                               "out_features": hidden},
+                    "inputs": "act1"},
+            "act2": {"unit": "nn.Tanh", "inputs": "fc2"},
+            "head": {"unit": "nn.Linear",
+                     "params": {"in_features": hidden,
+                                "out_features": action_dim},
+                     "inputs": "act2"},
+        },
+        "outputs": {"action": "head"},
+    }
+
+    return definition
+
+
+def definition_errors(spec: Path, args: dict) -> list[str]:
+    """
+    方策の頭の定義の誤りを, 実験の出力先を作る前に確かめる関数
+
+    Parameters
+    ----------
+    spec: Path
+        config の model.spec の, プロジェクトの定義
+    args: dict
+        PolicyNet の引数 (観測の次元数と行動の数)
+
+    Returns
+    ----------
+    errors: list[str]
+        誤りの文 (無ければ空)
+    """
+    # 追加の依存 modelcontrol が要るので, 関数の中で読み込み
+    import torch
+    from ml_modelcontrol import build_model, load_spec, validate
+
+    # 読めない定義も誤りとして返る (例外にならない)
+    errors = [issue["message"] for issue in validate(spec)
+              if issue["severity"] == "error"]
+    if errors:
+        return errors
+
+    # 方策の一式の読む側の決まり (観測の入力と行動の出力を 1 つずつ)
+    definition = load_spec(spec)
+    if len(definition["inputs"]) != 1 or len(definition["outputs"]) != 1:
+        errors.append("入力 (観測) と出力 (行動) を 1 つずつにしてください")
+        return errors
+
+    # 観測の 1 件の組から, 行動の数の出力が出るか
+    model = build_model(spec, seed=0, load_weights=False).eval()
+    try:
+        with torch.no_grad():
+            output = model(torch.zeros(1, args["obs_dim"]))
+    except Exception as error:
+        errors.append(f"観測 (要素 {args['obs_dim']}) を入れられません "
+                      f"({type(error).__name__}: {error})")
+        return errors
+    if tuple(output.shape) != (1, args["action_dim"]):
+        errors.append(f"出力の形 {tuple(output.shape)} が (バッチ, 行動の"
+                      f"数 {args['action_dim']}) と違います")
+
+    return errors
+
+
+def policy_definition(cfg: Any, args: dict) -> Optional[Path]:
+    """
+    方策の頭の定義を確かめ, 無ければ既定の定義を書く関数
+
+    Parameters
+    ----------
+    cfg: Any
+        config (model.spec に定義の場所. プロジェクトのディレクトリから)
+    args: dict
+        PolicyNet の引数
+
+    Returns
+    ----------
+    spec: Optional[Path]
+        プロジェクトの定義 (誤りがあれば知らせて None)
+    """
+    # 無ければ観測と行動の空間から既定の定義を書く (ML-CreateArchitecture
+    # で開いて直せる)
+    spec = PROJECT_DIR / cfg.model.spec
+    if not spec.exists():
+        spec.parent.mkdir(parents=True, exist_ok=True)
+        text = yaml.safe_dump(default_definition(args), allow_unicode=True,
+                              sort_keys=False)
+        spec.write_text(text, encoding="utf-8")
+        print(f"{spec} に観測と行動の空間から既定の定義を書きました")
+    errors = definition_errors(spec, args)
+    if errors:
+        print(f"{spec} の定義に誤りがあります. 直してください")
+        for message in errors:
+            print(f"- {message}")
+        return None
+
+    return spec
+
+
+def model_file(
+    spec: Path, experiment: Experiment
+) -> tuple[Path, Optional[Path]]:
+    """
+    方策の頭を組み立てる定義のファイルと, 定義の中の相対の参照 (外部の
+    重みなど) の起点を返す関数
+
+    Parameters
+    ----------
+    spec: Path
+        config の model.spec の, プロジェクトの定義
+    experiment: Experiment
+        実験 (ML-Found が実験に写した定義の場所 model_spec_path と, 写した
+        元の定義 model_spec_source)
+
+    Returns
+    ----------
+    path: Path
+        ML-Found が実験に写した定義 (学習を始めたときの定義). 写せなければ
+        プロジェクトの定義
+    base_dir: Optional[Path]
+        相対の参照の起点 (写しなら元の定義のディレクトリ. プロジェクトの
+        定義なら None で, 定義のディレクトリ)
+    """
+    # 写しの相対の参照は元の定義の場所から (写しの隣には重みが無い)
+    if experiment.model_spec_path is not None:
+        path = Path(experiment.model_spec_path)
+        base_dir = Path(experiment.model_spec_source).parent
+        return path, base_dir
+
+    # 写しが無ければ理由を知らせて, プロジェクトの定義
+    experiment.logger.warning(
+        "モデルの定義を実験に写せなかったので, プロジェクトの定義から"
+        "組み立てます (理由は source.yaml の model_spec の status)"
+    )
+    path = spec
+    base_dir = None
+
+    return path, base_dir
 
 
 def algorithm_of(env: Any, cfg: Any) -> str:
@@ -603,7 +761,7 @@ def summarize(rows: list[dict]) -> dict:
 
 
 def evaluate_guards(
-    model: Any, env: Any, cfg: Any, experiment: Experiment, args: dict,
+    model: Any, env: Any, cfg: Any, experiment: Experiment, spec: Path,
     guards: dict, metadata: dict
 ) -> list[dict]:
     """
@@ -620,8 +778,8 @@ def evaluate_guards(
         config (evaluation)
     experiment: Experiment
         実験 (policy/ に書き出し, train.log に記録)
-    args: dict
-        PolicyNet の引数 (読み直しに使う)
+    spec: Path
+        方策の頭を組み立てた定義 (一式に写し, 読み直しに使う)
     guards: dict
         守り
     metadata: dict
@@ -634,13 +792,18 @@ def evaluate_guards(
     """
     # 追加の依存 rl が要るので, 関数の中で読み込み
     from ml_found.rl import evaluate_policy, export_policy, load_policy
+    from ml_modelcontrol import build_model
 
-    # 実験の中の policy/ に書き出し, 新しいモデルに読み直して (重みは
-    # 一式から) 守りを当てたエピソードを動かす
+    # 実験の中の policy/ に方策の頭 (重みの名前が定義から組み立てたモデル
+    # と同じ) を書き出し, 定義を写す. 写した定義から組み立てた新しいモデル
+    # に読み直して (重みは一式から) 守りを当てたエピソードを動かす
     place = Path(experiment.run_dir) / "policy"
-    export_policy(place, model, env.observation_space, env.action_space,
-                  guards, metadata=metadata)
-    policy = load_policy(place, PolicyNet(**args))
+    export_policy(place, model.actor, env.observation_space,
+                  env.action_space, guards, metadata=metadata)
+    shutil.copy(spec, place / POLICY_SPEC)
+    policy = load_policy(
+        place, build_model(place / POLICY_SPEC, seed=0, load_weights=False)
+    )
     episodes = evaluate_policy(
         policy, env, episodes=cfg.evaluation.guarded_episodes,
         seed=cfg.evaluation.guarded_seed,
@@ -695,6 +858,15 @@ def main() -> None:
     except ValueError as error:
         print(f"環境の空間を扱えません ({error})")
         sys.exit(1)
+    # 方策の頭の定義 (無ければ空間から既定の定義を書く)
+    try:
+        require("modelcontrol")
+    except MissingRequirementError as error:
+        print(error)
+        sys.exit(1)
+    spec = policy_definition(cfg, args)
+    if spec is None:
+        sys.exit(1)
     try:
         guards = build_guards(guard_env, cfg)
     except ValueError as error:
@@ -734,7 +906,10 @@ def main() -> None:
     # 1 エポックは rollout.episodes のエピソード (batch_episodes ごとに
     # 更新), 検証は別の種のエピソードを最もスコアの高い行動 (連続の行動は
     # 平均) で
-    model = PolicyNet(**args)
+    from ml_modelcontrol import build_model
+    path, base_dir = model_file(spec, experiment)
+    actor = build_model(path, seed=cfg.experiment.seed, base_dir=base_dir)
+    model = PolicyNet(actor, **args)
     train_loader = RolloutLoader(
         train_env, model, episodes=cfg.rollout.episodes,
         batch_episodes=cfg.rollout.batch_episodes, gamma=cfg.rollout.gamma,
@@ -773,13 +948,13 @@ def main() -> None:
     metadata = {
         "env_id": cfg.env.id or None, "algorithm": algorithm,
         "epoch": epoch,
-        "model": {"class": "model.PolicyNet", "args": args},
+        "model": {"spec": POLICY_SPEC},
         "approver": APPROVER, "guards_set": numbered,
         "guards_text": {"action_limits": ACTION_LIMITS, "stop": STOP},
     }
     if not cfg.env.id:
         metadata["entry_point"] = name
-    rows = evaluate_guards(trainer.model, guard_env, cfg, experiment, args,
+    rows = evaluate_guards(trainer.model, guard_env, cfg, experiment, path,
                            guards, metadata)
     save_evaluation(
         experiment, "guarded_episodes", rows, "environment",
@@ -859,6 +1034,11 @@ loss:
   gae_lambda: 0.95
 
 model:
+  # 方策の頭 (観測から行動のスコアか平均) の ML-ModelControl の形のモデルの
+  # 定義 (ML-CreateArchitecture で組む). 無ければ train.py が観測と行動の
+  # 空間から既定の定義を書く. 方策の一式に写す
+  spec: models/policy.yaml
+  # 価値の関数と既定の定義の隠れ層の次元数
   hidden_dim: 64
 
 # 安全の違反を知らせる info の名前 (問題の設定の答え. 無ければ cost)
@@ -1157,7 +1337,11 @@ def policy_readme(problem: dict, stages: dict) -> str:
         f"使ってよいかは {approver} が決める. 安全の違反は環境が info の "
         f"`{policy['safety_key']}` に 0 より大きい値を入れた歩で数える",
         "3. **学習** (ML-Found, ML-Dashboard): `python train.py`. 方策の"
-        "モデルは `model.py` の `PolicyNet` (印 TODO). 学習の方法は config "
+        "頭 (観測から行動のスコアか平均) は ML-ModelControl の定義 "
+        "`models/policy.yaml` (config の `model.spec`) から組み立てる. 無けれ"
+        "ば最初の学習で観測と行動の空間から既定の定義 (全結合 2 層) を書くの"
+        "で, ML-CreateArchitecture で開いて直せる. 価値の関数は `model.py` "
+        "の `PolicyNet` (印 TODO). 学習の方法は config "
         "の `algorithm` (`auto` は番号で選ぶ行動なら REINFORCE の "
         "`ReinforceStep`, 連続の行動なら `ActorCriticStep`). 検証用の "
         f"`{monitor}` ({MONITOR_NAMES.get(monitor, '問題の設定で書いた指標')}"
@@ -1167,11 +1351,11 @@ def policy_readme(problem: dict, stages: dict) -> str:
         "4. **方策の一式と守り付きの評価** (ML-Inference, ML-Provide): 学習"
         "の後に, 守りと一緒に実験の中の `policy/` に方策の一式を書き出し, "
         "読み直して守りを当てたまま環境で動かした結果を守る指標の表 "
-        "`evaluations/guarded_episodes.json` に書く. 一式は ML-Inference の "
-        "`load_policy(<policy/>, PolicyNet(**args))` で読め (組み立て方は "
-        "`policy.json` の `metadata.model`. `model.PolicyNet` を読むには, "
-        "このプロジェクトのディレクトリを `sys.path` に入れる), 観測から"
-        "守りを当てた行動を返す. 守りを数にしていない (`metadata` の "
+        "`evaluations/guarded_episodes.json` に書く. 一式には方策の頭の重み"
+        "と定義の写し (`policy/model.yaml`. `policy.json` の "
+        "`metadata.model.spec`) が入り, ML-Inference の `load_policy(<policy/"
+        ">)` (ML-Provide の画面) がモデルを渡さずに定義から組み立てて読み, "
+        "観測から守りを当てた行動を返す. 守りを数にしていない (`metadata` の "
         "`guards_set` が false) 一式は, 範囲の守りが入っていない. "
         "実機での実行は道具の外で, 環境での結果は実機での結果と別に確かめる",
         "", "`train.py`, `model.py`"
