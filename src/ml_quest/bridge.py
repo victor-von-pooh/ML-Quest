@@ -860,6 +860,21 @@ def recipe_conflicts(problem: dict, recipe: dict) -> tuple[list, list]:
             "には時刻の順か, 相手ごとと時刻の順)"
         ))
 
+    # 相手ごとと時刻の順は, 相手が現れた順を守るが, 長く続く相手の後半の
+    # 行は後から現れた相手の行より後の時刻になりうる (ML-EDA の決まり)
+    timed = task == "forecasting" or active_value(
+        problem, f"{PART}.split_time_column"
+    )
+    if timed and method == "group_time":
+        conflicts.append(finding(
+            "info", f"{PART}.task" if task == "forecasting"
+            else f"{PART}.split_time_column",
+            "分割が相手ごとと時刻の順 (group_time) です. 後から現れた相手を"
+            "検証用とテスト用にしますが, 相手の中の行の時刻は分割をまたいで"
+            "重なりえます (長く続く相手の後半の行が, 検証用の相手の行より"
+            "後の時刻になることがあります)"
+        ))
+
     # グループでまとめる分割の列と, 層化に要る分類 (ML-EDA が書き出しで
     # 誤りにするものを, 書き戻しの時点で)
     if method in GROUP_SPLITS and not written:

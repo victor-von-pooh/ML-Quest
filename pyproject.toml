@@ -18,7 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 # 手元のデータから答えの候補を出す (ML-EDA の読み込みと分析)
 data = [
-    "ml-eda[image] @ git+https://github.com/victor-von-pooh/ML-EDA.git@2cf3e20"
+    "ml-eda[image] @ git+https://github.com/victor-von-pooh/ML-EDA.git@35968e2"
 ]
 dev = [
     "pytest"
