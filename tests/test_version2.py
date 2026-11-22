@@ -733,7 +733,7 @@ def test_screen_names() -> None:
                {"type": "median", "periods": 3})
 
 
-def test_screen_names() -> None:
+def test_screen_names_exported() -> None:
     """
     画面 (ML-Provide) が使う名前が公開され, 中の名前と同じものかを確かめる
     関数
