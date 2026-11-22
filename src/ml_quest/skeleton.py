@@ -1079,7 +1079,7 @@ def generate_message(problem: dict) -> Optional[str]:
     elif metric not in ("loss", "other"):
         message = (f"画像の生成の骨組みは, 最良を選ぶ指標が loss の場合だけ"
                    f"です (今は {metric}. 作った画像は損失と見本の画像で見"
-                   "ます. FID はまだ数えません)")
+                   "ます. FID は数えません)")
     elif get_value(problem, "data.source") and loader != "image_folder":
         message = ("画像の生成の骨組みは, 画像のディレクトリ (ML-EDA の "
                    f"image_folder) のデータで学びます (入れたデータの読み方は "

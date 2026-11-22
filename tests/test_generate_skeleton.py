@@ -338,7 +338,7 @@ def test_generate_project(tmp_path: Path) -> None:
     assert (config["trainer"]["monitor"], config["trainer"]["mode"]) == (
         "valid/loss", "min"
     )
-    assert config["trainer"]["ema"] == {"decay": 0.999}
+    assert config["trainer"]["ema"] == {"decay": 0.995}
     assert config["data"]["dataset"] == "outputs/dataset"
     assert config["model"]["spec"] == "models/model.yaml"
     assert config["model"]["placeholder"] is True
@@ -347,7 +347,7 @@ def test_generate_project(tmp_path: Path) -> None:
     # README: データの分析, モデルの入力, FID を数えないこと, 雑音だけの一式
     readme = (project / "README.md").read_text(encoding="utf-8")
     for words in ("task: none", "data/images", "int64", "FID", "版 5",
-                  "見本"):
+                  "見本", "grayscale", "1 / (1 - decay)"):
         assert words in readme, words
 
     # 案内どおりの書き出しで, 目的の列の無い画像のデータセット
@@ -387,6 +387,39 @@ def test_generate_placeholder(tmp_path: Path) -> None:
     assert (run / "samples" / "generated_0" / "final.png").is_file()
 
 
+def test_generate_sample_steps(tmp_path: Path) -> None:
+    """
+    繰り返しの回数が学習の時刻の数より多い config は, 出力先を作る前に
+    止まることを確かめる関数 (PyTorch と ML-Found が無ければ飛ばす)
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 時刻 50 に繰り返し 60
+    for name in ("torch", "ml_found"):
+        pytest.importorskip(name)
+    problem = attached(tmp_path)
+    project = tmp_path / "project"
+    make_project(problem, project)
+    export(problem, project)
+    done = subprocess.run(
+        [sys.executable, "train.py", "diffusion.train_steps=50",
+         "diffusion.sample_steps=60"],
+        cwd=project, capture_output=True, text=True, timeout=600
+    )
+    assert done.returncode == 1
+    assert "diffusion.sample_steps は 1 から" in done.stdout
+    assert not (project / "outputs").exists() or not any(
+        (project / "outputs").glob("*/*/*/train.log")
+    )
+
+
 def test_generate_training(tmp_path: Path) -> None:
     """
     画像の生成の骨組みを書き換えずに学び, 雑音だけの推論の一式が見本と
@@ -424,6 +457,7 @@ def test_generate_training(tmp_path: Path) -> None:
     )
     log = (run / "train.log").read_text(encoding="utf-8")
     assert "EMA" in log and "テスト用の損失" in log
+    assert "作るもの: 丸の画像" in log and "予測すること" not in log
     table = json.loads((run / "evaluations" / "test_loss.json")
                        .read_text(encoding="utf-8"))
     assert table["split"] == "test" and table["better"] == {"loss": "lower"}

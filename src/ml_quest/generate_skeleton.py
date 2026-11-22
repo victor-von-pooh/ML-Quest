@@ -2,7 +2,6 @@ import json
 from string import Template
 from typing import Callable, Optional
 
-from ml_quest.baseline_skeleton import predict_log
 from ml_quest.handoff import describe
 from ml_quest.problem import active_value
 from ml_quest.questions import PART
@@ -118,7 +117,8 @@ class DiffusionTrainer(Trainer):
         super(DiffusionTrainer, self).__init__(model, experiment, None)
 
         # モデルの入力の名前 (雑音を加えた画像, 時刻), 時刻ごとの累積の
-        # alpha, 損失関数と, 検証で毎回同じ時刻と雑音を引く乱数の生成器
+        # alpha, 損失関数, 検証の乱数の種と, 検証で毎回同じ時刻と雑音を引く
+        # 乱数の生成器を保存
         self.inputs = inputs
         self.schedule = schedule
         self.mse = nn.MSELoss()
@@ -669,7 +669,13 @@ def main() -> None:
               "ために, 検証用の割合を 0 より大きくして書き出してください")
         sys.exit(1)
 
-    # モデルの定義の確かめ (誤りなら出力先を作る前に止まる)
+    # 繰り返しの回数と, モデルの定義の確かめ (誤りなら出力先を作る前に
+    # 止まる)
+    if not 1 <= cfg.diffusion.sample_steps <= cfg.diffusion.train_steps:
+        print("config の diffusion.sample_steps は 1 から "
+              f"diffusion.train_steps ({cfg.diffusion.train_steps}) に"
+              f"してください (今は {cfg.diffusion.sample_steps})")
+        sys.exit(1)
     spec = project_spec(cfg)
     errors = spec_errors(spec)
     if errors:
@@ -773,9 +779,11 @@ trainer:
   # 雑音で数える)
   monitor: $monitor
   mode: $mode
-  # 重みの指数移動平均. 検証, 最良のモデル, final_model.pt はこの重み
+  # 重みの指数移動平均. 検証, 最良のモデル, final_model.pt はこの重み.
+  # 更新の回数 (エポック数 × 1 エポックのバッチ数) が 1 / (1 - decay) (0.995
+  # なら 200) より十分多くなるようにする (少ないと初めの重みのまま)
   ema:
-    decay: 0.999
+    decay: 0.995
 
 # プロジェクト固有の設定
 data:
@@ -791,16 +799,17 @@ model:
   # (ML-Dashboard の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
   # は spec のファイルがあるかで決まる)
   placeholder: true
-  # 仮のモデルの中の幅
+  # 仮のモデルの中の幅 (時刻の正弦波の埋め込みの幅にも使うので偶数)
   width: 32
 
 diffusion:
-  # 線形の雑音の予定 (学習の時刻の数と beta の始まりと終わり). 推論の一式
-  # の ddim にも同じ値を書く
+  # 線形の雑音の予定 (学習の時刻の数と beta の始まりと終わり). train.py が
+  # 同じ値を推論の一式の ddim に書く
   train_steps: 1000
   beta_start: 0.0001
   beta_end: 0.02
-  # 見本と推論の一式の ddim の繰り返しの回数と, 始まりの雑音の乱数の種
+  # 見本と推論の一式の ddim の繰り返しの回数 (1 から train_steps) と,
+  # 始まりの雑音の乱数の種
   sample_steps: 50
   sample_seed: 0
 ''')
@@ -828,9 +837,10 @@ def generate_script(problem: dict, literal: Callable) -> str:
         predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         method=literal(active_value(problem, f"{PART}.method")),
     )
-    script = head + Template(GENERATE_MAIN).substitute(
-        predict_log=predict_log(problem)
-    )
+    # train.log の初めの行の作るもの (空なら省く)
+    made = ("作るもの: {PREDICT}. "
+            if active_value(problem, f"{PART}.what") else "")
+    script = head + Template(GENERATE_MAIN).substitute(predict_log=made)
 
     return script
 
@@ -909,7 +919,9 @@ def generate_readme(
         " `recipe_from` の雛形) でこのディレクトリの `" + dataset + "` に"
         "書き出す. 検証用の分割は必ず作る. 画像の大きさがそろわないなら, "
         "中身の手順 (`item_steps`) に `resize` (`width`, `height`) を足して"
-        "そろえる (そろわないまま ML-EDA は書き出さない)"
+        "そろえる. チャンネルの数 (灰色と色付き) がそろわないなら, "
+        "`grayscale` (1 チャンネル) か `rgb` (3 チャンネル) を足してそろえる"
+        " (どちらもそろわないまま ML-EDA は書き出さない)"
         + (f". 入れた画像はこのディレクトリの `{raw}` に写した" if raw
            else ""),
         "2. **モデルの作成** (ML-ModelControl, ML-CreateArchitecture): "
@@ -924,7 +936,10 @@ def generate_readme(
         "3. **学習** (ML-Found, ML-Dashboard): `python train.py`. 画像は"
         "データセットの 0 から 1 の値のまま, 線形の雑音の予定 (config の "
         "`diffusion`) で雑音を加え, 加えた雑音を当てる (平均二乗誤差). "
-        "重みの指数移動平均 (`trainer.ema.decay`) の重みで検証し, 検証用の "
+        "重みの指数移動平均 (`trainer.ema.decay`. 既定 0.995) の重みで検証"
+        "し (更新の回数 (エポック数 × 1 エポックのバッチ数) が "
+        "1 / (1 - decay) より十分多くなるようにする. 少ないと初めの重みの"
+        "ままで, 損失がほとんど動かない), 検証用の "
         f"`{monitor}` (毎回同じ時刻と雑音で数える) が最も良いモデルを選ぶ. "
         "結果は `outputs/<実験の名前>/<日付>/<時刻>/` に残る (`task.yaml`, "
         "テスト用の分割があればテスト用の損失の `evaluations/`, 作った画像 "
