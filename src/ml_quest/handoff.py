@@ -2,7 +2,7 @@ from pathlib import PurePath
 from typing import Any, Optional
 
 from ml_quest.check import (
-    check, is_column_part, is_items_part, split_errors
+    check, env_id_of, is_column_part, is_items_part, split_errors
 )
 from ml_quest.problem import (
     DECISION_NAMES, DECISION_OPTIONS, FIELD_NAMES, OPTION_NAMES,
@@ -376,8 +376,8 @@ def policy_of(problem: dict) -> Optional[dict]:
     policy = {key: active_value(problem, f"{PART}.policy.{key}")
               for key in POLICY_KEYS}
 
-    # 環境の登録名 (答えていなければ None. 学習の段階は自作の環境を使う)
-    policy["env_id"] = active_value(problem, f"{PART}.env_id")
+    # 環境の登録名 (答えていなければ None)
+    policy["env_id"] = env_id_of(problem)
 
     # 信号の名前の既定 (None を渡すと ML-Found は違反を数えないため)
     policy["safety_key"] = policy["safety_key"] or DEFAULT_SAFETY_KEY
@@ -630,8 +630,8 @@ def describe(problem: dict) -> list[str]:
         value(problem, f"{PART}.policy"), dict
     ):
         sentences.append(policy_text(problem))
-    env_id = value(problem, f"{PART}.env_id")
-    if isinstance(env_id, str) and env_id:
+    env_id = env_id_of(problem)
+    if env_id:
         sentences.append(f"方策を学ぶ環境: Gymnasium の {env_id}")
     features = required_features(problem)
     if features:

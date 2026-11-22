@@ -355,8 +355,20 @@ def test_env_id() -> None:
     assert not any(text.startswith("方策を学ぶ環境")
                    for text in describe(problem))
 
-    # 登録名の形でない名前は誤り
-    for name in ("Cart Pole", "CartPole-v1;rm", "環境", "a/b/c"):
+    # 手で書いた空の文字と空白だけの値は答えていない扱い. 前後の空白は除く
+    for raw in ("", "   "):
+        problem = copy.deepcopy(policy_problem())
+        problem["ml"]["parts"][0]["env_id"] = raw
+        assert not errors_of(problem), raw
+        assert handoff(problem)["policy"]["env_id"] is None
+    problem = copy.deepcopy(policy_problem())
+    problem["ml"]["parts"][0]["env_id"] = " CartPole-v1 "
+    assert not errors_of(problem)
+    assert handoff(problem)["policy"]["env_id"] == "CartPole-v1"
+
+    # 登録名の形でない名前は誤り (名前空間に . は使えない)
+    for name in ("Cart Pole", "CartPole-v1;rm", "環境", "a/b/c",
+                 "a.b/Env-v0"):
         problem = answer(policy_problem(), f"{PART}.env_id", name)
         assert errors_of(problem) == [f"{PART}.env_id"], name
 

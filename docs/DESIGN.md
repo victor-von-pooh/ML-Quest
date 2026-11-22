@@ -240,7 +240,7 @@ ml:
 
 - 方策かどうか (`autonomous`) と集め方 (`collect`) は任意の問い. 答えなくても足りない答えの誤りにならない. 方策と答えたときだけ, 守りの問いが要る
 - 守りの問いは, ML-Found の方策の守り (`make_guards`) に合わせる: 行動の上限は `action_low`, `action_high` か `allowed_actions`, 止める条件は観測の範囲 (`observation_low`, `observation_high`), 外れたときの動きは `fallback` (`stop` 止める, `handover` 元の制御に戻す, `action` 決めた行動. 名前は ML-Found と同じ), 安全の違反の信号は学習と評価の `safety_key` (空なら ML-Found の既定と同じ `cost` を受け渡す. `None` を渡すと ML-Found は違反を数えないため). 決めた行動 (`fallback_action`) は文, 数か数の並び (番号で選ぶ行動はその番号. 番号で選ぶ行動では ML-Found で要る. 量で決める行動は空なら 0 の行動). 問題の設定の時点では観測と行動の空間 (要素の並び) が決まっていないので, 行動の上限と止める条件は数の並びでなく文で書き, 学習の段階で空間が決まってから数にする
-- **環境の登録名** (`env_id`. 任意の文): 方策で, 集め方が今ある記録 (`log`) でないとき (答えていない場合も) に問う. 答えると, 骨組みの学習のスクリプトが ML-Found の `make_env` でその環境を作る. 空なら自作の環境 (実機とのつなぎ, 自作のシミュレータ) として, 骨組みに環境の雛形を書き出す. 今ある記録からは環境とやり取りしないので問わない. 形は Gymnasium の登録名 (英数字と `_ . -`. 前に読み込むモジュールの `module:` と名前空間の `namespace/` は任意. 例 `CartPole-v1`, `ALE/Pong-v5`). 形が違えば確かめの `error` (骨組みを組めない. 学習のスクリプトに書くため). 登録されているかは見ない (Gymnasium に頼らないため. 学習の段階の `make_env` が確かめる). MuJoCo の環境 (`Hopper-v5` など) もシミュレータの答えとは別にここで答える
+- **環境の登録名** (`env_id`. 任意の文): 方策で, 集め方が今ある記録 (`log`) でないとき (答えていない場合も) に問う. 答えは受け渡しの `policy.env_id` で学習・評価の段階に渡す. 空 (手で書いた空の文字と空白だけの値も) は答えていない扱いで, 自作の環境 (実機とのつなぎ, 自作のシミュレータ) を使うことを表す. 今ある記録からは環境とやり取りしないので問わない. 形は Gymnasium の登録名 (英数字と `_ . -`. 前に読み込むモジュールの `module:` と名前空間の `namespace/` (英数字と `_ -`. Gymnasium と同じ) は任意. 例 `CartPole-v1`, `ALE/Pong-v5`). 形が違えば確かめの `error` (骨組みを組めない. 学習の段階に渡す値のため). 前後の空白は除いて見る. 登録されているかは見ない (Gymnasium に頼らないため. 学習の段階が確かめる). MuJoCo の環境 (`Hopper-v5` など) もシミュレータの答えとは別にここで答える
 - 止める条件は 10 の節の「どうなったら止めますか」(方策を使うのをやめる条件) とは別で, 1 歩ごとに方策の出力を止める条件
 - 承認する人は 10 の節で問う (「変更は誰が承認しますか」とは別. 方策を使ってよいかと守りの範囲)
 - 受け渡しの `policy` (下の「受け渡し」) で, 学習・評価と推論の段階に渡す
@@ -387,7 +387,7 @@ pip で入らないものを含む外の道具 (ROS2, MuJoCo, CUDA) は, 要る�
 | 推論 (ML-Inference, ML-Provide) | `decision` (損得と制約. 選ぶと振り分けには `ml.positive` を `positive` として足す. 今のやり方 (`action.current`) が列なら, たどり直しで比べる `current` として足す. ただし量の型は今ある量 (`stock`) が無いか 0 の場合だけ (ML-Inference の量の `current` は今ある量に足した量, 問題の設定の列は置いた量なので, 今ある量があると意味が違う). k 期前と平均は列の名前でないので `current` には入れず, 推論の段階が問題の設定の今のやり方 (`action.current`) から ML-Inference の `current_from_baseline` で同じ値の列を作る (骨組みの今のやり方との比べ, データの候補の今のやり方の損と同じ数え方: k 期前は同じ系列のちょうど k 期前の行, 平均は k 期前から今の期の前まで)), `conclusion` (系列を分ける最初の列でまとめる `group_by`. 無ければ空), `horizon` (何期先まで) | 一式の既定値 (`make_bundle` の `decision` と `conclusion`), 何段も先の予測. ML-Provide は一式につないだ問題の設定から推論の既定値を読む |
 | 要る機能 | `requires` (機能の名前の並び. 上の「要る機能」) | 画面のカード (ML-Pathfinder, ML-Dashboard が ML-Found の `describe_requirements` で入れ方を出す) |
 | 書き出したプロジェクト | `project` (`path`. 記録が無ければ `None`), データの分析の `project_dataset`, モデルの作成の `project_model_spec` (どれも `project` の記録の絶対パス. 無ければ `None`) | データの分析の書き出し先, モデルの定義の置き場, 学習のプロジェクト (写さずにそのまま使う) |
-| 方策の守り | `policy` (方策のときだけ. `action_limits`, `stop`, `fallback`, `fallback_action`, `safety_key` (答えていなければ ML-Found の既定の `cost`), `approver`, `env_id` (環境の登録名. 答えていないか要らない問いなら `None`). 方策でなければ `None`) | ML-Found の `make_guards` と `safety_key`, 学習の環境 (`make_env`), 推論の段階の守り |
+| 方策の守り | `policy` (方策のときだけ. `action_limits`, `stop`, `fallback`, `fallback_action`, `safety_key` (答えていなければ ML-Found の既定の `cost`), `approver`, `env_id` (環境の登録名. 答えていないか要らない問いなら `None`). 方策でなければ `None`) | ML-Found の `make_guards` と `safety_key`, 推論の段階の守り |
 
 最良を選ぶ指標の候補は, 上の「最良を選ぶ指標」.
 
