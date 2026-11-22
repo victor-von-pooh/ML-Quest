@@ -307,6 +307,11 @@ SPLITS = [
     {"value": "group", "label": "相手ごと (同じ相手は同じ分割に)"},
     {"value": "random", "label": "無作為"},
     {"value": "stratified", "label": "層別 (クラスの割合をそろえて無作為に)"},
+    {"value": "group_time",
+     "label": "相手ごとと時刻の順 (後から現れた相手を検証用とテスト用に)"},
+    {"value": "stratified_group",
+     "label": "相手ごとの層別 (同じ相手は同じ分割に, クラスの割合をそろえて"
+     ". 分類だけ)"},
     {"value": "none", "label": "分けない (全て学習用)"},
 ]
 

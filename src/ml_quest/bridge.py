@@ -22,7 +22,13 @@ TEST_RATIO = 0.15
 EXPORTS = {kind: (function, *PAIR_NAMES[kind])
            for kind, function in EXPORT_FUNCTIONS.items()}
 
-# 書き出しの分割のしかた (ML-EDA の split の method) と, 書いていない割合の
+# レシピの分割のうち, 時刻の順を守るものと, 相手をまとめる列が要るもの
+# (ML-EDA のレシピの split の method)
+TIME_SPLITS = ("time", "group_time")
+GROUP_SPLITS = ("group", "group_time", "stratified_group")
+
+# 書き出しの分割のしかた (ML-EDA の版 2 の書き出しの split の method.
+# レシピの分割と違い, 時刻と層化の分け方を持たない) と, 書いていない割合の
 # ML-EDA の既定
 SPLIT_METHODS = ("random", "group", "none")
 SPLIT_DEFAULTS = {"valid": 0.2, "test": 0.0}
@@ -840,19 +846,35 @@ def recipe_conflicts(problem: dict, recipe: dict) -> tuple[list, list]:
             f"分割では {written or 'なし'} です (どちらかに合わせてください)"
         ))
     if active_value(problem, f"{PART}.split_time_column") and method and (
-        method != "time"
+        method not in TIME_SPLITS
     ):
         conflicts.append(finding(
             "warning", f"{PART}.split_time_column",
             f"時刻の順で分けて確かめると決めたのに, 分割が {method} です"
         ))
-    if active_value(problem, f"{PART}.task") == "forecasting" and method and (
-        method != "time"
-    ):
+    task = active_value(problem, f"{PART}.task")
+    if task == "forecasting" and method and method not in TIME_SPLITS:
         conflicts.append(finding(
             "warning", f"{PART}.task",
             f"時系列の予測なのに, 分割が {method} です (先の期間で確かめる"
-            "には時刻の順)"
+            "には時刻の順か, 相手ごとと時刻の順)"
+        ))
+
+    # グループでまとめる分割の列と, 層化に要る分類 (ML-EDA が書き出しで
+    # 誤りにするものを, 書き戻しの時点で)
+    if method in GROUP_SPLITS and not written:
+        conflicts.append(finding(
+            "error", f"{PART}.group_column",
+            f"分割が {method} なのに, 相手をまとめる列 (split.column) が"
+            "ありません"
+        ))
+    if method == "stratified_group" and task in ("regression",
+                                                 "forecasting"):
+        conflicts.append(finding(
+            "error", f"{PART}.task",
+            "相手ごとの層別 (stratified_group) は分類だけです. 回帰と時系列"
+            "の予測では, 相手ごと (group) か相手ごとと時刻の順 (group_time)"
+            " にしてください"
         ))
     result = (conflicts, choices)
 
