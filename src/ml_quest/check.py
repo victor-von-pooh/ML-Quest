@@ -1041,6 +1041,29 @@ def is_generate_part(problem: dict) -> bool:
     return generate
 
 
+def is_policy_part(problem: dict) -> bool:
+    """
+    受け持ちが続けて行動を選ぶ方策 (効果を見積もるで, 方策と答えた) かを
+    返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    policy: bool
+        方策の受け持ちか
+    """
+    # 受け持ちと方策かの答え (要らない問いの古い答えは除外)
+    policy = active_value(problem, f"{PART}.role") == "effect" and (
+        active_value(problem, f"{PART}.autonomous") is True
+    )
+
+    return policy
+
+
 def check_v1(problem: dict) -> list[dict]:
     """
     版 1 のファイルに書いた, 4 つの他の指標を確かめる関数

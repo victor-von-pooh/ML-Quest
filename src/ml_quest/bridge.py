@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ml_quest.check import (
-    finding, is_column_part, is_generate_part, is_items_part
+    finding, is_column_part, is_generate_part, is_items_part, is_policy_part
 )
 from ml_quest.data import ITEMS_LOADER
 from ml_quest.handoff import export_split, export_stages
@@ -61,7 +61,13 @@ def require_column_part(problem: dict, purpose: str) -> None:
     ValueError
         列の予測でも, ファイルの組でも, 画像の生成の受け持ちでもない場合
     """
-    # 他の受け持ちのデータの約束は, データの分析の段階の版の上げの後
+    # 方策は環境とのやり取りで集めるので, データの分析の段階が無い. 他の
+    # 受け持ちのデータの約束は, データの分析の段階の版の上げの後
+    if is_policy_part(problem):
+        raise ValueError(
+            f"{purpose}はありません. 方策は行動の結果を環境とのやり取りで集め"
+            "るので, データの分析の段階 (レシピ) を通りません"
+        )
     if not is_column_part(problem) and not is_items_part(problem) and (
         not is_generate_part(problem)
     ):
