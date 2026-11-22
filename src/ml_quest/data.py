@@ -1620,9 +1620,10 @@ def loss_parts(problem: dict, data: Any) -> Optional[dict]:
         frame.columns
     ):
         reason = f"今のやり方の列 {current.get('column')} がデータにありません"
-    elif kind not in ("quantity", "triage") or (
-        kind == "triage" and positive is None
-    ):
+    elif kind == "triage" and positive is None:
+        reason = ("振り分けの当たりのクラスが決まっていないので, 今のやり方の"
+                  "損は求めません")
+    elif kind not in ("quantity", "triage"):
         reason = "今のやり方の損を求められる行がありません"
     if reason:
         return {"reason": reason}

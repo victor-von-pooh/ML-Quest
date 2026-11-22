@@ -76,7 +76,10 @@ def test_quantity_rule() -> None:
     assert over["points"][0]["rule"] == pytest.approx(200 / 250)
     assert over["swing"]["rule"] > under["swing"]["rule"]
     assert under["swing"]["loss"] is None
-    assert "足りないときの損を 100 から 300 にすると" in under["sentence"]
+    assert (
+        "足りないときの損を 100 から 300 に変えると (他の値は今のまま), "
+        "置く分位点の水準は 0.40 から 0.67"
+    ) in under["sentence"]
     assert "0.40 から 0.67" in under["sentence"]
 
     # データが無ければ損は求めず, 予測が無いと量が求まらないと知らせる
@@ -129,7 +132,7 @@ def test_quantity_current_loss(tmp_path: Path) -> None:
     losses = [point["loss"]["current"] for point in field["points"]]
     assert losses == sorted(losses) and losses[0] < losses[-1]
     assert field["swing"]["loss"] == pytest.approx(losses[-1] - losses[0])
-    assert "今のやり方の損は30 日あたり" in field["sentence"]
+    assert "今のやり方の損は, 30 日あたり" in field["sentence"]
     assert "0.5 から 400" in field["sentence"]
 
 
@@ -265,10 +268,110 @@ def test_errors() -> None:
     churn = example_problem("解約の引き止め")
     with pytest.raises(ValueError, match="1 以下"):
         decision_sensitivity(churn, {"effect": [0.5, 1.5]})
-    with pytest.raises(ValueError, match="points"):
-        decision_sensitivity(problem, {"under_cost": [1, 2]}, points=1)
+    for points in (1, 0, True):
+        with pytest.raises(ValueError, match="points"):
+            decision_sensitivity(problem, {"under_cost": [1, 2]},
+                                 points=points)
     with pytest.raises(ValueError, match="辞書"):
         decision_sensitivity(problem, {})
 
     # 渡せる項目の一覧は型ごと
     assert set(SENSITIVITY_FIELDS) == {"quantity", "select", "triage"}
+
+
+def test_single_point() -> None:
+    """
+    下と上が等しい幅では, 1 つの点だけを求めることを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 1 つの点と, 幅でない文
+    result = decision_sensitivity(example_problem("総菜の作る量"),
+                                  {"under_cost": [300, 300]})
+    field = result["fields"][0]
+    assert [point["value"] for point in field["points"]] == [300]
+    assert field["swing"]["rule"] == 0
+    assert field["sentence"].startswith(
+        "足りないときの損を 300 に変えると (他の値は今のまま), "
+    )
+
+
+def test_baseline_reference(tmp_path: Path) -> None:
+    """
+    今のやり方の損が, 系列ごとに 1 日前の値を置いた損を直に数えた値と
+    同じになることを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 店と品ごとに日の順で 1 つずらした量を置いた, 足りない損と余る損
+    pytest.importorskip("ml_eda")
+    path = daily_csv(tmp_path)
+    frame = pd.read_csv(path).sort_values("date")
+    placed = frame.groupby(["store", "item"])["sales"].shift(1)
+    keep = placed.notna()
+    gap = frame["sales"][keep] - placed[keep]
+    expected = float((200 * gap.clip(lower=0)
+                      + 150 * (-gap).clip(lower=0)).sum())
+    problem = attach_data(example_problem("総菜の作る量"), path)
+    problem = answer(problem, "action.current", {"type": "lag",
+                                                 "periods": 1})
+    baseline = inspect_data(problem)["baseline"]
+    assert baseline["total"] == pytest.approx(expected)
+    assert baseline["rows"] == int(keep.sum())
+    result = decision_sensitivity(problem, {"under_cost": [200, 400]})
+    assert result["fields"][0]["points"][0]["loss"]["current"] == (
+        pytest.approx(expected)
+    )
+
+
+def test_missing_parts(tmp_path: Path) -> None:
+    """
+    損得の値の列がデータに無い場合と, 振り分けの当たりのクラスが無い場合は,
+    落ちずに損を求めない理由を返すことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 使えるデータの列にはあるが, データに無い列で書いた損
+    pytest.importorskip("ml_eda")
+    problem = attach_data(example_problem("総菜の作る量"),
+                          daily_csv(tmp_path))
+    problem = answer(problem, "action.current", {"type": "lag",
+                                                 "periods": 1})
+    columns = list(problem["information"]["columns"]) + ["waste"]
+    problem = answer(problem, "information.columns", columns)
+    problem = answer(problem, "action.decision", {
+        "type": "quantity", "under_cost": 200, "over_cost": "waste",
+    })
+    result = decision_sensitivity(problem, {"under_cost": [100, 300]})
+    assert result["data"] is None
+    assert "loss" not in result["base"]
+    assert any("求められません" in note and "waste" in note
+               for note in result["notes"])
+    assert "求められません" in inspect_data(problem)["baseline"]["reason"]
+
+    # 当たりのクラスの無い振り分け
+    triage = answer(triage_problem(tmp_path), "ml.parts.0.positive", None)
+    result = decision_sensitivity(triage, {"miss_cost": [1, 10]})
+    assert result["data"] is None
+    assert any("当たりのクラスが決まっていない" in note
+               for note in result["notes"])

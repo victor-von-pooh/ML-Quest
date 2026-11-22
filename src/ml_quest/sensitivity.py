@@ -97,9 +97,14 @@ def decision_sensitivity(
     notes.append(PREDICTION_NOTE)
     data = None
     if parts is not None:
-        rows = parts_loss(parts, decision)
-        data = {"rows": int(len(rows)),
-                "days": period_days(parts, rows.index)}
+        try:
+            rows = parts_loss(parts, decision)
+        except (KeyError, ValueError, TypeError) as error:
+            parts = None
+            notes.insert(0, f"今のやり方の損を求められません: {error}")
+        else:
+            data = {"rows": int(len(rows)),
+                    "days": period_days(parts, rows.index)}
 
     # 今の値と, 項目ごとの点
     base = outcome(decision, parts, data)
@@ -257,7 +262,8 @@ def field_values(
     Returns
     ----------
     values: list
-        小さい順の値 (件数の項目は整数. 重なりは除く)
+        小さい順の値 (件数の項目は max(1, round(x)) で整数にする. round
+        は偶数への丸めなので 2.5 は 2. 重なりは除く)
     """
     # 等しい間隔の点 (件数は整数に丸め, 0 にはしない. 整数の幅の整数の点
     # は整数のまま)
@@ -321,7 +327,11 @@ def data_parts(problem: dict, kind: str) -> tuple[Optional[dict], list]:
     parts = loss_parts(problem, data)
     if parts is None or "reason" in parts:
         return None, [parts["reason"]] if parts else []
-    if parts_loss(parts, active_value(problem, "action.decision")).empty:
+    try:
+        rows = parts_loss(parts, active_value(problem, "action.decision"))
+    except (KeyError, ValueError, TypeError) as error:
+        return None, [f"今のやり方の損を求められません: {error}"]
+    if rows.empty:
         return None, ["今のやり方の損を求められる行がありません"]
     result = (parts, [])
 
@@ -365,7 +375,8 @@ def rule_value(decision: dict) -> Optional[float]:
     Returns
     ----------
     value: Optional[float]
-        量は under / (under + over), 対象を選ぶは cost / (value × effect)
+        量は under / (under + over) (丸めない水準. ML-Inference は百分位
+        に丸めて分位点を選ぶ), 対象を選ぶは cost / (value × effect)
         (確率の差は cost / value), 振り分けは false_alarm / (miss +
         false_alarm). 列で書いた値があれば None
     """
@@ -446,7 +457,8 @@ def outcome(
     point: dict
         rule (決め方の値), acts (対象を選ぶ型で, 得になる対象がありうるか),
         limit (件数の上限), loss と per_30_days (やり方ごとの損), best
-        (振り分けで損の最も小さいやり方)
+        (振り分けで損の最も小さいやり方. 損が同じなら current, none, all
+        の先の順)
     """
     # 決め方の値と, 件数の上限
     kind = decision["type"]
@@ -566,8 +578,11 @@ def field_sentence(
     """
     # 幅と決め方の値
     first, last = points[0], points[-1]
-    lines = [f"{label}を {number_text(first['value'])} から "
-             f"{number_text(last['value'])} にすると (他の値は今のまま)"]
+    span = (number_text(first["value"]) if len(points) == 1 else
+            f"{number_text(first['value'])} から "
+            f"{number_text(last['value'])}")
+    head = f"{label}を {span} に変えると (他の値は今のまま), "
+    lines = []
     if first["rule"] is not None:
         lines.append(f"{rule_name(decision)}は {first['rule']:.2f} から "
                      f"{last['rule']:.2f}")
@@ -585,12 +600,14 @@ def field_sentence(
         monthly = first["per_30_days"] is not None
         key = "per_30_days" if monthly else "loss"
         period = "30 日あたり" if monthly else f"{data['rows']:,} 行で"
-        lines.append(f"今のやり方の損は{period} "
+        lines.append(f"今のやり方の損は, {period} "
                      f"{first[key]['current']:,.0f} から "
                      f"{last[key]['current']:,.0f}")
     if "best" in first:
         lines.append(best_text(points))
-    sentence = ". ".join(lines)
+    if not lines:
+        lines.append("決め方の値も今のやり方の損も求めない")
+    sentence = head + ". ".join(lines)
 
     return sentence
 

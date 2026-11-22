@@ -75,7 +75,7 @@ found["key"] == inspect_key(problem)   # 覚えておいた結果が今の問題
 COPY_NAME.fullmatch("5a75d2e92f54")    # attach_data が作る写しのサブディレクトリの名前の形 (12 桁の 16 進)
 ```
 
-損得の値に自信が無ければ, 幅を渡して結論の変わり方を見る (値は 1 つずつ変え, 他の値は今のまま):
+損得の値に自信が無ければ, 幅を渡して結論の変わり方を見る (値は 1 つずつ変え, 他の値は今のまま). 下の例の `under_cost` と `over_cost` は量を決める型の問題の項目 (型ごとの項目は `SENSITIVITY_FIELDS`). 行動の件数と量そのもの (予測が要る) と, 対象を選ぶ型の得は出さない. 意思決定しない問題の設定, 損得と制約に直すところがある, 幅を渡せない項目や列で書いた項目, 幅の誤りでは `ValueError` になる (詳しくは [docs/DESIGN.md](docs/DESIGN.md) の 7 節の「損得の値の幅」):
 
 ```python
 from ml_quest import SENSITIVITY_FIELDS, decision_sensitivity
