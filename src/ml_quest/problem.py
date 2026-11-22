@@ -459,9 +459,12 @@ def data_location(problem: dict) -> Optional[str]:
     location: Optional[str]
         データの場所 (データを入れていなければ None)
     """
-    # 写しが在ればそれ, 無ければ在る元の場所
+    # 写しが在ればそれ, 無ければ在る元の場所. 文字でない場所は無いもの
+    # として扱う (確かめが誤りにする)
     location = active_value(problem, "data.source")
     origin = get_value(problem, "data.origin")
+    location = location if isinstance(location, str) else None
+    origin = origin if isinstance(origin, str) else None
     if location and origin and not Path(location).exists() and (
         Path(origin).exists()
     ):

@@ -1,6 +1,7 @@
 import ast
 import os
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -1263,3 +1264,53 @@ def test_problem_origin(tmp_path: Path) -> None:
         make_project(problem, tmp_path / "self", origin=tmp_path / "self")
     with pytest.raises(ValueError, match="空です"):
         make_project(problem, tmp_path / "empty", origin=" ")
+
+
+@pytest.mark.parametrize("key", ["source", "origin"])
+@pytest.mark.parametrize("value", [123, ["a.csv"], {"path": "a.csv"}])
+def test_data_location_type(tmp_path: Path, key: str, value: Any) -> None:
+    """
+    文字でないデータの場所が確かめの誤りになり, 分析と書き出しの関数が
+    Python の型の例外で止まらないことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+    key: str
+        data の場所の項目 (source か origin)
+    value: Any
+        文字でない場所
+
+    Returns
+    ----------
+    None
+    """
+    # 手で書いた場所 (元の場所の誤りでは, 写しは文字)
+    problem = example_problem("総菜の作る量")
+    problem["data"] = {"source": str(tmp_path / "missing.csv"),
+                       "loader": "csv"}
+    problem["data"][key] = value
+    found = [item for item in check(problem) if item["level"] == "error"]
+    assert [item["id"] for item in found] == [f"data.{key}"]
+    assert "文字の場所" in found[0]["message"]
+
+    # 分析は誤りを返し, 受け渡しと書き出しは確かめの誤りの文で止まる
+    assert isinstance(inspect_key(problem), str)
+    inspected = inspect_data(problem)
+    assert [item["id"] for item in inspected["findings"]] == [f"data.{key}"]
+    assert f"data.{key}" in [item["id"] for item in open_errors(problem)]
+    message = project_error(problem)
+    assert message is not None and "文字の場所" in message
+    for call in (lambda: handoff(problem), lambda: recipe_from(problem),
+                 lambda: make_project(problem, tmp_path / "project")):
+        with pytest.raises(ValueError, match="文字の場所"):
+            call()
+    assert not (tmp_path / "project").exists()
+
+    # ファイルの組の受け持ちの下書きも同じ
+    items = answer(answer(problem, "ml.parts.0.target.kind", "mask"),
+                   "ml.parts.0.output", "region")
+    items = answer(items, "ml.parts.0.evaluation.metric", "iou")
+    with pytest.raises(ValueError, match="文字の場所"):
+        recipe_from(items)
