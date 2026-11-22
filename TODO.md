@@ -37,6 +37,12 @@
 - 終わりの条件: 受け渡し (`handoff`) の推論の値に守る指標が入り, ML-Inference のたどり直しと測り直しの結果に並ぶ
 - つながり: ML-Inference の「問題の設定から結論と損得を受け取る口」
 
+### 生成の骨組みで FID を数えて監視する
+- 何を: ML-Found の `FrechetInceptionDistance` (追加の依存 `fid`) を, 画像の生成の骨組みの Trainer の `on_epoch_end` の検証で使う. 本物の画像は 1 回だけ足し, 生成した画像は毎回 `reset_fake` で入れ替える. config に `requires: [fid]` と `trainer.valid_every_n_epochs` を書き, 最良を選ぶ指標の候補に `valid/fid` (小さいほど良い. `mode: min`) を足す. 出力が [-1, 1] のときは `(x + 1) / 2` にして渡す
+- なぜ: 生成は損失だけでは出来の良し悪しが分からず, 最良のエポックを選べないため
+- 終わりの条件: 画像の生成の骨組みの学習で `valid/fid` が `history.csv` に残り, 最良を選ぶ指標に選べる. テストがある
+- つながり: ML-Found の docs/DESIGN.md の「生成の画像の FID」
+
 ## 条件待ち
 
 ### 型ごとの骨組み
