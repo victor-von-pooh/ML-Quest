@@ -11,7 +11,7 @@ from ml_quest.problem import (
     active_value, answer, data_location, get_value, set_value,
     upgrade_problem
 )
-from ml_quest.questions import PART
+from ml_quest.questions import PART, SPLITS
 
 # レシピの分割の割合の既定値 (データの分析の段階で変えられる)
 VALID_RATIO = 0.15
@@ -23,9 +23,9 @@ EXPORTS = {kind: (function, *PAIR_NAMES[kind])
            for kind, function in EXPORT_FUNCTIONS.items()}
 
 # レシピの分割のうち, 時刻の順を守るものと, 相手をまとめる列が要るもの
-# (ML-EDA のレシピの split の method)
+# (ML-EDA のレシピの split の method. 後者は分割の名前の grouped から)
 TIME_SPLITS = ("time", "group_time")
-GROUP_SPLITS = ("group", "group_time", "stratified_group")
+GROUP_SPLITS = tuple(item["value"] for item in SPLITS if item["grouped"])
 
 # 書き出しの分割のしかた (ML-EDA の版 2 の書き出しの split の method.
 # レシピの分割と違い, 時刻と層化の分け方を持たない) と, 書いていない割合の

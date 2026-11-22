@@ -397,7 +397,7 @@ pip で入らないものを含む外の道具 (ROS2, MuJoCo, CUDA) は, 要る�
 
 最良を選ぶ指標の候補は, 上の「最良を選ぶ指標」.
 
-データの分析の分割 (`data.split`) の値の名前と説明は `SPLITS` (`time` 時刻の順, `group` 相手ごと, `random` 無作為, `stratified` 層別, `group_time` 相手ごとと時刻の順, `stratified_group` 相手ごとの層別, `none` 分けない. 受け渡しが答えから作る分割は `time`, `group`, `stratified`, `random` で, 他は書き戻したレシピの名前を読むため. 名前は ML-EDA のレシピの分割のしかた (`ml_eda.recipe.SPLIT_METHODS`) と同じ組で, ファイルの組の書き出しの分割 (`bridge.SPLIT_METHODS`) は ML-EDA の `ml_eda.items.SPLIT_METHODS` と同じ組 (どちらもテストで突き合わせる. ML-EDA を入れなければ飛ばす) 問いの選択肢と同じ `value` と `label` の並び) で返す. 画面 (ML-Pathfinder) は分割の名前と今のやり方の書き方の名前を写さず, これと問いの `choices` を使う
+データの分析の分割 (`data.split`) の値の名前と説明は `SPLITS` (`time` 時刻の順, `group` 相手ごと, `random` 無作為, `stratified` 層別, `group_time` 相手ごとと時刻の順, `stratified_group` 相手ごとの層別, `none` 分けない. 受け渡しが答えから作る分割は `time`, `group`, `stratified`, `random` で, 他は書き戻したレシピの名前を読むため. 名前は ML-EDA のレシピの分割のしかた (`ml_eda.recipe.SPLIT_METHODS`) と同じ組で, ファイルの組の書き出しの分割 (`bridge.SPLIT_METHODS`) は ML-EDA の `ml_eda.items.SPLIT_METHODS` と同じ組 (どちらもテストで突き合わせる. ML-EDA を入れなければ飛ばす) 問いの選択肢と同じ `value` と `label` に, グループを使うか `grouped` (相手をまとめる列の同じ値を同じ分割に入れるなら `True`. `group`, `group_time`, `stratified_group`) を足した並び) で返す. 書き戻しの確かめ (相手をまとめる列が要る分割) も `grouped` を使う. 画面 (ML-Pathfinder) は分割の名前と今のやり方の書き方の名前を写さず, これと問いの `choices` を使う (相手をまとめる列の説明も, 分割の名前でなく `grouped` で決める)
 
 - 読む側は, 知らない値 (`requires`, `policy`, `project` など) を無視してよい
 - 受け持ちの答えは `part` (`role`, `unit`, `output`, `target_kind`, `target_source`, `target_process`, `method`) で渡す. 学習・評価とモデルの作成にも `role` と `target_kind` を入れる

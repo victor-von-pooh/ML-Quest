@@ -1017,6 +1017,11 @@ def test_group_time_and_stratified_group() -> None:
     assert "時刻" in names["group_time"]
     assert "分類だけ" in names["stratified_group"]
 
+    # グループを使う分割が, 公開の分割の名前の目印から分かる
+    grouped = {item["value"] for item in SPLITS if item["grouped"]}
+    assert grouped == {"group", "group_time", "stratified_group"}
+    assert all(isinstance(item["grouped"], bool) for item in SPLITS)
+
 
 def test_split_names_match_ml_eda() -> None:
     """

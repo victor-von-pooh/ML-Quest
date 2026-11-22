@@ -303,18 +303,22 @@ BASELINE_TYPES = [
 ]
 
 # 受け渡しのデータの分析の分割の名前 (handoff の data.split. ML-EDA の
-# split の method)
+# split の method). grouped は相手をまとめる列の同じ値を同じ分割に入れるか
 SPLITS = [
-    {"value": "time", "label": "時刻の順 (後ろの期間を検証用とテスト用に)"},
-    {"value": "group", "label": "相手ごと (同じ相手は同じ分割に)"},
-    {"value": "random", "label": "無作為"},
-    {"value": "stratified", "label": "層別 (クラスの割合をそろえて無作為に)"},
+    {"value": "time", "label": "時刻の順 (後ろの期間を検証用とテスト用に)",
+     "grouped": False},
+    {"value": "group", "label": "相手ごと (同じ相手は同じ分割に)",
+     "grouped": True},
+    {"value": "random", "label": "無作為", "grouped": False},
+    {"value": "stratified", "label": "層別 (クラスの割合をそろえて無作為に)",
+     "grouped": False},
     {"value": "group_time",
-     "label": "相手ごとと時刻の順 (後から現れた相手を検証用とテスト用に)"},
+     "label": "相手ごとと時刻の順 (後から現れた相手を検証用とテスト用に)",
+     "grouped": True},
     {"value": "stratified_group",
      "label": "相手ごとの層別 (同じ相手は同じ分割に, クラスの割合をそろえて"
-     ". 分類だけ)"},
-    {"value": "none", "label": "分けない (全て学習用)"},
+     ". 分類だけ)", "grouped": True},
+    {"value": "none", "label": "分けない (全て学習用)", "grouped": False},
 ]
 
 # 版 1 のファイルで書ける指標
