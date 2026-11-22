@@ -236,9 +236,9 @@ TASKS = [
 # 最良のモデルを選ぶ指標. fits は合う受け持ち, 正解の種類, タスクの組の
 # 並び (kinds と tasks が無ければ問わない). better は大きいほど良いか小さい
 # ほど良いか. tasks は版 1 の形 (列の予測のタスク). policy は続けて行動を
-# 選ぶ方策 (方策かの答え) だけに合う目印. loss は 2 つ (分類の交差
-# エントロピーと, 他の受け持ちの損失. 監視する名前は同じ valid/loss
-# なので値も同じ). 選択肢は questions の choices (今の答えで絞り, 同じ値は
+# 選ぶ方策 (方策かの答え) だけに合う目印. loss は 3 つ (分類の交差
+# エントロピーと, 他の受け持ちの損失と, 方策の報酬の符号を反転した値.
+# 監視する名前は同じ valid/loss なので値も同じ). 選択肢は questions の choices (今の答えで絞り, 同じ値は
 # 1 つ) の利用. reward は方策の既定なので, 方策の選択肢の先頭
 METRICS = [
     {"value": "accuracy", "label": "当たった割合 (正解率. 大きいほど良い)",
@@ -266,7 +266,10 @@ METRICS = [
      "better": "lower",
      "fits": [{"role": "predict", "kinds": ["mask", "point_cloud", "text"]},
               {"role": "generate"}, {"role": "rank"}, {"role": "group"},
-              {"role": "effect"}]},
+              {"role": "effect", "policy": False}]},
+    {"value": "loss", "label": "評価のエピソードの報酬の和の平均の符号を"
+     "反転した値 (小さいほど良い)", "better": "lower",
+     "fits": [{"role": "effect", "policy": True}]},
     {"value": "iou", "label": "領域の重なり (IoU. 大きいほど良い)",
      "better": "higher", "fits": [{"role": "predict", "kinds": ["mask"]}]},
     {"value": "chamfer", "label": "点群どうしの近さ (Chamfer 距離. 小さい"

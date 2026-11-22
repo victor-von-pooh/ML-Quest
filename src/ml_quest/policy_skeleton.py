@@ -508,8 +508,12 @@ def policy_definition(cfg: Any, args: dict) -> Optional[Path]:
     spec: Optional[Path]
         プロジェクトの定義 (誤りがあれば知らせて None)
     """
-    # 無ければ観測と行動の空間から既定の定義を書く (ML-CreateArchitecture
-    # で開いて直せる)
+    # 場所が空なら案内. 無ければ観測と行動の空間から既定の定義を書く
+    # (ML-CreateArchitecture で開いて直せる)
+    if not cfg.model.spec:
+        print("config の model.spec に定義の場所を書いてください (既定は "
+              "models/policy.yaml)")
+        return None
     spec = PROJECT_DIR / cfg.model.spec
     if not spec.exists():
         spec.parent.mkdir(parents=True, exist_ok=True)
@@ -1042,7 +1046,8 @@ model:
   # 定義 (ML-CreateArchitecture で組む). 無ければ train.py が観測と行動の
   # 空間から既定の定義を書く. 方策の一式に写す
   spec: models/policy.yaml
-  # 価値の関数と既定の定義の隠れ層の次元数
+  # 価値の関数と既定の定義の隠れ層の次元数 (定義を書いた後に変えても方策
+  # の頭の大きさは変わらない. 価値の関数だけ)
   hidden_dim: 64
 
 # 安全の違反を知らせる info の名前 (問題の設定の答え. 無ければ cost)
