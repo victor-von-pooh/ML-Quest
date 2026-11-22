@@ -970,7 +970,10 @@ def test_group_time_and_stratified_group() -> None:
     recipe = recipe_from(sozai)["recipe"]
     timed = dict(recipe, split={**recipe["split"], "method": "group_time"})
     result = apply_recipe(sozai, timed)
-    assert result["conflicts"] == []
+    assert [(c["level"], c["id"]) for c in result["conflicts"]] == [
+        ("info", "ml.parts.0.task")
+    ]
+    assert "重なりえます" in result["conflicts"][0]["message"]
     assert handoff(result["problem"])["data"]["split"] == "time"
 
     # 時系列の予測で相手ごとの層別は誤り (と, 時刻の順でない警告)
@@ -992,7 +995,7 @@ def test_group_time_and_stratified_group() -> None:
     problem = answer(problem, "ml.parts.0.split_time_column", "applied_at")
     problem = answer(problem, "ml.parts.0.group_column", "member_id")
     recipe = recipe_from(problem)["recipe"]
-    for method, ids in (("group_time", []),
+    for method, ids in (("group_time", ["ml.parts.0.split_time_column"]),
                         ("stratified_group",
                          ["ml.parts.0.split_time_column"])):
         written = dict(recipe, split={**recipe["split"], "method": method})
@@ -1013,3 +1016,28 @@ def test_group_time_and_stratified_group() -> None:
     names = {item["value"]: item["label"] for item in SPLITS}
     assert "時刻" in names["group_time"]
     assert "分類だけ" in names["stratified_group"]
+
+
+def test_split_names_match_ml_eda() -> None:
+    """
+    受け渡しの分割の名前とファイルの組の書き出しの分割が, ML-EDA のレシピ
+    と書き出しの分割のしかたにあることを確かめる関数 (ML-EDA が無ければ
+    飛ばす)
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # レシピの分割のしかたと, ファイルの組の書き出しの分割のしかた
+    recipe = pytest.importorskip("ml_eda.recipe")
+    items = pytest.importorskip("ml_eda.items")
+    from ml_quest.bridge import SPLIT_METHODS
+
+    names = {item["value"] for item in SPLITS}
+    assert names <= set(recipe.SPLIT_METHODS)
+    assert set(recipe.SPLIT_METHODS) <= names
+    assert set(SPLIT_METHODS) == set(items.SPLIT_METHODS)
