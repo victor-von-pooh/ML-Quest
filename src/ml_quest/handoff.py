@@ -125,6 +125,63 @@ def conclusion_of(problem: dict) -> dict:
     return conclusion
 
 
+def guard_of(problem: dict) -> Optional[dict]:
+    """
+    問題の設定から, 推論の段階のたどり直しと測り直しで数える守る指標を作る
+    関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+
+    Returns
+    ----------
+    guard: Optional[dict]
+        name, unit, better (lower か higher), line (守る線), measure (測り
+        方. どれも答えていなければ None. 名前を答えていなければ全体が
+        None)
+    """
+    # 名前のある守る指標だけ (空の文, 崩れた向きと線は None)
+    name = active_value(problem, "issue.guard.name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    unit, better, line, measure = (
+        active_value(problem, f"issue.guard.{key}")
+        for key in ("unit", "better", "line", "measure")
+    )
+    guard = {
+        "name": name.strip(),
+        "unit": text_or_none(unit),
+        "better": better if better in ("lower", "higher") else None,
+        "line": line if isinstance(line, (int, float))
+        and not isinstance(line, bool) else None,
+        "measure": text_or_none(measure),
+    }
+
+    return guard
+
+
+def text_or_none(text: Any) -> Optional[str]:
+    """
+    答えの文の前後の空白を除き, 空か文でなければ None を返す関数
+
+    Parameters
+    ----------
+    text: Any
+        答え
+
+    Returns
+    ----------
+    text: Optional[str]
+        前後の空白を除いた文 (空か文でなければ None)
+    """
+    # 空白だけの文も答えていないとみなす
+    text = text.strip() if isinstance(text, str) and text.strip() else None
+
+    return text
+
+
 def handoff(problem: dict) -> dict:
     """
     後ろの段階ごとに, 問題の設定から決まる値をまとめる関数
@@ -139,11 +196,11 @@ def handoff(problem: dict) -> dict:
     stages: dict
         data (データの分析), model (モデルの作成. 雛形の名前 example も),
         training (学習・評価), inference (推論. 既製のモデルをそのまま使う
-        予測は ready に一式づくりに渡す値) ごとの値と, part (受け持ちの答え), requires (要る
-        機能の名前), policy (方策の守り. 方策でなければ None), project
-        (書き出したプロジェクトの path. データセットとモデルの定義の場所は
-        data の project_dataset と model の project_model_spec. 記録が無け
-        れば None)
+        予測は ready に一式づくりに渡す値, 守る指標は guard) ごとの値と,
+        part (受け持ちの答え), requires (要る機能の名前), policy (方策の
+        守り. 方策でなければ None), project (書き出したプロジェクトの
+        path. データセットとモデルの定義の場所は data の project_dataset
+        と model の project_model_spec. 記録が無ければ None)
 
     Raises
     ----------
@@ -282,7 +339,8 @@ def build_stages(problem: dict) -> dict:
                       "project_model_spec": project["model_spec"]},
             "training": training,
             "inference": {"decision": None, "conclusion": {},
-                          "horizon": None, "ready": ready_of(problem)},
+                          "horizon": None, "guard": None,
+                          "ready": ready_of(problem)},
             "requires": required_features(problem),
             "policy": policy_of(problem),
             "project": {"path": project["path"]},
@@ -304,7 +362,7 @@ def build_stages(problem: dict) -> dict:
         "inference": {"decision": decision_of(problem),
                       "conclusion": conclusion_of(problem),
                       "horizon": value(problem, f"{PART}.horizon"),
-                      "ready": None},
+                      "guard": guard_of(problem), "ready": None},
         "requires": required_features(problem),
         "policy": policy_of(problem),
         "project": {"path": project["path"]},
