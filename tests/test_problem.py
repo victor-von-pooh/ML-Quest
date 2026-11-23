@@ -758,16 +758,28 @@ def test_guard_metric() -> None:
                      "品切れした品と日の割合が 5 % を超えたら止める")
     assert "verification.success" not in levels(problem)["info"]
 
+    # 推論の段階へ, たどり直しと測り直しで数える値として渡る
+    assert handoff(problem)["inference"]["guard"] == {
+        "name": "品切れした品と日の割合", "unit": "%", "better": "lower",
+        "line": 5, "measure": None,
+    }
+
     # 解けたと言える指標と同じ名前は見直し. 名前を消すと続きは要らない
     same = answer(problem, "issue.guard.name", "廃棄と欠品の損")
     assert "issue.guard.name" in levels(same)["warning"]
     cleared = answer(problem, "issue.guard.name", None)
     assert levels(cleared)["error"] == []
     assert not any(text.startswith("守る指標") for text in describe(cleared))
+    assert handoff(cleared)["inference"]["guard"] is None
 
     # 見本の解約の引き止めは守る指標を持ち, 止める条件に入っている
     churn = example_problem("解約の引き止め")
     assert "verification.success" not in levels(churn)["info"]
+    assert handoff(churn)["inference"]["guard"] == {
+        "name": "引き止めの連絡への苦情", "unit": "件 / 月",
+        "better": "lower", "line": 5,
+        "measure": "窓口に届いた, 連絡についての苦情を数える",
+    }
 
     # 手で書いた数でない線と知らない向きは誤り
     raw = example_problem("解約の引き止め")
@@ -775,6 +787,28 @@ def test_guard_metric() -> None:
     assert {"issue.guard.line", "issue.guard.better"} <= set(
         levels(raw)["error"]
     )
+
+
+def test_guard_line_finite() -> None:
+    """
+    手で書いた NaN と無限大の守る線を, 受け渡しで None にすることを確かめる
+    関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 線だけが None になり, 他の答えは残る
+    for line in (float("nan"), float("inf"), float("-inf")):
+        endless = example_problem("解約の引き止め")
+        endless["issue"]["guard"]["line"] = line
+        guard = handoff(endless)["inference"]["guard"]
+        assert guard["line"] is None
+        assert guard["name"] == "引き止めの連絡への苦情"
 
 
 def test_output_use() -> None:
