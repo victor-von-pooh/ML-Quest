@@ -45,6 +45,9 @@ COLUMN_OUTPUTS = ["class", "value", "distribution"]
 # 版 2 のデータセットで骨組みを書き出せる正解の種類 (予測するの受け持ち)
 ITEMS_KINDS = ("mask", "point_cloud")
 
+# 条件の無い生成の骨組みのある, 作るの正解の種類 (画像と表)
+GENERATE_KINDS = ("image", "table")
+
 # 受け持ちの中の, 辞書で書く項目
 PART_DICTS = [f"{PART}.target", f"{PART}.target.process",
               f"{PART}.evaluation", f"{PART}.policy", f"{PART}.ready"]
@@ -1158,7 +1161,7 @@ def sha256_of(problem: dict) -> Optional[str]:
 
 def is_generate_part(problem: dict) -> bool:
     """
-    受け持ちが画像の生成 (作るで, 正解の種類が画像) かを返す関数
+    受け持ちが条件の無い生成 (作るで, 正解の種類が画像か表) かを返す関数
 
     Parameters
     ----------
@@ -1168,12 +1171,12 @@ def is_generate_part(problem: dict) -> bool:
     Returns
     ----------
     generate: bool
-        画像の生成の受け持ちか (出力の形は問わない. 骨組みの書き出しが
-        画像かを確かめる)
+        画像か表の生成の受け持ちか (出力の形は問わない. 骨組みの書き出しが
+        正解の種類と同じかを確かめる)
     """
     # 受け持ちと正解の種類の答え (要らない問いの古い答えは除外)
     generate = active_value(problem, f"{PART}.role") == "generate" and (
-        active_value(problem, f"{PART}.target.kind") == "image"
+        active_value(problem, f"{PART}.target.kind") in GENERATE_KINDS
     )
 
     return generate

@@ -19,8 +19,8 @@ from ml_quest.check import (
     split_errors
 )
 from ml_quest.data import (
-    ITEMS_KINDS, content_kind, copy_data, dataset_info, inspect_data,
-    inspect_key, items_message
+    ITEMS_KINDS, TABLE_LOADERS, content_kind, copy_data, dataset_info,
+    inspect_data, inspect_key, items_message
 )
 from ml_quest.generate_skeleton import (
     FID_LIBRARIES, FID_MONITOR, GENERATE_LIBRARIES, generate_config,
@@ -37,6 +37,9 @@ from ml_quest.policy_skeleton import (
 )
 from ml_quest.problem import (
     active_value, data_location, get_value, set_value, upgrade_problem
+)
+from ml_quest.table_skeleton import (
+    TABLE_LIBRARIES, table_config, table_readme, table_script
 )
 from ml_quest.questions import METRICS, OUTPUTS, PART
 from ml_quest.ready_skeleton import (
@@ -1068,7 +1071,7 @@ def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
         message = ready_message(upgraded)
         return message, exportable
 
-    # 列の予測と, 予測するの画像の領域と点群と, 作るの画像と, 効果を
+    # 列の予測と, 予測するの画像の領域と点群と, 作るの画像と表と, 効果を
     # 見積もるの方策だけ
     generate = is_generate_part(upgraded)
     policy = is_policy_part(upgraded)
@@ -1076,15 +1079,17 @@ def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
         not generate and not policy
     ):
         message = ("骨組みを書き出せるのは, 予測するで正解の種類が表の列, "
-                   "画像の領域, 点群の場合と, 作るで正解の種類が画像の場合と,"
-                   " 効果を見積もるで続けて行動を選ぶ方策の場合と, 予測するで"
+                   "画像の領域, 点群の場合と, 作るで正解の種類が画像か表の場合"
+                   "と, 効果を見積もるで続けて行動を選ぶ方策の場合と, 予測するで"
                    "既製のモデルをそのまま使う画像の分類の場合だけです (並べ"
                    "る, まとめるの受け持ちと, 方策でない効果の見積もりと, 他"
                    "の正解の種類はまだ扱えません)")
         return message, exportable
     if generate or policy:
-        message = (generate_message(upgraded) if generate
-                   else policy_message(upgraded))
+        message = (policy_message(upgraded) if policy
+                   else table_message(upgraded)
+                   if active_value(upgraded, f"{PART}.target.kind") == "table"
+                   else generate_message(upgraded))
         if message is not None:
             return message, exportable
 
@@ -1137,6 +1142,46 @@ def generate_message(problem: dict) -> Optional[str]:
                    f" (入れたデータ {Path(str(source)).name} は画像のディレクト"
                    "リとして読んでいません). 画像を並べたディレクトリを入れて"
                    "ください")
+
+    return message
+
+
+def table_message(problem: dict) -> Optional[str]:
+    """
+    表の生成の骨組みを書き出せない理由を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 作るで正解の種類が表)
+
+    Returns
+    ----------
+    message: Optional[str]
+        誤りの文 (出力の形が表でない, 指標が損失か列ごとの分布の近さで
+        ない, 入れたデータが表でない. 書き出せるなら None)
+    """
+    # 条件の無い拡散のモデルで, 表を作り, 損失か分布の近さで選び, 表を読む
+    output = active_value(problem, f"{PART}.output")
+    metric = active_value(problem, f"{PART}.evaluation.metric")
+    loader = active_value(problem, "data.loader")
+    options = get_value(problem, "data.options")
+    source = get_value(problem, "data.source")
+    loss = choice_label(METRICS, "loss", problem)
+    distance = choice_label(METRICS, "column_distance", problem)
+    text = isinstance(options, dict) and options.get("text_column")
+    message = None
+    if output != "table":
+        message = ("表の生成の骨組みは, 出力の形が「表 (合成のデータ)」の場合"
+                   f"だけです (今は{choice_label(OUTPUTS, output, problem)})")
+    elif metric not in ("loss", "column_distance", "other"):
+        message = (f"表の生成の骨組みは, 最良を選ぶ指標が{loss}か{distance}の"
+                   "場合だけです (今は"
+                   f"{choice_label(METRICS, metric, problem)})")
+    elif source and (loader not in TABLE_LOADERS or text):
+        message = ("表の生成の骨組みは, 表のデータで学びます (入れたデータ "
+                   f"{Path(str(source)).name} は表として読んでいません). "
+                   "表のファイル (CSV, Parquet, Excel など) を入れてください")
 
     return message
 
@@ -1386,6 +1431,23 @@ def project_files(
         env = policy_env(stages)
         if env is not None:
             files["env.py"] = env
+        return files
+
+    # 表の生成 (入れた表は data に写し, データセットはデータの分析の段階が
+    # outputs/dataset に書き出す)
+    table = active_value(problem, f"{PART}.target.kind") == "table"
+    if is_generate_part(problem) and table:
+        files = {
+            "README.md": table_readme(
+                problem, stages, "outputs/dataset",
+                data_file.as_posix() if data_file else None
+            ),
+            "configs/default/train.yaml": table_config(
+                experiment_name(problem, name), stages, "outputs/dataset",
+                requires_text(TABLE_LIBRARIES, stages)
+            ),
+            "train.py": table_script(problem, literal),
+        }
         return files
 
     # 画像の生成 (入れた画像のディレクトリは data に写し, データセットは

@@ -31,6 +31,7 @@ DEFAULT_SAFETY_KEY = "cost"
 MODEL_EXAMPLES = {
     ("predict", "mask"): "unet_segmentation",
     ("predict", "point_cloud"): "point_cloud_predictor",
+    ("generate", "table"): "diffusion_denoiser",
     ("rank", None): "two_tower_retrieval",
     ("group", None): "contrastive_encoder",
 }
@@ -576,7 +577,7 @@ def items_data(problem: dict) -> dict:
 
 def generate_data(problem: dict) -> dict:
     """
-    画像の生成の受け持ちの, データの分析の段階に渡す分割を作る関数
+    画像か表の生成の受け持ちの, データの分析の段階に渡す分割を作る関数
 
     Parameters
     ----------
@@ -586,8 +587,8 @@ def generate_data(problem: dict) -> dict:
     Returns
     ----------
     data: dict
-        split (書き戻したレシピの split.method. 無ければ random. 画像の
-        生成でなければ空)
+        split (書き戻したレシピの split.method. 無ければ random. 画像か
+        表の生成でなければ空)
     """
     # 目的の列が無いので層別にも時刻の順にもしない
     data: dict = {}
