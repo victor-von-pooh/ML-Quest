@@ -789,6 +789,28 @@ def test_guard_metric() -> None:
     )
 
 
+def test_guard_line_finite() -> None:
+    """
+    手で書いた NaN と無限大の守る線を, 受け渡しで None にすることを確かめる
+    関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 線だけが None になり, 他の答えは残る
+    for line in (float("nan"), float("inf"), float("-inf")):
+        endless = example_problem("解約の引き止め")
+        endless["issue"]["guard"]["line"] = line
+        guard = handoff(endless)["inference"]["guard"]
+        assert guard["line"] is None
+        assert guard["name"] == "引き止めの連絡への苦情"
+
+
 def test_output_use() -> None:
     """
     予測の使い道と後段と制約を書けて, 意思決定と後段の食い違いを確かめ,

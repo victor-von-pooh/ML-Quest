@@ -1,3 +1,4 @@
+import math
 from pathlib import PurePath
 from typing import Any, Optional
 
@@ -138,11 +139,11 @@ def guard_of(problem: dict) -> Optional[dict]:
     Returns
     ----------
     guard: Optional[dict]
-        name, unit, better (lower か higher), line (守る線), measure (測り
-        方. どれも答えていなければ None. 名前を答えていなければ全体が
-        None)
+        name, unit, better (lower か higher), line (守る線. 有限の数),
+        measure (測り方. どれも答えていなければ None. 名前を答えていな
+        ければ全体が None)
     """
-    # 名前のある守る指標だけ (空の文, 崩れた向きと線は None)
+    # 名前のある守る指標だけ (空の文, 崩れた向き, 有限の数でない線は None)
     name = active_value(problem, "issue.guard.name")
     if not isinstance(name, str) or not name.strip():
         return None
@@ -155,7 +156,7 @@ def guard_of(problem: dict) -> Optional[dict]:
         "unit": text_or_none(unit),
         "better": better if better in ("lower", "higher") else None,
         "line": line if isinstance(line, (int, float))
-        and not isinstance(line, bool) else None,
+        and not isinstance(line, bool) and math.isfinite(line) else None,
         "measure": text_or_none(measure),
     }
 
