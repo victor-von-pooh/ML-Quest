@@ -298,6 +298,10 @@ METRICS = [
     {"value": "fid", "label": "作った画像と本物の分布の近さ (FID. 小さい"
      "ほど良い)", "better": "lower",
      "fits": [{"role": "generate", "kinds": ["image"]}]},
+    {"value": "column_distance", "label": "作った表と本物の表の列ごとの分布"
+     "の近さ (数の列は KS 統計量, 種類の列は全変動距離の列の平均. 小さい"
+     "ほど良い)", "better": "lower",
+     "fits": [{"role": "generate", "kinds": ["table"]}]},
     {"value": "recall_at_k", "label": "上位 K 件に正解が入る割合 (Recall@K"
      ". 大きいほど良い)", "better": "higher", "fits": [{"role": "rank"}]},
     {"value": "ndcg", "label": "順位の良さ (NDCG. 大きいほど良い)",

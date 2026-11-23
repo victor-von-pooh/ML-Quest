@@ -69,7 +69,7 @@ def require_column_part(problem: dict, purpose: str) -> None:
     ----------
     ValueError
         方策の受け持ち (データの分析の段階を通らない) の場合と, 列の予測
-        でも, ファイルの組でも, 画像の生成の受け持ちでもない場合
+        でも, ファイルの組でも, 画像か表の生成の受け持ちでもない場合
     """
     # 方策は環境とのやり取りで集めるので, データの分析の段階が無い. 他の
     # 受け持ちのデータの約束は, データの分析の段階の版の上げの後
@@ -83,8 +83,8 @@ def require_column_part(problem: dict, purpose: str) -> None:
     ):
         raise ValueError(
             f"{purpose}は, 予測するで正解の種類が表の列, 画像の領域, 点群の"
-            "場合と, 作るで正解の種類が画像の場合だけです (他の受け持ちと"
-            "正解の種類はまだ扱えません)"
+            "場合と, 作るで正解の種類が画像か表の場合だけです (他の受け持ち"
+            "と正解の種類はまだ扱えません)"
         )
 
 
@@ -138,7 +138,9 @@ def recipe_from(problem: dict) -> dict:
         )[0] if item["id"] == f"{PART}.group_column"
             and not is_generate_part(problem)]
     elif is_generate_part(problem):
-        recipe = generate_recipe(notes)
+        recipe = generate_recipe(
+            active_value(problem, f"{PART}.target.kind"), notes
+        )
     else:
         recipe = skeleton_recipe(problem, data, notes)
 
@@ -360,12 +362,14 @@ def skeleton_recipe(problem: dict, data: dict, notes: list) -> dict:
     return recipe
 
 
-def generate_recipe(notes: list) -> dict:
+def generate_recipe(kind: str, notes: list) -> dict:
     """
-    画像の生成の受け持ちのレシピの雛形を作る関数
+    画像か表の生成の受け持ちのレシピの雛形を作る関数
 
     Parameters
     ----------
+    kind: str
+        正解の種類 (image か table)
     notes: list
         知らせの文の並び (書き足す)
 
@@ -374,10 +378,16 @@ def generate_recipe(notes: list) -> dict:
     recipe: dict
         ML-EDA のレシピ (目的の列の無い task: none と, 無作為の分割)
     """
-    # 条件の無い生成なので目的の列もタスクも無い. 大きさはデータの分析で
-    # 決める
-    notes.append("画像の大きさがそろわないなら, 中身の手順 (item_steps) に "
-                 "resize (width, height) を足してください")
+    # 条件の無い生成なので目的の列もタスクも無い. 画像の大きさと, 表の
+    # 落とす列と欠損の扱いはデータの分析で決める
+    if kind == "table":
+        notes.append("書き出した列を全て作ります. ID のような列と作らない列"
+                     "は drop_columns で落とし, 欠損は impute か "
+                     "drop_missing で無くしてください (標準化とワンホットは"
+                     "骨組みがするので足しません)")
+    else:
+        notes.append("画像の大きさがそろわないなら, 中身の手順 (item_steps) "
+                     "に resize (width, height) を足してください")
     split = {"method": "random", "valid": VALID_RATIO, "test": TEST_RATIO,
              "seed": 0}
     recipe = {"format_version": 1, "task": "none", "steps": [],
@@ -492,12 +502,12 @@ def apply_recipe(problem: dict, recipe: dict) -> dict:
 
 def apply_generate(problem: dict, recipe: dict) -> dict:
     """
-    画像の生成の受け持ちのレシピを問題の設定に書き戻す関数
+    画像か表の生成の受け持ちのレシピを問題の設定に書き戻す関数
 
     Parameters
     ----------
     problem: dict
-        問題の設定 (版 2. 画像の生成の受け持ち. 写したもの)
+        問題の設定 (版 2. 画像か表の生成の受け持ち. 写したもの)
     recipe: dict
         ML-EDA のレシピ
 
@@ -512,8 +522,8 @@ def apply_generate(problem: dict, recipe: dict) -> dict:
     if recipe.get("target") or recipe.get("task") not in (None, "none"):
         conflicts.append(finding(
             "error", "data.recipe",
-            "画像の生成は条件の無い生成なので, レシピに目的の列とタスクを書か"
-            "ないでください (task: none)"
+            "画像と表の生成は条件の無い生成なので, レシピに目的の列とタスク"
+            "を書かないでください (task: none)"
         ))
     split = recipe.get("split")
     split = split if isinstance(split, dict) else {}

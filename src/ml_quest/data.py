@@ -67,6 +67,10 @@ ITEMS_VERSIONS = (2, 3)
 CONTENT_LOADERS = {"image_folder": "image", "text_lines": "text",
                    "audio_folder": "audio"}
 
+# 表の, ML-EDA の読み込みの名前 (ML-EDA の kind が table のもの. 表の生成の
+# 骨組みが入れたデータを確かめる)
+TABLE_LOADERS = ("csv", "json", "parquet", "excel", "npy")
+
 # inspect_key がディレクトリの中で大きさと時刻を見るファイルの数の上限
 # (超えた分は数だけを見る)
 STAT_FILES = 10000
