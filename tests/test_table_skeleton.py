@@ -1,9 +1,11 @@
 import ast
 import csv
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
 import sys
+from types import ModuleType
 
 import pytest
 import yaml
@@ -554,3 +556,95 @@ def test_table_training(tmp_path: Path) -> None:
         ) > 0.95
         start += width
     assert start == WIDTH
+
+
+def script_module(root: Path) -> ModuleType:
+    """
+    書き出した train.py を, 純粋な関数を呼ぶためにモジュールとして読む関数
+    (PyTorch, ML-EDA, ML-Found が無ければ飛ばす)
+
+    Parameters
+    ----------
+    root: Path
+        骨組みを書き出す場所
+
+    Returns
+    ----------
+    module: ModuleType
+        読んだ train.py (main は呼ばない)
+    """
+    # 読み込みに要るライブラリ
+    for name in ("torch", "ml_eda", "ml_found"):
+        pytest.importorskip(name)
+    make_project(table_problem(), root)
+    spec = importlib.util.spec_from_file_location(
+        "table_train", root / "train.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    return module
+
+
+def test_table_functions(tmp_path: Path) -> None:
+    """
+    骨組みの列の符号化と分布の近さの関数を, 小さな表と手計算で確かめる関数
+    (PyTorch, ML-EDA, ML-Found が無ければ飛ばす)
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 標準偏差が 0 の列は 1 で割り, 整数の列は戻すときに丸める
+    np = pytest.importorskip("numpy")
+    pd = pytest.importorskip("pandas")
+    module = script_module(tmp_path / "project")
+    frame = pd.DataFrame({"same": [5.0, 5.0, 5.0], "count": [1, 2, 3],
+                          "city": ["b", "a", "b"]})
+    columns = module.table_columns(frame)
+    assert columns[0]["std"] == 1.0 and columns[0]["mean"] == 5.0
+    assert columns[1]["integer"] is True
+    assert columns[2]["categories"] == ["a", "b"]
+    assert module.encoded_width(columns) == 4
+    back = module.decode_table(module.encode_table(frame, columns), columns)
+    assert back.to_dict("list") == frame.to_dict("list")
+
+    # 学習用に無い種類の値は全て 0 に符号化する
+    unseen = module.encode_table(
+        pd.DataFrame({"same": [5.0], "count": [1], "city": ["z"]}), columns
+    )
+    assert unseen[0, 2:].tolist() == [0.0, 0.0]
+
+    # 種類の値が上限を超える列は止まる
+    many = pd.DataFrame({"id": [f"u{i}" for i in range(101)]})
+    with pytest.raises(ValueError, match="drop_columns"):
+        module.table_columns(many)
+
+    # 欠損のある列を分割をまたいで集める
+    frames = {"train": pd.DataFrame({"a": [1.0, None], "b": ["x", "y"]}),
+              "valid": pd.DataFrame({"a": [1.0, 2.0], "b": ["x", None]})}
+    assert module.missing_columns(frames) == ["a", "b"]
+    assert module.missing_columns({"train": frame}) == []
+
+    # 検証用だけにある種類の値は, その値のまま種類として数える
+    real = pd.Series(["a", "a", "z", "z"])
+    made = pd.Series(["a", "a", "a", "a"])
+    assert module.category_distance(real, made) == pytest.approx(0.5)
+    assert module.category_distance(real, real) == 0.0
+
+    # KS と Wasserstein 距離の手計算 ({0, 1} と {2, 3} は KS 1, 距離 2)
+    ks, wasserstein = module.number_distances(
+        np.array([0.0, 1.0]), np.array([2.0, 3.0]), 2.0
+    )
+    assert ks == pytest.approx(1.0)
+    assert wasserstein == pytest.approx(1.0)
+    ks, wasserstein = module.number_distances(
+        np.array([0.0, 1.0, 2.0, 3.0]), np.array([1.0, 2.0]), 1.0
+    )
+    assert ks == pytest.approx(0.25)
+    assert wasserstein == pytest.approx(0.5)

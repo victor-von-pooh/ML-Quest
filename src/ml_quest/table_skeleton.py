@@ -610,7 +610,7 @@ def category_distance(real: pd.Series, made: pd.Series) -> float:
     tvd: float
         値ごとの割合の差の絶対値の和の半分 (0 から 1)
     """
-    # 値は文字にして比べる (学習用に無い本物の値も 1 つの種類)
+    # 値は文字にして比べる (学習用に無い本物の値も, その値のまま種類)
     real_share = real.astype(str).value_counts(normalize=True)
     made_share = made.astype(str).value_counts(normalize=True)
     shares = pd.concat([real_share, made_share], axis=1).fillna(0.0)
@@ -1438,7 +1438,8 @@ def table_readme(
         "`inference/` を登録し, 行の数と種を渡すと符号化した行が返る. 表に"
         "戻すには, 実験の `table_columns.json` で, 数の列は値 × `std` + "
         "`mean` (`integer` の列は丸める), 種類の列はその列の区間で最も大きい"
-        "値の種類にする (同じ種と行の数なら見本の表と同じ行). 仮のモデル "
+        "値の種類にする (同じ種と行の数なら見本の表とほぼ同じ行. 整数と"
+        "種類は 95% 以上, 数は 1e-3 以内で一致). 仮のモデル "
         "(`PlaceholderModel`) は定義が無いので一式を作らない",
         "", "`train.py` の印 (TODO) の所 (モデルなど) は書き足す. 問題の"
         "設定を変えたら, 書き出し直すか手で直す.", "",
