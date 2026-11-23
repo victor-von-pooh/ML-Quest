@@ -22,6 +22,7 @@ from ml_quest.sensitivity import SENSITIVITY_FIELDS, decision_sensitivity
 from ml_quest.skeleton import (
     make_project, open_errors, project_error, record_project
 )
+from ml_quest.table_width import table_encoding
 
 __all__ = [
     "BASELINE_TYPES", "COPY_NAME", "EXAMPLES", "FEATURES", "FORMAT_VERSION",
@@ -35,5 +36,5 @@ __all__ = [
     "model_example", "new_problem", "open_errors", "problem_origin",
     "project_error", "project_of", "prune_copies", "questions",
     "read_columns", "recipe_from", "record_project", "required_features",
-    "resolve_choice", "save_problem", "upgrade_problem"
+    "resolve_choice", "save_problem", "table_encoding", "upgrade_problem"
 ]
