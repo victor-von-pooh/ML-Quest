@@ -171,6 +171,37 @@ def test_triage_current_column(tmp_path: Path) -> None:
     assert found["baseline"]["total"] == 30 * (10 + 1)
 
 
+def test_recipe_read_options(tmp_path: Path) -> None:
+    """
+    attach_data に渡した読み方の設定を, recipe_from がそのまま返し, その
+    読み方で ML-EDA が読めることを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # セミコロン区切りの Shift_JIS に書き直して入れる. 時刻の列は答えから
+    eda = pytest.importorskip("ml_eda")
+    path = daily_csv(tmp_path)
+    frame = pd.read_csv(path)
+    frame.to_csv(path, sep=";", encoding="cp932", index=False)
+    options = {"sep": ";", "encoding": "cp932"}
+    problem = attach_data(example_problem("総菜の作る量"), path,
+                          options=options)
+    assert get_value(problem, "data.options") == options
+    load = recipe_from(problem)["load"]
+    assert load["options"] == {**options, "time_column": "date"}
+    assert handoff(problem)["data"]["source"]["options"] == options
+    data = eda.load_data(load["path"], loader=load["loader"],
+                         **load["options"])
+    assert list(data.frame.columns) == list(frame.columns)
+
+
 def test_recipe_round_trip(tmp_path: Path) -> None:
     """
     問題の設定からのレシピの雛形が ML-EDA で書き出せ, データの分析で変えた

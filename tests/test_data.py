@@ -281,6 +281,128 @@ def test_few_items_counted(tmp_path: Path) -> None:
     assert not any("行と少なく" in message for message in messages)
 
 
+def test_read_options(tmp_path: Path) -> None:
+    """
+    attach_data に渡した読み方の設定 (区切り文字, 文字コード) で読み,
+    data.options に残すことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 区切り文字: 値の中のカンマで ML-EDA はカンマと推定する
+    pytest.importorskip("ml_eda")
+    semicolon = tmp_path / "semicolon.csv"
+    semicolon.write_text("a,b;c,d\n" + "".join(
+        f"{i},{i};{i},{i * 2}\n" for i in range(20)
+    ), encoding="utf-8")
+    guessed = attach_data(column_problem("推定"), semicolon)
+    assert get_value(guessed, "information.columns") != ["a,b", "c,d"]
+    assert get_value(guessed, "data.options") is None
+    problem = attach_data(column_problem("区切り"), semicolon,
+                          options={"sep": ";"})
+    assert get_value(problem, "information.columns") == ["a,b", "c,d"]
+    assert get_value(problem, "data.options") == {"sep": ";"}
+    found = inspect_data(problem)
+    assert found["overview"]["columns"] == 2
+
+    # 文字コード: EUC-JP の半角カナを ML-EDA は Shift_JIS と推定する
+    kana = tmp_path / "kana.csv"
+    kana.write_bytes(("ｼﾅ,ｱﾀｲ\n" + "".join(
+        f"ｱ{i},{i}\n" for i in range(20)
+    )).encode("euc-jp"))
+    guessed = attach_data(column_problem("推定"), kana)
+    assert get_value(guessed, "information.columns") != ["ｼﾅ", "ｱﾀｲ"]
+    problem = attach_data(column_problem("文字コード"), kana,
+                          options={"encoding": "euc-jp"})
+    assert get_value(problem, "information.columns") == ["ｼﾅ", "ｱﾀｲ"]
+    assert get_value(problem, "data.options") == {"encoding": "euc-jp"}
+
+    # 入れ直すと前の読み方は残らない
+    again = attach_data(problem, kana)
+    assert get_value(again, "data.options") is None
+
+
+def test_read_options_sheet(tmp_path: Path) -> None:
+    """
+    attach_data に渡した Excel のシートで読み, data.options に残すことを
+    確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 2 つ目のシートを名前で選ぶ (既定は最初のシート)
+    pytest.importorskip("ml_eda")
+    pytest.importorskip("openpyxl")
+    path = tmp_path / "book.xlsx"
+    with pd.ExcelWriter(path) as writer:
+        pd.DataFrame({"memo": ["x"] * 5}).to_excel(
+            writer, sheet_name="表紙", index=False
+        )
+        pd.DataFrame({"store": list("ab") * 10,
+                      "sales": range(20)}).to_excel(
+            writer, sheet_name="売上", index=False
+        )
+    guessed = attach_data(column_problem("推定"), path)
+    assert get_value(guessed, "information.columns") == ["memo"]
+    problem = attach_data(column_problem("シート"), path,
+                          options={"sheet": "売上"})
+    assert get_value(problem, "information.columns") == ["store", "sales"]
+    assert get_value(problem, "data.loader") == "excel"
+    assert get_value(problem, "data.options") == {"sheet": "売上"}
+    assert inspect_data(problem)["overview"]["rows"] == 20
+
+
+def test_read_options_errors(tmp_path: Path) -> None:
+    """
+    読み方の設定の誤り (読めた読み込みに無い名前, 時刻の列, 辞書でない,
+    ファイルの組のデータセット) を確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 読めた読み込み (csv) に無い名前は, 使える設定を添えて誤り. 写しは消す
+    pytest.importorskip("ml_eda")
+    path = shop_csv(tmp_path)
+    problem = column_problem("誤り")
+    copies = tmp_path / "copies"
+    with pytest.raises(ValueError, match="csv に無い読み方の設定です: "
+                       "sheet .*sep"):
+        attach_data(problem, path, copy_to=copies, options={"sheet": 1})
+    assert not list(copies.rglob("shop.csv"))
+    with pytest.raises(ValueError, match="ml.parts.0.time_column"):
+        attach_data(problem, path, options={"time_column": "date"})
+    with pytest.raises(ValueError, match="辞書"):
+        attach_data(problem, path, options=[("sep", ",")])
+    with pytest.raises(ValueError, match="書けない値"):
+        attach_data(problem, path, options={"sep": object()})
+
+    # ファイルの組のデータセットは読み方の設定を受け取らない
+    items = tmp_path / "items"
+    items.mkdir()
+    (items / "dataset.yaml").write_text("format_version: 2\n",
+                                        encoding="utf-8")
+    with pytest.raises(ValueError, match="ファイルの組"):
+        attach_data(problem, items, options={"sep": ","})
+
+
 def test_unreadable_and_missing_eda(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
