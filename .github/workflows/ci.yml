@@ -70,7 +70,7 @@ jobs:
       # 固定と同じ名前を 2 つの場所から入れられないので, 依存は入れずに入れる
       - run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -e ".[dev,data]" pyarrow gymnasium \
+          pip install -e ".[dev,data]" pyarrow openpyxl gymnasium \
             "ml-found[fid] @ git+https://github.com/victor-von-pooh/ML-Found.git" \
             "ml-modelcontrol @ git+https://github.com/victor-von-pooh/ML-ModelControl.git"
           pip install --no-deps \
@@ -80,7 +80,7 @@ jobs:
       # 新しい ML-EDA を要るようになったら, data の ML-EDA の固定を上げる
       - run: |
           pip check
-          python -c "import ml_found, ml_modelcontrol, ml_inference, ml_eda, torch, PIL, pyarrow, gymnasium, pytorch_fid"
+          python -c "import ml_found, ml_modelcontrol, ml_inference, ml_eda, torch, PIL, pyarrow, openpyxl, gymnasium, pytorch_fid"
       # pipefail で pytest の誤りを止める
       - shell: bash
         run: pytest -q -rs | tee pytest.log

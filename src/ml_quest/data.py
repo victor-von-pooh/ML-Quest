@@ -544,9 +544,93 @@ def reset_export_dirs(problem: dict, updated: dict) -> None:
             saved[key] = None
 
 
+def given_options(options: Optional[dict]) -> dict:
+    """
+    attach_data に渡した読み方の設定の形を確かめる関数
+
+    Parameters
+    ----------
+    options: Optional[dict]
+        ML-EDA の load_data に渡す読み方の設定 (None なら無し)
+
+    Returns
+    ----------
+    given: dict
+        読み方の設定の写し
+
+    Raises
+    ----------
+    ValueError
+        辞書でない場合, 名前が文字でない場合, 時刻の列を含む場合, 問題の
+        設定のファイルに書けない値の場合
+    """
+    # 時刻の列は答えから毎回付けるので, 読み方の設定では受け取らない
+    if options is None:
+        return {}
+    if not isinstance(options, dict):
+        raise ValueError("読み方の設定は名前から値の辞書で渡してください")
+    if not all(isinstance(key, str) for key in options):
+        raise ValueError("読み方の設定の名前は文字で書いてください")
+    volatile = sorted(VOLATILE_OPTIONS & set(options))
+    if volatile:
+        raise ValueError(
+            f"読み方の設定に {', '.join(volatile)} は渡せません (時刻の列は"
+            f"問い {PART}.time_column で答えてください)"
+        )
+    try:
+        yaml.safe_dump(options)
+    except yaml.YAMLError as error:
+        raise ValueError(
+            f"読み方の設定に問題の設定のファイルに書けない値があります: "
+            f"{error}"
+        ) from error
+    given = copy.deepcopy(options)
+
+    return given
+
+
+def check_options(eda: Any, data: Any, given: dict) -> None:
+    """
+    渡した読み方の設定が, 読めた読み込みの設定にあるかを確かめる関数
+
+    ML-EDA の load_data は知らない設定を黙って無視するので, ML-EDA の
+    読み込みの一覧 (describe_loaders) の設定の名前と照らす
+
+    Parameters
+    ----------
+    eda: Any
+        ML-EDA
+    data: Any
+        ML-EDA の Data
+    given: dict
+        渡した読み方の設定
+
+    Returns
+    ----------
+    None
+
+    Raises
+    ----------
+    ValueError
+        読めた読み込みに無い設定の名前がある場合
+    """
+    # 名前は ML-EDA の一覧から毎回読む (写して持たない)
+    loader = (data.source or {}).get("loader")
+    known = {entry["name"]: set(entry["options"])
+             for entry in eda.describe_loaders()}.get(loader)
+    unknown = sorted(set(given) - known) if known is not None else []
+    if unknown:
+        usable = ", ".join(sorted(known - VOLATILE_OPTIONS)) or "無し"
+        raise ValueError(
+            f"読み込み {loader} に無い読み方の設定です: {', '.join(unknown)} "
+            f"(使える設定: {usable})"
+        )
+
+
 def attach_data(
     problem: dict, path: Union[str, Path],
-    copy_to: Optional[Union[str, Path]] = None
+    copy_to: Optional[Union[str, Path]] = None,
+    options: Optional[dict] = None
 ) -> dict:
     """
     手元のデータを読み, 場所と読み方と列の名前を入れる関数
@@ -562,6 +646,10 @@ def attach_data(
         データの場所 (絶対パス)
     copy_to: Optional[Union[str, Path]] = None
         写し先のディレクトリ (絶対パス. None なら写さない)
+    options: Optional[dict] = None
+        ML-EDA の load_data に渡す読み方の設定 (区切り文字 sep, 文字
+        コード encoding, Excel のシート sheet など. None なら ML-EDA の
+        推定のまま)
 
     Returns
     ----------
@@ -572,11 +660,13 @@ def attach_data(
     Raises
     ----------
     ValueError
-        相対パスの場合, ML-EDA が無い場合, 読めない場合
+        相対パスの場合, ML-EDA が無い場合, 読めない場合, 読み方の設定の
+        誤り (読めた読み込みに無い名前など) の場合
     """
     # 絶対パスだけ. 写してから 1 回だけ読み, 読めなければ新しい写しを消す.
     # 版 1 は先に版 2 へ移行
     problem = upgrade_problem(problem)
+    given = given_options(options)
     location = Path(path).expanduser()
     target = Path(copy_to).expanduser() if copy_to is not None else None
     if not location.is_absolute() or (target and not target.is_absolute()):
@@ -587,9 +677,14 @@ def attach_data(
         if fresh is not None:
             copied = copy_data(location, fresh)
         if is_items(copied or location):
+            if given:
+                raise ValueError(
+                    "ファイルの組のデータセットには読み方の設定を渡せません"
+                )
             updated = attach_items(problem, location, copied)
             return updated
-        data, _ = read_data(copied or location, None, {}, None)
+        data, _ = read_data(copied or location, None, given, None)
+        check_options(import_eda(), data, given)
     except Exception as error:
         if fresh is not None:
             remove_path(fresh)
