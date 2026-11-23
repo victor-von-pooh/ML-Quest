@@ -69,7 +69,8 @@ save_problem(problem, "/work/problem.yaml")
 from ml_quest import COPY_NAME, answer, attach_data, inspect_data, inspect_key
 
 problem = attach_data(problem, "/data/sozai.csv", copy_to="/work/problem/data")   # 写して (写し先は絶対パス), 場所, 読み方, 列の名前
-problem = attach_data(problem, "/data/sozai.csv", copy_to="/work/problem/data", options={"sep": ";", "encoding": "cp932"})   # 推定の外れるファイルは ML-EDA の load_data の読み方の設定を渡す
+# 推定の外れるファイルは, 代わりに ML-EDA の load_data の読み方の設定を渡して入れる
+# problem = attach_data(problem, "/data/sozai.csv", copy_to="/work/problem/data", options={"sep": ";", "encoding": "cp932"})
 problem = answer(problem, "action.current", {"type": "lag", "periods": 7})   # 今のやり方 (前の週の同じ曜日と同じ)
 found = inspect_data(problem)    # 概要, 答えの候補, 確かめ, 今のやり方の損 (指標の今の値の候補)
 found["key"] == inspect_key(problem)   # 覚えておいた結果が今の問題の設定とデータのものか (変われば False)

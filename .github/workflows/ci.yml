@@ -54,9 +54,9 @@ jobs:
 
   # 書き出した骨組みを学習と推論の一式まで通すテスト (CPU の PyTorch と,
   # 骨組みが使う段階のライブラリの main と, 方策の骨組みの Gymnasium と,
-  # 画像の生成の骨組みの FID の pytorch-fid. FID の重みは取らない). 上の
-  # ジョブではこれらを入れないので飛ばされる. 飛ばしたテストがあれば誤りに
-  # する
+  # 画像の生成の骨組みの FID の pytorch-fid. FID の重みは取らない) と,
+  # Excel の読み方のテスト (openpyxl). 上のジョブではこれらを入れないので
+  # 飛ばされる. 飛ばしたテストがあれば誤りにする
   train:
     runs-on: ubuntu-latest
     steps:
