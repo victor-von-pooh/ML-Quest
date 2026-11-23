@@ -2,7 +2,8 @@ import math
 from typing import Any, Optional
 
 from ml_quest.check import (
-    amount_range, check_decision, is_finite, location_message, uplift_range
+    amount_range, check_decision, is_finite, location_message, range_text,
+    uplift_range
 )
 from ml_quest.data import (
     ITEMS_LOADER, loss_parts, parts_loss, period_days, read_data
@@ -299,32 +300,6 @@ def error_name(decision: dict, field: str) -> str:
     name = label if label == field else f"{label} ({field})"
 
     return name
-
-
-def range_text(field: str, uplift: bool) -> str:
-    """
-    項目の範囲を述べる文を返す関数 (問題の設定の確かめと同じ範囲)
-
-    Parameters
-    ----------
-    field: str
-        項目
-    uplift: bool
-        効果を確率の差で渡すか
-
-    Returns
-    ----------
-    text: str
-        範囲の文
-    """
-    # 確率の差は -1 から 1, 割合の効果は 0 から 1, 他は正
-    if uplift:
-        return "-1 から 1 にしてください"
-    if field == "effect":
-        return "0 より大きく 1 以下にしてください"
-    text = "0 より大きくしてください"
-
-    return text
 
 
 def field_values(
