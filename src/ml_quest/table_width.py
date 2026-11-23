@@ -19,7 +19,8 @@ RESERVED_COLUMNS = ("sample", "seed", "status", "reason", "decision",
 RESERVED_PREFIXES = ("p:", "q:")
 RESERVED_SUFFIX = " (入力)"
 
-# 列の符号化を決めるときに欠損を見る分割 (表の生成の骨組みと同じ)
+# 列の符号化を決めるときに欠損を見る分割 (表の生成の骨組みの train.py が
+# 使う分割と同じ組)
 ENCODING_SPLITS = ("train", "valid", "test")
 
 
@@ -132,6 +133,31 @@ def encoded_width(columns: list[dict]) -> int:
     return width
 
 
+def missing_columns(frames: dict) -> list[str]:
+    """
+    分割のどれかに欠損のある列を集める関数 (表の生成の骨組みの train.py の
+    missing_columns と同じ決まり)
+
+    Parameters
+    ----------
+    frames: dict
+        分割の名前から表
+
+    Returns
+    ----------
+    names: list[str]
+        欠損のある列の名前 (列の順. 無ければ空)
+    """
+    # 全ての分割で見る
+    names: list[str] = []
+    for frame in frames.values():
+        for name in frame.columns[frame.isna().any()]:
+            if str(name) not in names:
+                names.append(str(name))
+
+    return names
+
+
 def table_encoding(
     problem: dict, location: Union[str, Path]
 ) -> Optional[dict]:
@@ -151,7 +177,8 @@ def table_encoding(
     encoding: Optional[dict]
         width (符号化した行の幅), numbers (数の列の数), categories (種類の
         列の数), columns (列ごとの符号化. table_columns). 表の生成でなければ
-        None
+        None. 幅は学習用の分割だけで決まるので, 検証用の分割が無くても
+        止まらない (骨組みの train.py は学習の前に止まる)
 
     Raises
     ----------
@@ -187,11 +214,7 @@ def table_encoding(
     frames = {split: frame[list(dataset.features)]
               for split, frame in dataset.frames.items()
               if split in ENCODING_SPLITS}
-    missing: list[str] = []
-    for frame in frames.values():
-        for name in frame.columns[frame.isna().any()]:
-            if str(name) not in missing:
-                missing.append(str(name))
+    missing = missing_columns(frames)
     if missing:
         raise ValueError(
             f"欠損のある列があります ({', '.join(missing)}). レシピに "
