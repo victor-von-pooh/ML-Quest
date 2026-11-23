@@ -2,7 +2,8 @@ import math
 from typing import Any, Optional
 
 from ml_quest.check import (
-    amount_range, check_decision, is_finite, location_message, uplift_range
+    amount_range, check_decision, is_finite, location_message, range_text,
+    uplift_range
 )
 from ml_quest.data import (
     ITEMS_LOADER, loss_parts, parts_loss, period_days, read_data
@@ -19,6 +20,11 @@ SENSITIVITY_FIELDS = {
     "select": ("value", "cost", "effect", "budget", "budget_cost"),
     "triage": ("miss_cost", "false_alarm_cost", "capacity"),
 }
+
+# 幅の中で求める点の数の範囲 (両端を含む. 多すぎる点で重いデータの損を
+# 何度も求めないように)
+MIN_POINTS = 2
+MAX_POINTS = 21
 
 # 件数の項目 (幅の点を整数にそろえる)
 COUNT_FIELDS = ("budget", "capacity")
@@ -64,7 +70,7 @@ def decision_sensitivity(
     ranges: dict
         項目ごとの幅 ({"under_cost": [100, 300]} など. 下と上の 2 つの数)
     points: int = 5
-        幅の中で求める点の数 (両端を含む. 2 以上)
+        幅の中で求める点の数 (両端を含む. 2 から 21)
 
     Returns
     ----------
@@ -81,10 +87,11 @@ def decision_sensitivity(
     problem = upgrade_problem(problem)
     decision = checked_decision(problem)
     kind = decision["type"]
-    if not isinstance(points, int) or isinstance(points, bool) or (
-        points < 2
+    if not isinstance(points, int) or isinstance(points, bool) or not (
+        MIN_POINTS <= points <= MAX_POINTS
     ):
-        raise ValueError("points は 2 以上の整数にしてください")
+        raise ValueError(f"点の数 (points) は {MIN_POINTS} から "
+                         f"{MAX_POINTS} の整数にしてください")
     grids = {field: field_values(decision, field, bounds, points)
              for field, bounds in checked_ranges(decision, ranges).items()}
 
@@ -179,13 +186,14 @@ def checked_ranges(decision: dict, ranges: Any) -> dict:
     checked = {}
     for field, bounds in ranges.items():
         if field not in SENSITIVITY_FIELDS[kind]:
-            raise ValueError(
-                f"{field} には幅を渡せません (渡せるのは "
-                f"{', '.join(SENSITIVITY_FIELDS[kind])})"
-            )
+            names = ", ".join(error_name(decision, name)
+                              for name in SENSITIVITY_FIELDS[kind])
+            raise ValueError(f"{error_name(decision, field)} には幅を渡せ"
+                             f"ません (渡せるのは {names})")
         if isinstance(decision.get(field), str):
-            raise ValueError(f"{field} は列 {decision[field]} の行ごとの値"
-                             "なので, 幅を渡せません")
+            raise ValueError(f"{error_name(decision, field)} は列 "
+                             f"{decision[field]} の行ごとの値なので, 幅を"
+                             "渡せません")
         checked[field] = checked_bounds(decision, field, bounds)
 
     # 選ぶ型の上限は件数か費用の 1 つだけ
@@ -193,8 +201,9 @@ def checked_ranges(decision: dict, ranges: Any) -> dict:
                          ("budget_cost", "budget")):
         if field in checked and (other in checked
                                  or decision.get(other) is not None):
-            raise ValueError("対象を選ぶ行動の上限は, 件数 (budget) か費用 "
-                             "(budget_cost) の 1 つだけにしてください")
+            raise ValueError("対象を選ぶ行動の上限は, 件数の上限 (budget) "
+                             "か費用の上限 (budget_cost) の 1 つだけにして"
+                             "ください")
 
     return checked
 
@@ -223,23 +232,74 @@ def checked_bounds(decision: dict, field: str, bounds: Any) -> tuple:
         2 つの数でない, 下が上より大きい, 項目の範囲の外
     """
     # 2 つの有限の数で, 下から上へ
+    name = error_name(decision, field)
     if not isinstance(bounds, (list, tuple)) or len(bounds) != 2 or not all(
         is_finite(value) for value in bounds
     ):
-        raise ValueError(f"{field} の幅は, 下と上の 2 つの数にしてください")
+        raise ValueError(f"{name} の幅は, 下と上の 2 つの数にしてください")
     low, high = bounds
     if low > high:
-        raise ValueError(f"{field} の幅は, 下を上以下にしてください")
+        raise ValueError(f"{name} の幅は, 下を上以下にしてください")
 
-    # 両端が項目の範囲の中 (問題の設定の確かめと同じ決まり)
+    # 両端が項目の範囲の中 (問題の設定の確かめと同じ決まり. 文は項目の
+    # 名前で)
     uplift = field == "effect" and decision.get("effect_kind") == "uplift"
     for value in (low, high):
         found = uplift_range(value) if uplift else amount_range(field, value)
         if found:
-            raise ValueError(f"{field} の幅の {value}: {found[0]['message']}")
+            raise ValueError(f"{name} の幅の {number_text(value)} は, "
+                             f"{range_text(field, uplift)}")
     checked = (low, high)
 
     return checked
+
+
+def field_label(decision: dict, field: str) -> str:
+    """
+    損得と制約の項目の日本語の名前を返す関数
+
+    Parameters
+    ----------
+    decision: dict
+        意思決定
+    field: str
+        項目
+
+    Returns
+    ----------
+    label: str
+        問題の設定の問いの名前 (効果を確率の差で渡すなら「確率の差」.
+        知らない項目は鍵のまま)
+    """
+    # 効果は渡し方ごと
+    if field == "effect" and decision.get("effect_kind") == "uplift":
+        return "確率の差"
+    label = FIELD_NAMES.get(field, field)
+
+    return label
+
+
+def error_name(decision: dict, field: str) -> str:
+    """
+    誤りの文に出す項目の名前を返す関数
+
+    Parameters
+    ----------
+    decision: dict
+        意思決定
+    field: str
+        項目
+
+    Returns
+    ----------
+    name: str
+        日本語の名前と, 括弧で添えた鍵 (知らない項目は鍵だけ)
+    """
+    # 名前の無い項目は鍵だけ
+    label = field_label(decision, field)
+    name = label if label == field else f"{label} ({field})"
+
+    return name
 
 
 def field_values(
@@ -458,7 +518,7 @@ def outcome(
         rule (決め方の値), acts (対象を選ぶ型で, 得になる対象がありうるか),
         limit (件数の上限), loss と per_30_days (やり方ごとの損), best
         (振り分けで損の最も小さいやり方. 損が同じなら current, none, all
-        の先の順)
+        の先の順) と best_label (その名前)
     """
     # 決め方の値と, 件数の上限
     kind = decision["type"]
@@ -483,6 +543,7 @@ def outcome(
     )
     if kind == "triage":
         point["best"] = min(loss, key=loss.__getitem__)
+        point["best_label"] = PLAN_NAMES[point["best"]]
 
     return point
 
@@ -518,9 +579,7 @@ def field_result(
     for value in values:
         point = outcome({**decision, field: value}, parts, data)
         points.append({"value": value, **point})
-    label = FIELD_NAMES[field]
-    if field == "effect" and decision.get("effect_kind") == "uplift":
-        label = "確率の差"
+    label = field_label(decision, field)
 
     # 振れ幅と文
     swing = {"rule": spread([point["rule"] for point in points]),

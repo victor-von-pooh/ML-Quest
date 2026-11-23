@@ -5,7 +5,7 @@ import pytest
 
 from ml_quest import (
     SENSITIVITY_FIELDS, answer, attach_data, decision_sensitivity,
-    example_problem, inspect_data
+    example_problem, get_value, inspect_data
 )
 from test_project_data import daily_csv
 
@@ -220,6 +220,8 @@ def test_triage_alternatives(tmp_path: Path) -> None:
     assert miss["points"][0]["loss"] == {"current": 45, "none": 30,
                                          "all": 60}
     assert miss["points"][0]["best"] == "none"
+    assert miss["points"][0]["best_label"] == "どれも回さない"
+    assert base["best_label"] == "全てを回す"
     assert "0.5 ではどれも回さない" in miss["sentence"]
     assert "10 では全てを回す" in miss["sentence"]
     assert "120 行で" in miss["sentence"]
@@ -253,23 +255,46 @@ def test_errors() -> None:
         decision_sensitivity(broken, {"under_cost": [1, 2]})
 
     # 幅を渡せない項目, 列で書いた項目, 幅の形と範囲, 点の数
-    with pytest.raises(ValueError, match="渡せるのは under_cost"):
+    with pytest.raises(ValueError, match=r"今ある量 \(stock\) には幅を渡"
+                       r"せません \(渡せるのは 足りないときの損 "
+                       r"\(under_cost\), 余ったときの損 \(over_cost\)\)"):
         decision_sensitivity(problem, {"stock": [0, 10]})
     rows = answer(problem, "action.decision", {
         "type": "quantity", "under_cost": "promo", "over_cost": 150,
     })
-    with pytest.raises(ValueError, match="行ごとの値"):
+    with pytest.raises(ValueError, match=r"足りないときの損 \(under_cost\) "
+                       "は列 promo の行ごとの値"):
         decision_sensitivity(rows, {"under_cost": [1, 2]})
     for bounds in ([1], [2, 1], [1, float("nan")], "1-2", [True, 2]):
         with pytest.raises(ValueError, match="幅"):
             decision_sensitivity(problem, {"under_cost": bounds})
-    with pytest.raises(ValueError, match="0 より大きく"):
+    with pytest.raises(ValueError, match=r"余ったときの損 \(over_cost\) の"
+                       "幅は, 下を上以下に"):
+        decision_sensitivity(problem, {"over_cost": [2, 1]})
+    with pytest.raises(ValueError, match=r"足りないときの損 \(under_cost\) "
+                       "の幅の 0 は, 0 より大きく"):
         decision_sensitivity(problem, {"under_cost": [0, 2]})
     churn = example_problem("解約の引き止め")
-    with pytest.raises(ValueError, match="1 以下"):
+    with pytest.raises(ValueError, match=r"防げる割合 \(effect\) の幅の 1.5 "
+                       "は, 0 より大きく 1 以下"):
         decision_sensitivity(churn, {"effect": [0.5, 1.5]})
-    for points in (1, 0, True):
-        with pytest.raises(ValueError, match="points"):
+    with pytest.raises(ValueError, match=r"件数の上限 \(budget\) か費用の"
+                       r"上限 \(budget_cost\) の 1 つだけ"):
+        decision_sensitivity(churn, {"budget_cost": [1000, 2000]})
+    uplift = answer(churn, "action.decision", {
+        **get_value(churn, "action.decision"), "effect_kind": "uplift",
+        "effect": -0.1, "effect_goal": "reduce",
+    })
+    with pytest.raises(ValueError, match=r"確率の差 \(effect\) の幅の 2 は, "
+                       "-1 から 1"):
+        decision_sensitivity(uplift, {"effect": [0.5, 2]})
+
+    # 点の数は 2 から 21
+    assert len(decision_sensitivity(
+        problem, {"under_cost": [1, 21]}, points=21
+    )["fields"][0]["points"]) == 21
+    for points in (1, 0, True, 22):
+        with pytest.raises(ValueError, match=r"点の数 \(points\) は 2 から 21"):
             decision_sensitivity(problem, {"under_cost": [1, 2]},
                                  points=points)
     with pytest.raises(ValueError, match="辞書"):

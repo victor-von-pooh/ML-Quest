@@ -661,6 +661,36 @@ def is_finite(value: Any) -> bool:
     return finite
 
 
+def range_text(field: str, uplift: bool = False) -> str:
+    """
+    数で書いた損得と制約の項目の範囲を述べる文を返す関数 (確かめと損得の
+    値の幅の誤りの文で同じ範囲を使うため)
+
+    Parameters
+    ----------
+    field: str
+        項目
+    uplift: bool = False
+        効果を確率の差で渡すか
+
+    Returns
+    ----------
+    text: str
+        範囲の文 (「… にしてください」まで)
+    """
+    # 確率の差は -1 から 1, 割合の効果は 0 から 1, 今ある量は 0 以上,
+    # 他は正
+    if field == "effect" and uplift:
+        return "-1 から 1 にしてください"
+    if field == "effect":
+        return "0 より大きく 1 以下にしてください"
+    if field == "stock":
+        return "0 以上にしてください"
+    text = "0 より大きくしてください"
+
+    return text
+
+
 def uplift_range(value: Any) -> list[dict]:
     """
     確率の差で書いた効果の範囲を確かめる関数
@@ -683,8 +713,8 @@ def uplift_range(value: Any) -> list[dict]:
     elif not -1 <= value <= 1:
         found.append(finding(
             "error", "action.decision",
-            "effect (行動したとき − しないときの当たりの確率) は -1 から 1 "
-            "にしてください"
+            "effect (行動したとき − しないときの当たりの確率) は "
+            + range_text("effect", uplift=True)
         ))
 
     return found
@@ -769,14 +799,14 @@ def amount_range(field: str, value: Any) -> list[dict]:
     elif field == "effect" and not 0 < value <= 1:
         found.append(finding(
             "error", "action.decision",
-            "effect (行動で防げる割合) は 0 より大きく 1 以下にしてください"
+            "effect (行動で防げる割合) は " + range_text("effect")
         ))
     elif field == "stock" and value < 0:
         found.append(finding("error", "action.decision",
-                             "stock は 0 以上にしてください"))
+                             "stock は " + range_text("stock")))
     elif field not in ("effect", "stock") and value <= 0:
         found.append(finding("error", "action.decision",
-                             f"{field} は 0 より大きくしてください"))
+                             f"{field} は {range_text(field)}"))
 
     return found
 
