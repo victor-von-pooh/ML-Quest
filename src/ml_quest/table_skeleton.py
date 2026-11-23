@@ -53,11 +53,11 @@ ROLE = "generate"
 OUTPUT = "table"
 METHOD = $method
 
-# 推論の一式の出力の形 (ML-Inference の雑音だけの一式は表を出せないので,
-# 符号化した 1 行のベクトル)
-BUNDLE_FORM = "vector"
+# 推論の一式の出力の形 (ML-Inference の表の出力の雑音だけの一式. 列の
+# 符号化を一式に写し, 列の名前と値の表を返す)
+BUNDLE_FORM = "table"
 
-# 列の符号化の記録 (実験のディレクトリの中. 一式の出力を表に戻すため)
+# 列の符号化の記録 (実験のディレクトリの中. 推論の一式に写す)
 COLUMNS_FILE = "table_columns.json"
 
 # 検証用とテスト用の評価の名前 (evaluations/<名前>_<分割>.json), 説明,
@@ -76,6 +76,14 @@ MEAN_ROW = "(全ての列の平均)"
 
 # 種類の列の値の種類の上限 (超える列は ID のような列とみなして止まる)
 MAX_CATEGORIES = 100
+
+# 推論の一式の予測の表の列と重なる列の名前, 頭と終わり (ML-Inference の
+# 表の出力の一式が使えない名前. 学習の前に止まる)
+RESERVED_COLUMNS = ("sample", "seed", "status", "reason", "decision",
+                    "output", "artifact", "tokens", "prediction",
+                    "confidence")
+RESERVED_PREFIXES = ("p:", "q:")
+RESERVED_SUFFIX = " (入力)"
 
 # 学習の後に作る見本の行の数 (見比べる検証用の本物の行も同じ数まで)
 SAMPLES = 100
@@ -434,8 +442,24 @@ def table_columns(frame: pd.DataFrame) -> list[dict]:
     Raises
     ----------
     ValueError
-        種類の列の値の種類が MAX_CATEGORIES より多い場合
+        推論の一式の予測の表の列と重なる名前の列がある場合と, 種類の列の
+        値の種類が MAX_CATEGORIES より多い場合
     """
+    # 推論の一式の予測の表の列と重なる名前
+    reserved = [str(name) for name in frame.columns
+                if str(name) in RESERVED_COLUMNS
+                or str(name).startswith(RESERVED_PREFIXES)
+                or str(name).endswith(RESERVED_SUFFIX)]
+    if reserved:
+        raise ValueError(
+            f"列 {', '.join(reserved)} の名前は推論の一式の予測の表の列と"
+            f"重なります ({', '.join(RESERVED_COLUMNS)} と, "
+            f"{' か '.join(RESERVED_PREFIXES)} で始まる名前, "
+            f"「{RESERVED_SUFFIX}」で終わる名前は使えません). レシピの "
+            "drop_columns で落とすか, 元の表の列の名前を変えて書き出し直して"
+            "ください"
+        )
+
     # 真偽値と数でない列は種類の列. 標準偏差が 0 の列は 1 で割る
     columns = []
     for name in frame.columns:
@@ -1022,8 +1046,7 @@ def write_columns(run_dir: Path, columns: list[dict]) -> None:
 
 
 def make_inference(
-    cfg: Any, spec: Optional[Path], width: int, run_dir: Path,
-    experiment: Experiment
+    cfg: Any, spec: Optional[Path], run_dir: Path, experiment: Experiment
 ) -> None:
     """
     学習した重みから, 実験の中に ML-Inference の雑音だけの一式を作る関数
@@ -1034,10 +1057,8 @@ def make_inference(
         config (一式の名前と ddim の設定)
     spec: Optional[Path]
         ML-ModelControl の定義のファイル (無ければ None)
-    width: int
-        符号化した行の幅
     run_dir: Path
-        実験のディレクトリ
+        実験のディレクトリ (列の符号化 COLUMNS_FILE を書いた後)
     experiment: Experiment
         実験 (train.log に記録する)
 
@@ -1055,7 +1076,7 @@ def make_inference(
         return
 
     # 学習と同じ雑音の予定の ddim で, データセットを持たない一式 (行の数
-    # と種で, 符号化した行を作る)
+    # と種で表を作る). 列の符号化は一式に写すので, 1 件の形は省く
     from ml_inference import make_bundle
     state, time = noise_inputs(spec)
     procedure = {
@@ -1069,12 +1090,12 @@ def make_inference(
         run_dir / "inference", spec, None, run_dir, role=ROLE,
         form=BUNDLE_FORM,
         inputs={state: {"source": "state"}, time: {"source": "time"}},
-        output_options={"shape": [width]}, procedure=procedure,
-        name=cfg.experiment.name
+        output_options={"columns": str(run_dir / COLUMNS_FILE)},
+        procedure=procedure, name=cfg.experiment.name
     )
     experiment.logger.info(
-        "推論の一式 (雑音だけ): inference/ (行の数と種で, 符号化した行を"
-        f"作る. 表に戻すのは {COLUMNS_FILE}. 版 {info['format_version']})"
+        "推論の一式 (雑音だけ): inference/ (行の数と種で, 列の名前と値の"
+        f"表を作る. 版 {info['format_version']})"
     )
     for note in info["notes"]:
         experiment.logger.warning(f"推論の一式の注意: {note}")
@@ -1224,8 +1245,8 @@ def main() -> None:
         experiment.logger.warning(f"見本を書けません: {error}")
 
     # 実験の中に雑音だけの推論の一式 (ML-ModelControl の定義がある場合
-    # だけ)
-    make_inference(cfg, spec, width, run_dir, experiment)
+    # だけ. 上で書いた列の符号化を一式に写す)
+    make_inference(cfg, spec, run_dir, experiment)
 
 
 if __name__ == "__main__":
@@ -1393,8 +1414,10 @@ def table_readme(
         "このディレクトリの `" + dataset + "` に書き出す. 検証用の分割は"
         "必ず作る. 書き出した列を全て作るので, ID のような列 (行ごとに違う"
         "値) と作らない列は `drop_columns` で落とし, 欠損は `impute` (埋める)"
-        " か `drop_missing` (行を落とす) で無くす (欠損のある表と, 値の種類"
-        "が 100 を超える種類の列では `train.py` が止まる). 標準化とワン"
+        " か `drop_missing` (行を落とす) で無くす (欠損のある表, 値の種類が "
+        "100 を超える種類の列と, 推論の一式の予測の表の列と重なる名前 "
+        "(`sample`, `status`, `prediction` など) の列では `train.py` が"
+        "止まる). 標準化とワン"
         "ホットは `train.py` が学習用の分割から決めるので, レシピには足さない"
         + (f". 入れた表はこのディレクトリの `{raw}` に写した" if raw
            else ""),
@@ -1430,17 +1453,16 @@ def table_readme(
         "比べ, `train_distance` (同じ分布でも行の数の違いから出る目安) と"
         "見比べる. 列どうしの関係 (同時の分布) は数えない. 今のやり方とは"
         "比べない",
-        "4. **推論** (ML-Inference, ML-Provide): `model.spec` の場所に定義を"
-        "置いて学習すると, `train.py` が学習の後に実験の中の `inference/` "
-        "に雑音だけの推論の一式 (版 5. データセットを持たず, 行の数と種で"
-        "作る. 手順は学習と同じ雑音の予定の `ddim`. 出力の形は `vector` で"
-        ", 1 件の形は符号化した行の幅) を作る. ML-Provide でその "
-        "`inference/` を登録し, 行の数と種を渡すと符号化した行が返る. 表に"
-        "戻すには, 実験の `table_columns.json` で, 数の列は値 × `std` + "
-        "`mean` (`integer` の列は丸める), 種類の列はその列の区間で最も大きい"
-        "値の種類にする (同じ種と行の数なら見本の表とほぼ同じ行. 整数と"
-        "種類は 95% 以上, 数は 1e-3 以内で一致). 仮のモデル "
-        "(`PlaceholderModel`) は定義が無いので一式を作らない",
+        "4. **推論** (ML-Inference): `model.spec` の場所に定義を置いて"
+        "学習すると, `train.py` が学習の後に実験の中の `inference/` に"
+        "雑音だけの推論の一式 (版 7. データセットを持たず, 行の数と種で"
+        "作る. 手順は学習と同じ雑音の予定の `ddim`. 出力の形は `table` で, "
+        "列の符号化 `table_columns.json` を一式に写す) を作る. 版 7 の一式を"
+        "作れる ML-Inference が要る. その `inference/` に行の数と種を渡すと, "
+        "件ごとの `sample`, `seed`, `status`, `reason` と, 列の名前と値の"
+        "表が返る (同じ種と行の数なら見本の表とほぼ同じ行. 整数と種類は "
+        "95% 以上, 数は 1e-3 以内で一致). 仮のモデル (`PlaceholderModel`) は"
+        "定義が無いので一式を作らない",
         "", "`train.py` の印 (TODO) の所 (モデルなど) は書き足す. 問題の"
         "設定を変えたら, 書き出し直すか手で直す.", "",
     ]

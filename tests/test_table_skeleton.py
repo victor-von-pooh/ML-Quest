@@ -401,8 +401,8 @@ def test_table_project(tmp_path: Path) -> None:
     readme = (project / "README.md").read_text(encoding="utf-8")
     for words in ("task: none", "data/customers.csv", "drop_columns",
                   "int64", "diffusion_denoiser", "KS 統計量", "全変動距離",
-                  "Wasserstein", "column_distance_test.json", "版 5",
-                  "`vector`", "table_columns.json"):
+                  "Wasserstein", "column_distance_test.json", "版 7",
+                  "`table`", "table_columns.json"):
         assert words in readme, words
 
     # 案内どおりの書き出しで, 目的の列の無い表のデータセット
@@ -486,7 +486,7 @@ def test_table_placeholder(tmp_path: Path) -> None:
 def test_table_training(tmp_path: Path) -> None:
     """
     表の生成の骨組みを書き換えずに同梱の例の幅を合わせた定義で学び, 雑音
-    だけの推論の一式の行を表に戻すと見本の表と同じになることを確かめる関数
+    だけの推論の一式の返す表が見本の表とほぼ同じになることを確かめる関数
     (PyTorch と段階のライブラリが無ければ飛ばす)
 
     Parameters
@@ -520,42 +520,38 @@ def test_table_training(tmp_path: Path) -> None:
         "generate", "table", "顧客の表に似た行"
     )
 
-    # 雑音だけの一式 (版 5): 学習と同じ雑音の予定の ddim で, 符号化した行
+    # 雑音だけの一式 (版 7): 学習と同じ雑音の予定の ddim で, 列の符号化を
+    # 写した表の出力
     bundle_dir = run / "inference"
     info = yaml.safe_load((bundle_dir / "inference.yaml")
                           .read_text(encoding="utf-8"))
-    assert info["format_version"] == 5 and info["dataset"] is None
+    columns = json.loads((run / "table_columns.json")
+                         .read_text(encoding="utf-8"))["columns"]
+    assert info["format_version"] == 7 and info["dataset"] is None
     assert info["role"] == "generate"
-    assert info["output"] == {"form": "vector", "shape": [WIDTH]}
+    assert info["output"] == {"form": "table", "shape": [WIDTH],
+                              "columns": columns}
     assert info["inputs"] == {"x": {"source": "state"},
                               "t": {"source": "time"}}
     assert info["procedure"]["steps"] == 5
     assert info["procedure"]["options"]["train_steps"] == 50
 
-    # 一式の行を列の符号化で表に戻すと, 同じ種の見本の表と同じ
+    # 一式の表は, 同じ種の見本の表とほぼ同じ
     frame = predict(load_bundle(bundle_dir), {"count": 100, "seed": 0})
+    assert list(frame.columns) == ["sample", "seed", "status", "reason",
+                                   *COLUMNS]
     assert list(frame["status"]) == ["ok"] * 100
-    array = np.stack([np.asarray(value) for value in frame["output"]])
-    columns = json.loads((run / "table_columns.json")
-                         .read_text(encoding="utf-8"))["columns"]
     made = pd.read_csv(run / "samples" / "generated" / "final.csv")
-    start = 0
     for column in columns:
-        if column["type"] == "number":
-            values = array[:, start] * column["std"] + column["mean"]
-            if column["integer"]:
-                assert (np.round(values) == made[column["name"]]).mean() > 0.95
-            else:
-                assert np.allclose(values, made[column["name"]], atol=1e-3)
-            start += 1
+        name = column["name"]
+        if column["type"] == "number" and not column["integer"]:
+            assert np.allclose(frame[name].astype(float), made[name],
+                               atol=1e-3)
             continue
-        width = len(column["categories"])
-        picked = [column["categories"][index] for index in
-                  array[:, start:start + width].argmax(axis=1)]
-        assert (np.array(picked) == made[column["name"]].astype(str)).mean(
-        ) > 0.95
-        start += width
-    assert start == WIDTH
+        same = frame[name].astype(str).to_numpy() == made[name].astype(
+            str
+        ).to_numpy()
+        assert same.mean() > 0.95, name
 
 
 def script_module(root: Path) -> ModuleType:
@@ -619,6 +615,11 @@ def test_table_functions(tmp_path: Path) -> None:
         pd.DataFrame({"same": [5.0], "count": [1], "city": ["z"]}), columns
     )
     assert unseen[0, 2:].tolist() == [0.0, 0.0]
+
+    # 推論の一式の予測の表の列と重なる名前の列は止まる
+    for name in ("status", "p:a", "q:b", "age (入力)"):
+        with pytest.raises(ValueError, match="drop_columns"):
+            module.table_columns(pd.DataFrame({name: [1.0], "ok": [2.0]}))
 
     # 種類の値が上限を超える列は止まる
     many = pd.DataFrame({"id": [f"u{i}" for i in range(101)]})
