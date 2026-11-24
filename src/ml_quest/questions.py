@@ -460,7 +460,9 @@ QUESTIONS: list[dict[str, Any]] = [
              "と同じ結果になる割合. 無ければ空のまま"},
     {"id": "issue.guard.unit", "section": 2, "kind": "text",
      "required": False, "when": HAS_GUARD, "title": "その数字の単位は",
-     "help": "例: %, 件 / 月"},
+     "help": "例: 件 / 月. たどり直しで割合の量 (7) を数えるなら, 値と線"
+             "は 0 から 1 なので, 空のままか「割合 (0 から 1)」と書く (% と"
+             "書くと線の 0.05 が 0.05 % に見える)"},
     {"id": "issue.guard.better", "section": 2, "kind": "choice",
      "required": True, "when": HAS_GUARD,
      "title": "守る指標は, 小さいほど良いですか, 大きいほど良いですか",
@@ -765,10 +767,11 @@ QUESTIONS: list[dict[str, Any]] = [
     {"id": "issue.guard.counted", "section": 7, "kind": "choice",
      "required": False, "when": COUNTABLE_GUARD, "choices": GUARD_COUNTED,
      "title": "守る指標は, たどり直しで数えられる量のどれに当たりますか",
-     "help": "当たる量を選ぶと, 推論の段階のたどり直しが, 予測から決めた"
-             "行動でその量を数え, 守る線と並べる. 当たる量が無ければ「指さ"
-             "ない」(課題の場で数える). 割合の量は 0 から 1 で数えるので, "
-             "守る線 (2) も 0 から 1 で書く (5 % なら 0.05)"},
+     "help": "たどり直しは, 過去のデータで, 予測から決めた行動をなぞり"
+             "直すこと. 当たる量を選ぶと, 推論の段階のたどり直しが, その"
+             "行動でその量を数え, 守る線と一緒に出す. 当たる量が無ければ"
+             "「指さない」(課題の場で数える). 割合の量は 0 から 1 で数える"
+             "ので, 守る線 (2) も 0 から 1 で書く (5 % なら 0.05)"},
     {"id": "action.basis", "section": 7, "kind": "text", "required": False,
      "when": COLUMN_TARGET, "title": "損得の値の根拠は",
      "help": "例: 欠品は粗利 200 円, 廃棄は原価 150 円. 根拠の無い値では, "
