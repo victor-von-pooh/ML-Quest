@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 from ml_quest.check import (
     check, env_id_of, is_column_part, is_generate_part, is_items_part,
-    is_pretrained_part, sha256_of, split_errors
+    is_pretrained_part, is_rank_part, sha256_of, split_errors
 )
 from ml_quest.data import EXPORT_FUNCTIONS
 from ml_quest.problem import (
@@ -199,7 +199,8 @@ def handoff(problem: dict) -> dict:
         training (学習・評価), inference (推論. 既製のモデルをそのまま使う
         予測は ready に一式づくりに渡す値, 守る指標は guard) ごとの値と,
         part (受け持ちの答え), requires (要る機能の名前), policy (方策の
-        守り. 方策でなければ None), project (書き出したプロジェクトの
+        守り. 方策でなければ None), rank (並べるの反応の表の列と件数.
+        並べるで学習しなければ None), project (書き出したプロジェクトの
         path. データセットとモデルの定義の場所は data の project_dataset
         と model の project_model_spec. 記録が無ければ None)
 
@@ -333,6 +334,7 @@ def build_stages(problem: dict) -> dict:
             "data": {**column_data(problem, None),
                      **items_data(problem),
                      **generate_data(problem),
+                     **rank_data(problem),
                      "project_dataset": project["dataset"]},
             "model": {"task": None, "outputs": None, "role": part["role"],
                       "target_kind": part["target_kind"],
@@ -344,6 +346,7 @@ def build_stages(problem: dict) -> dict:
                           "ready": ready_of(problem)},
             "requires": required_features(problem),
             "policy": policy_of(problem),
+            "rank": rank_of(problem),
             "project": {"path": project["path"]},
         }
         return stages
@@ -366,6 +369,7 @@ def build_stages(problem: dict) -> dict:
                       "guard": guard_of(problem), "ready": None},
         "requires": required_features(problem),
         "policy": policy_of(problem),
+        "rank": None,
         "project": {"path": project["path"]},
     }
 
@@ -517,6 +521,61 @@ def policy_of(problem: dict) -> Optional[dict]:
     policy["safety_key"] = policy["safety_key"] or DEFAULT_SAFETY_KEY
 
     return policy
+
+
+def rank_of(problem: dict) -> Optional[dict]:
+    """
+    並べるの反応の表の列と, 並べる件数をまとめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    rank: Optional[dict]
+        user, item, time, reaction (列の名前. 反応の強さは答えていなければ
+        None), k (並べる件数. 整数) (並べるで学習しなければ None)
+    """
+    # 並べるで学習するときだけ (要らなくなった問いの古い答えは除外)
+    if not is_rank_part(problem):
+        return None
+    rank: dict[str, Any] = {
+        key: active_value(problem, f"{PART}.rank.{key}")
+        for key in ("user", "item", "time", "reaction")
+    }
+    k = active_value(problem, f"{PART}.rank.k")
+    rank["k"] = (int(k) if isinstance(k, (int, float))
+                 and not isinstance(k, bool) and float(k).is_integer()
+                 else k)
+
+    return rank
+
+
+def rank_data(problem: dict) -> dict:
+    """
+    並べるの受け持ちの, データの分析の段階に渡す分割と時刻の列を作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    data: dict
+        split (time. 時刻の順) と time_column (反応の時刻の列) (並べるで
+        学習しなければ空)
+    """
+    # 骨組みは反応を時刻の順に分ける
+    data: dict = {}
+    if not is_rank_part(problem):
+        return data
+    data = {"split": "time",
+            "time_column": active_value(problem, f"{PART}.rank.time")}
+
+    return data
 
 
 def training_of(problem: dict) -> dict:
@@ -809,6 +868,15 @@ def describe(problem: dict) -> list[str]:
     ready = ready_of(problem)
     if ready and ready["model"]:
         sentences.append(ready_text(ready))
+    rank = rank_of(problem)
+    if rank and rank["user"] and rank["item"]:
+        sentences.append(
+            f"並べ方: 利用者 ({rank['user']}) ごとに品物 ({rank['item']}) を"
+            + (f"上位 {rank['k']} 件" if rank["k"] else "上位から")
+            + "並べる"
+            + (f" (反応の時刻 {rank['time']} の順に分けて確かめる)"
+               if rank["time"] else "")
+        )
     features = required_features(problem)
     if features:
         sentences.append("要る機能: " + ", ".join(features))

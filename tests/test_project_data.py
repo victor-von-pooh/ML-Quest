@@ -452,6 +452,8 @@ BLOCKING_IDS = {
     "data.source", "data.missing", "action.current",
     "ml.parts.0.ready.library", "ml.parts.0.ready.model",
     "ml.parts.0.ready.weights", "ml.parts.0.ready.sha256",
+    "ml.parts.0.rank.user", "ml.parts.0.rank.item", "ml.parts.0.rank.time",
+    "ml.parts.0.rank.reaction", "ml.parts.0.rank.k",
 }
 
 

@@ -50,7 +50,8 @@ GENERATE_KINDS = ("image", "table")
 
 # 受け持ちの中の, 辞書で書く項目
 PART_DICTS = [f"{PART}.target", f"{PART}.target.process",
-              f"{PART}.evaluation", f"{PART}.policy", f"{PART}.ready"]
+              f"{PART}.evaluation", f"{PART}.policy", f"{PART}.ready",
+              f"{PART}.rank"]
 
 # 受け持ちの, 選んで書く項目と選択肢 (手で書いたファイルの確かめ)
 PART_CHOICES = {
@@ -71,6 +72,15 @@ POLICY_TEXTS = [f"{PART}.policy.{name}" for name in (
 READY_TEXTS = [f"{PART}.ready.{name}" for name in (
     "model", "weights", "sha256"
 )]
+
+# 並べるの, 反応の表の列の名前の項目 (利用者, 品物, 時刻, 反応の強さ)
+RANK_COLUMNS = [f"{PART}.rank.{name}" for name in (
+    "user", "item", "time", "reaction"
+)]
+
+# 並べるの列の項目の, 文の中の呼び方
+RANK_TITLES = dict(zip(RANK_COLUMNS, ("利用者の列", "品物の列", "時刻の列",
+                                      "反応の強さの列")))
 
 # はいかいいえで答える項目
 BOOLEANS = [f"{PART}.autonomous", f"{PART}.ros2", "ml.gpu"]
@@ -192,7 +202,7 @@ def check_shape(problem: dict) -> list[dict]:
                 f"{PART}.split_time_column", f"{PART}.downstream",
                 "issue.guard.name", f"{PART}.evaluation.name",
                 f"{PART}.target.process.name", *PART_CHOICES,
-                *POLICY_TEXTS, *READY_TEXTS):
+                *POLICY_TEXTS, *READY_TEXTS, *RANK_COLUMNS):
         value = get_value(problem, key)
         if value is not None and not isinstance(value, str):
             found.append(finding("error", key,
@@ -953,6 +963,8 @@ def check(problem: dict) -> list[dict]:
             found += check_columns(problem)
             found += check_information(problem)
             found += check_decision(problem)
+        if is_rank_part(problem):
+            found += check_rank(problem)
         found += check_part(problem)
         found += check_evaluation(problem)
         found += check_consumer(problem)
@@ -1233,6 +1245,77 @@ def is_policy_part(problem: dict) -> bool:
     )
 
     return policy
+
+
+def is_rank_part(problem: dict) -> bool:
+    """
+    受け持ちが学習して並べる (並べるで, 作り方が既製のモデルをそのままで
+    ない) かを返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    rank: bool
+        並べるの骨組みを書き出す受け持ちか (出力の形は問わない. 骨組みの
+        書き出しが順位かを確かめる)
+    """
+    # 受け持ちと作り方の答え (要らない問いの古い答えは除外)
+    rank = active_value(problem, f"{PART}.role") == "rank" and (
+        active_value(problem, f"{PART}.method") != "pretrained"
+    )
+
+    return rank
+
+
+def check_rank(problem: dict) -> list[dict]:
+    """
+    並べるの反応の表の列と, 並べる件数を確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 並べるで学習する)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (使えるデータの列に無い列, 同じ列を 2 つに答えた, 件数が
+        1 以上の整数でない, は error)
+    """
+    # 列を答え直した後の古い名前と, 同じ列の答え
+    found: list[dict] = []
+    columns = active_value(problem, "information.columns") or []
+    chosen: dict = {}
+    for key in RANK_COLUMNS:
+        name = active_value(problem, key)
+        if not name:
+            continue
+        if columns and name not in columns:
+            found.append(finding("error", key,
+                                 f"{name} は使えるデータの列にありません"))
+        elif name in chosen:
+            found.append(finding(
+                "error", key,
+                f"{name} は{RANK_TITLES[chosen[name]]}と同じ列です. 利用者, "
+                "品物, 時刻, 反応の強さは別の列にしてください"
+            ))
+        else:
+            chosen[name] = key
+
+    # 並べる件数 (Recall@K と NDCG の K) は 1 以上の整数
+    k = active_value(problem, f"{PART}.rank.k")
+    if k is not None and (
+        isinstance(k, bool) or not isinstance(k, (int, float))
+        or not float(k).is_integer() or k < 1
+    ):
+        found.append(finding("error", f"{PART}.rank.k",
+                             "並べる件数は 1 以上の整数にしてください"))
+
+    return found
 
 
 def check_v1(problem: dict) -> list[dict]:

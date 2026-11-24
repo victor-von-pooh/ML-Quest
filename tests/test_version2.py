@@ -78,7 +78,8 @@ ROLE_ANSWERS = {
                  ("target.kind", "image"), ("evaluation.metric", "fid")],
     "rank": [("unit", "query"), ("output", "ranking"),
              ("target.source", "feedback"), ("method", "scratch"),
-             ("evaluation.metric", "ndcg")],
+             ("evaluation.metric", "ndcg"), ("rank.user", "store"),
+             ("rank.item", "item"), ("rank.time", "date"), ("rank.k", 10)],
     "group": [("unit", "row"), ("output", "cluster"),
               ("target.source", "none"), ("method", "pretrained"),
               ("evaluation.metric", "silhouette")],
@@ -680,7 +681,8 @@ def test_project_error() -> None:
     plain = example_problem("総菜の作る量")
     plain["ml"]["parts"][0]["role"] = "translate"
     for problem, words in (
-        (role_problem("rank", ROLE_ANSWERS["rank"]), "表の列"),
+        (role_problem("group", [*ROLE_ANSWERS["group"],
+                                ("method", "scratch")]), "表の列"),
         (other, "その他"), (plain, "直すところ"),
     ):
         message = project_error(problem)
