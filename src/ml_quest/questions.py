@@ -577,8 +577,9 @@ QUESTIONS: list[dict[str, Any]] = [
              "利用者, 品物, 時刻の列) を選ぶ"},
     {"id": f"{PART}.rank.user", "section": 5, "kind": "column",
      "required": True, "when": RANK, "title": "利用者の列は",
-     "help": "反応の表 (1 行が 1 つの反応) の, 反応した利用者の列. 利用者"
-             "ごとに品物を並べる. 例: member_id"},
+     "help": "反応 (利用者が品物を買った, 見たなど) の表 (1 行が 1 つの"
+             "反応) の, 反応した利用者の列. 利用者ごとに品物を並べる. 例: "
+             "member_id"},
     {"id": f"{PART}.rank.item", "section": 5, "kind": "column",
      "required": True, "when": RANK, "title": "品物の列は",
      "help": "反応の表の, 反応された品物の列. 例: item_id"},
@@ -597,8 +598,8 @@ QUESTIONS: list[dict[str, Any]] = [
     {"id": f"{PART}.rank.k", "section": 5, "kind": "number",
      "required": True, "when": RANK,
      "title": "利用者ごとに上位何件を並べますか (K)",
-     "help": "1 以上の整数. 画面や通知に並べる品物の数. Recall@K と NDCG "
-             "もこの K で数える. 例: 10"},
+     "help": "並べる品物の数 (1 以上の整数). Recall@K と NDCG もこの K "
+             "で数える. 例: 10"},
     {"id": f"{PART}.task", "section": 5, "kind": "choice", "required": True,
      "when": COLUMN_TARGET, "choices": TASKS, "title": "どの種類の問題ですか",
      "help": "目的の値がクラスなら分類, 値なら回帰. 時刻の順に過去から先を"

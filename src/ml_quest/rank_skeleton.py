@@ -65,6 +65,11 @@ USER_INPUT = "user"
 ITEM_INPUT = "item"
 SCORE_OUTPUT = "score"
 
+# 埋め込みの出力の名前 (両方があれば, 点数を利用者と品物の埋め込みの内積
+# で求める. 品物の埋め込みは 1 度だけ作る)
+USER_EMBEDDING = "user_embedding"
+ITEM_EMBEDDING = "item_embedding"
+
 # 利用者と品物の番号の表 (実験のディレクトリの中. 重みの行と列の順)
 INDEX_FILE = "rank_index.json"
 
@@ -130,8 +135,8 @@ class PlaceholderModel(nn.Module):
         v = self.item_fc2(self.relu(self.item_fc1(item)))
         u = u / u.norm(dim=1, keepdim=True).clamp_min(1e-12)
         v = v / v.norm(dim=1, keepdim=True).clamp_min(1e-12)
-        outputs = {SCORE_OUTPUT: u @ v.T * 20.0, "user_embedding": u,
-                   "item_embedding": v}
+        outputs = {SCORE_OUTPUT: u @ v.T * 20.0, USER_EMBEDDING: u,
+                   ITEM_EMBEDDING: v}
 
         return outputs
 
@@ -198,9 +203,9 @@ class RankTrainer(Trainer):
         # 検証用の正解のある利用者の点数から並べる
         if phase != "valid":
             return {}
-        scores = user_scores(self.eval_model(), self.valid["users"],
-                             self.sizes, self.batch_size)
-        metrics = rank_metrics(scores, self.valid, self.k)
+        top = top_items(self.eval_model(), self.valid, self.sizes, self.k,
+                        self.batch_size)
+        metrics = rank_metrics(top, self.valid, self.k)
 
         return metrics
 
@@ -251,82 +256,197 @@ def pair_scores(
         (利用者の件数, 品物の件数) の点数
     """
     # ML-ModelControl の定義の出力が複数なら出力の名前の辞書
-    outputs = model(**{USER_INPUT: one_hot(users, sizes[0]),
-                       ITEM_INPUT: one_hot(items, sizes[1])})
+    outputs = tower_outputs(model, users, items, sizes)
     score = outputs[SCORE_OUTPUT] if isinstance(outputs, dict) else outputs
 
     return score
 
 
-def user_scores(
-    model: nn.Module, users: list[int], sizes: tuple, batch_size: int
-) -> torch.Tensor:
+def tower_outputs(
+    model: nn.Module, users: torch.Tensor, items: torch.Tensor, sizes: tuple
+) -> Any:
     """
-    利用者ごとに, 全ての品物の点数を求める関数
+    利用者と品物の番号を, 入力の名前でモデルに渡して出力を返す関数
 
     Parameters
     ----------
     model: nn.Module
         2 塔のモデル
-    users: list[int]
-        利用者の番号
+    users: torch.Tensor
+        (利用者の件数,) の利用者の番号
+    items: torch.Tensor
+        (品物の件数,) の品物の番号
+    sizes: tuple
+        (利用者の数, 品物の数)
+
+    Returns
+    ----------
+    outputs: Any
+        出力 (複数なら出力の名前の辞書, 1 つならテンソル)
+    """
+    # 番号のワンホット
+    outputs = model(**{USER_INPUT: one_hot(users, sizes[0]),
+                       ITEM_INPUT: one_hot(items, sizes[1])})
+
+    return outputs
+
+
+def item_embeddings(
+    model: nn.Module, sizes: tuple, batch_size: int, device: Any
+) -> Optional[torch.Tensor]:
+    """
+    全ての品物の埋め込みを, 品物のまとまりごとに 1 度だけ求める関数
+
+    Parameters
+    ----------
+    model: nn.Module
+        2 塔のモデル
     sizes: tuple
         (利用者の数, 品物の数)
     batch_size: int
-        1 回に点数を求める利用者の数
+        1 回に渡す品物の数
+    device: Any
+        モデルのデバイス
+
+    Returns
+    ----------
+    embeddings: Optional[torch.Tensor]
+        (品物の数, 埋め込みの幅). 出力に user_embedding と item_embedding
+        の無い定義 (2 塔でない) なら None
+    """
+    # 利用者は 1 人だけ渡し, 品物の塔の出力を集める
+    user = torch.zeros(1, dtype=torch.int64, device=device)
+    probe = tower_outputs(model, user, user, sizes)
+    if not (isinstance(probe, dict) and USER_EMBEDDING in probe
+            and ITEM_EMBEDDING in probe):
+        return None
+    parts = []
+    for start in range(0, sizes[1], batch_size):
+        items = torch.arange(start, min(start + batch_size, sizes[1]),
+                             device=device)
+        parts.append(tower_outputs(model, user, items, sizes)[ITEM_EMBEDDING])
+    embeddings = torch.cat(parts)
+
+    return embeddings
+
+
+def chunk_scores(
+    model: nn.Module, users: torch.Tensor, sizes: tuple, batch_size: int,
+    items: Optional[torch.Tensor]
+) -> torch.Tensor:
+    """
+    利用者のまとまりの, 全ての品物の点数を求める関数
+
+    Parameters
+    ----------
+    model: nn.Module
+        2 塔のモデル
+    users: torch.Tensor
+        (まとまりの利用者の数,) の利用者の番号
+    sizes: tuple
+        (利用者の数, 品物の数)
+    batch_size: int
+        2 塔でない定義で, 1 回に渡す品物の数
+    items: Optional[torch.Tensor]
+        品物の埋め込み (item_embeddings. 2 塔でなければ None)
 
     Returns
     ----------
     scores: torch.Tensor
-        (利用者の数, 品物の数) の点数 (CPU)
+        (まとまりの利用者の数, 品物の数) の点数
     """
-    # 全ての品物を 1 度に渡し, 利用者はまとまりごと
-    device = next(model.parameters()).device
-    items = torch.arange(sizes[1], device=device)
+    # 2 塔なら利用者の埋め込みと品物の埋め込みの内積 (点数と同じ順)
+    if items is not None:
+        one = torch.zeros(1, dtype=torch.int64, device=users.device)
+        user = tower_outputs(model, users, one, sizes)[USER_EMBEDDING]
+        scores = user @ items.T
+        return scores
+
+    # 2 塔でなければ, 品物をまとまりに分けて点数の出力をつなぐ
     parts = []
-    model.eval()
-    with torch.no_grad():
-        for start in range(0, len(users), batch_size):
-            chunk = torch.tensor(users[start:start + batch_size],
-                                 device=device)
-            parts.append(pair_scores(model, chunk, items, sizes).cpu())
-    scores = (torch.cat(parts) if parts
-              else torch.zeros(0, sizes[1]))
+    for start in range(0, sizes[1], batch_size):
+        chunk = torch.arange(start, min(start + batch_size, sizes[1]),
+                             device=users.device)
+        outputs = tower_outputs(model, users, chunk, sizes)
+        parts.append(outputs[SCORE_OUTPUT] if isinstance(outputs, dict)
+                     else outputs)
+    scores = torch.cat(parts, dim=1)
 
     return scores
 
 
-def rank_metrics(scores: torch.Tensor, target: dict, k: int) -> dict:
+def top_items(
+    model: nn.Module, target: dict, sizes: tuple, k: int, batch_size: int
+) -> list[list[int]]:
     """
-    点数から利用者ごとの上位 K 件を選び, Recall@K と NDCG を数える関数
+    利用者のまとまりごとに点数を求め, 前の分割で反応した品物を除いて上位
+    K 件の品物を選ぶ関数
 
     Parameters
     ----------
-    scores: torch.Tensor
-        (利用者の数, 品物の数) の点数 (target の users の順)
+    model: nn.Module
+        2 塔のモデル
+    target: dict
+        rank_target の users と seen
+    sizes: tuple
+        (利用者の数, 品物の数)
+    k: int
+        上位の件数
+    batch_size: int
+        1 回に点数を求める利用者 (と, 2 塔でない定義の品物) の数
+
+    Returns
+    ----------
+    top: list[list[int]]
+        利用者ごとの上位の品物の番号 (target の users の順. 全ての利用者
+        と品物の点数の表は持たない)
+    """
+    # 品物の埋め込みは 1 度だけ. 利用者のまとまりの点数は選んだら捨てる
+    device = next(model.parameters()).device
+    users = target["users"]
+    top: list[list[int]] = []
+    model.eval()
+    with torch.no_grad():
+        items = item_embeddings(model, sizes, batch_size, device)
+        for start in range(0, len(users), batch_size):
+            chunk = users[start:start + batch_size]
+            scores = chunk_scores(model, torch.tensor(chunk, device=device),
+                                  sizes, batch_size, items)
+            for row, user in enumerate(chunk):
+                seen = list(target["seen"].get(user, ()))
+                if seen:
+                    scores[row, seen] = -math.inf
+            picked = torch.topk(scores, min(k, sizes[1]), dim=1).indices
+            top += picked.cpu().tolist()
+
+    return top
+
+
+def rank_metrics(top: list[list[int]], target: dict, k: int) -> dict:
+    """
+    利用者ごとの上位 K 件の品物から, Recall@K と NDCG を数える関数
+
+    Parameters
+    ----------
+    top: list[list[int]]
+        利用者ごとの上位の品物の番号 (target の users の順)
     target: dict
         users (利用者の番号), relevant (利用者ごとの正解の品物の番号の
-        集合), seen (利用者ごとの並べない品物の番号の集合)
+        集合)
     k: int
         上位の件数
 
     Returns
     ----------
     metrics: dict
-        recall_at_k (正解の品物のうち上位 K 件に入った割合の, 利用者の
-        平均) と ndcg (上位 K 件の NDCG の, 利用者の平均)
+        recall_at_k (上位 K 件に入った正解の数を正解の全数で割った値の,
+        利用者の平均) と ndcg (上位 K 件の NDCG の, 利用者の平均)
     """
-    # 前の分割で反応した品物は並べない
-    scores = scores.clone()
-    for row, user in enumerate(target["users"]):
-        seen = list(target["seen"].get(user, ()))
-        if seen:
-            scores[row, seen] = -math.inf
-    top = torch.topk(scores, min(k, scores.shape[1]), dim=1).indices
+    # 正解が K より多い利用者の Recall@K は 1 に届かない
     recalls, ndcgs = [], []
-    for row, user in enumerate(target["users"]):
+    for items, user in zip(top, target["users"]):
         relevant = target["relevant"][user]
-        hits = [rank for rank, item in enumerate(top[row].tolist())
+        hits = [rank for rank, item in enumerate(items[:k])
                 if item in relevant]
         recalls.append(len(hits) / len(relevant))
         dcg = sum(1.0 / math.log2(rank + 2) for rank in hits)
@@ -340,32 +460,48 @@ def rank_metrics(scores: torch.Tensor, target: dict, k: int) -> dict:
     return metrics
 
 
-def popular_scores(train: pd.DataFrame, users: list[int],
-                   items: int) -> torch.Tensor:
+def popular_top(
+    train: pd.DataFrame, target: dict, items: int, k: int
+) -> list[list[int]]:
     """
-    学習用の反応の多い順 (人気順) の点数を作る関数
+    学習用の反応の多い順 (人気順) に, 利用者ごとの上位 K 件を選ぶ関数
 
     Parameters
     ----------
     train: pd.DataFrame
         学習用の反応 (user と item の番号の列)
-    users: list[int]
-        利用者の番号
+    target: dict
+        rank_target の users と seen
     items: int
         品物の数
+    k: int
+        上位の件数
 
     Returns
     ----------
-    scores: torch.Tensor
-        (利用者の数, 品物の数) の点数 (全ての利用者で同じ. 反応の数)
+    top: list[list[int]]
+        利用者ごとの上位の品物の番号 (target の users の順. 前の分割で
+        反応した品物は除く)
     """
-    # 品物ごとの反応の数 (同じ数なら番号の小さい品物が先)
+    # 全ての利用者で同じ 1 つの並び (同じ数なら番号の小さい品物が先) を
+    # 前から見て, 除く品物を飛ばす
     counts = train["item"].value_counts().reindex(range(items), fill_value=0)
-    base = torch.tensor(counts.to_numpy(), dtype=torch.float32)
-    base = base - torch.arange(items) / (items + 1)
-    scores = base.repeat(len(users), 1)
+    ranked = pd.DataFrame({"item": range(items),
+                           "count": counts.to_numpy()})
+    order = ranked.sort_values(["count", "item"], ascending=[False, True],
+                               kind="stable")["item"].tolist()
+    top: list[list[int]] = []
+    for user in target["users"]:
+        seen = target["seen"].get(user, set())
+        picked: list[int] = []
+        for item in order:
+            if len(picked) == k:
+                break
+            if item not in seen:
+                picked.append(item)
+        top.append(picked)
 
-    return scores
+    return top
 
 
 def read_reactions(path: Path, cfg: Any) -> tuple[pd.DataFrame, list[str]]:
@@ -766,13 +902,13 @@ def evaluate_split(
         users (数えた利用者の数), k, recall_at_k, ndcg と, 人気順の
         _baseline と, 差の _diff
     """
-    # モデルの点数と人気順の点数で同じ利用者を並べる
+    # モデルと人気順で同じ利用者を並べる (前の分割の品物は除く)
     model = trainer.model.cpu().eval()
-    scores = user_scores(model, target["users"], trainer.sizes,
-                         cfg.data.batch_size)
-    found = rank_metrics(scores, target, cfg.rank.k)
+    top = top_items(model, target, trainer.sizes, cfg.rank.k,
+                    cfg.data.batch_size)
+    found = rank_metrics(top, target, cfg.rank.k)
     popular = rank_metrics(
-        popular_scores(train, target["users"], trainer.sizes[1]), target,
+        popular_top(train, target, trainer.sizes[1], cfg.rank.k), target,
         cfg.rank.k
     )
     row = {"users": len(target["users"]), "k": cfg.rank.k}

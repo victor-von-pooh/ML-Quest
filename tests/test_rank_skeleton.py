@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 from types import ModuleType
+from typing import Iterator
 
 import pytest
 import yaml
@@ -528,6 +529,69 @@ def test_rank_training(tmp_path: Path) -> None:
     assert 0 <= table["rows"][0]["ndcg"] <= 1
 
 
+class FixedScores:
+    def __init__(self, scores: object):
+        # 利用者ごとの全ての品物の点数を保存
+        self.scores = scores
+
+    def parameters(self) -> Iterator:
+        """
+        デバイスを決めるための値を返す関数
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        ----------
+        values: Iterator
+            点数の表だけを返す iterator
+        """
+        # 点数の表と同じデバイス
+        values = iter([self.scores])
+
+        return values
+
+    def eval(self) -> "FixedScores":
+        """
+        評価の形にする関数 (何もしない)
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        ----------
+        model: FixedScores
+            自分自身
+        """
+        # 変える状態は無し
+        model = self
+
+        return model
+
+    def __call__(self, user: object, item: object) -> object:
+        """
+        ワンホットの利用者と品物の点数の表だけを返す関数 (2 塔でない定義)
+
+        Parameters
+        ----------
+        user: object
+            (利用者の件数, 利用者の数) のワンホット
+        item: object
+            (品物の件数, 品物の数) のワンホット
+
+        Returns
+        ----------
+        score: object
+            (利用者の件数, 品物の件数) の点数
+        """
+        # ワンホットで行と列を選ぶ
+        score = user @ self.scores @ item.T
+
+        return score
+
+
 def script_module(root: Path) -> ModuleType:
     """
     書き出した train.py を, 純粋な関数を呼ぶためにモジュールとして読む関数
@@ -588,19 +652,54 @@ def test_rank_functions(tmp_path: Path) -> None:
             {"data": {"valid": 0.6, "test": 0.5}}
         ))
 
-    # 前の分割で反応した品物は並べず, 正解にもしない
+    # テスト用は学習用と検証用の両方で反応した品物を並べず, 正解にもしない
     train = pd.DataFrame({"user": [0, 0], "item": [0, 1]})
-    later = pd.DataFrame({"user": [0, 0, 1], "item": [1, 2, 3]})
-    target = module.rank_target(later, [train])
+    valid = pd.DataFrame({"user": [0, 1], "item": [2, 0]})
+    test = pd.DataFrame({"user": [0, 0, 1, 1], "item": [2, 3, 0, 3]})
+    target = module.rank_target(test, [train, valid])
     assert target["users"] == [0, 1]
-    assert target["relevant"] == {0: {2}, 1: {3}}
+    assert target["relevant"] == {0: {3}, 1: {3}}
+    assert target["seen"] == {0: {0, 1, 2}, 1: {0}}
 
-    # 利用者 0 は品物 2 が 1 位 (品物 0 と 1 は除く), 利用者 1 は品物 3 が
-    # 2 位. Recall@2 は 1 と 1, NDCG は 1 と 1 / log2(3)
-    scores = torch.tensor([[9.0, 8.0, 7.0, 1.0], [5.0, 0.0, 0.0, 4.0]])
-    metrics = module.rank_metrics(scores, target, 2)
+    # 2 塔でない定義 (点数の表だけを返す) も, 利用者と品物をまとまりに
+    # 分けて除いてから選ぶ. 利用者 0 は品物 3 だけが残り, 利用者 1 は
+    # 品物 0 を除いて 2, 3 の順
+    scores = torch.tensor([[9.0, 8.0, 7.0, 1.0], [5.0, 0.0, 4.0, 3.0]])
+    fixed = FixedScores(scores)
+    top = module.top_items(fixed, target, (2, 4), 2, 1)
+    assert [items[:1] for items in top] == [[3], [2]]
+    assert top[1] == [2, 3]
+
+    # 利用者 0 は品物 3 が 1 位, 利用者 1 は品物 3 が 2 位. Recall@2 は 1 と
+    # 1, NDCG は 1 と 1 / log2(3)
+    metrics = module.rank_metrics(top, target, 2)
     assert metrics["recall_at_k"] == pytest.approx(1.0)
     assert metrics["ndcg"] == pytest.approx((1 + 1 / 1.5849625) / 2,
                                             rel=1e-6)
-    metrics = module.rank_metrics(scores, target, 1)
+    metrics = module.rank_metrics(top, target, 1)
     assert metrics["recall_at_k"] == pytest.approx(0.5)
+
+    # 正解が K より多い利用者の Recall@K の分母は正解の全数. NDCG は上から
+    # K 件の正解で 1
+    many = {"users": [0], "relevant": {0: {0, 1, 2, 3}}, "seen": {}}
+    metrics = module.rank_metrics([[0, 1]], many, 2)
+    assert metrics["recall_at_k"] == pytest.approx(0.5)
+    assert metrics["ndcg"] == pytest.approx(1.0)
+
+    # 人気順: 同じ数なら番号の小さい品物が先で, 利用者ごとに前の分割の品物
+    # を除く
+    counts = pd.DataFrame({"user": [0] * 5, "item": [2, 2, 1, 3, 0]})
+    popular = module.popular_top(counts, target, 4, 3)
+    assert popular == [[3], [2, 1, 3]]
+
+    # 2 塔の定義は品物の埋め込みを 1 度だけ作り, 内積で選ぶ. 全ての組の
+    # 点数の表から選んだものと同じ
+    torch.manual_seed(0)
+    tower = module.PlaceholderModel(3, 5, 4).eval()
+    every = {"users": [0, 1, 2], "relevant": {}, "seen": {1: {0}}}
+    top = module.top_items(tower, every, (3, 5), 2, 2)
+    with torch.no_grad():
+        full = module.pair_scores(tower, torch.arange(3), torch.arange(5),
+                                  (3, 5))
+    full[1, 0] = -float("inf")
+    assert top == torch.topk(full, 2, dim=1).indices.tolist()
