@@ -13,7 +13,7 @@ import yaml
 
 from ml_quest import (
     answer, attach_data, check, describe, example_problem, handoff,
-    make_project, project_error, questions, record_project
+    make_project, project_error, questions, rank_encoding, record_project
 )
 from ml_quest.handoff import model_example
 
@@ -524,6 +524,14 @@ def test_rank_training(tmp_path: Path) -> None:
     log = (run / "train.log").read_text(encoding="utf-8")
     assert "PlaceholderModel" not in log
     assert (run / "model_spec.yaml").is_file()
+
+    # 学習の前に求めた数と分割の行の数が, train.log の初めの行と同じ
+    encoding = rank_encoding(problem, record_project(problem, project)[
+        "project"]["dataset"])
+    assert (f"利用者の数: {encoding['users']}, 品物の数: "
+            f"{encoding['items']}. 反応: " + ", ".join(
+                f"{name} {rows} 行"
+                for name, rows in encoding["rows"].items())) in log
     table = json.loads((run / "evaluations" / "ranking_test.json")
                        .read_text(encoding="utf-8"))
     assert 0 <= table["rows"][0]["ndcg"] <= 1

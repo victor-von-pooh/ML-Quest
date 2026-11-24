@@ -20,6 +20,7 @@ from ml_quest.questions import (
 )
 from ml_quest.requirements import FEATURES, required_features
 from ml_quest.sensitivity import SENSITIVITY_FIELDS, decision_sensitivity
+from ml_quest.rank_width import rank_encoding
 from ml_quest.skeleton import (
     make_project, open_errors, project_error, record_project
 )
@@ -37,6 +38,7 @@ __all__ = [
     "is_items_part", "is_ready", "load_problem", "make_project",
     "model_example", "new_problem", "open_errors", "problem_origin",
     "project_error", "project_of", "prune_copies", "questions",
-    "read_columns", "recipe_from", "record_project", "required_features",
-    "resolve_choice", "save_problem", "table_encoding", "upgrade_problem"
+    "rank_encoding", "read_columns", "recipe_from", "record_project",
+    "required_features", "resolve_choice", "save_problem", "table_encoding",
+    "upgrade_problem"
 ]

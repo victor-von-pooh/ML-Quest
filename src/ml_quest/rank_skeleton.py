@@ -5,6 +5,7 @@ from typing import Callable, Optional
 from ml_quest.handoff import describe
 from ml_quest.problem import active_value, get_value
 from ml_quest.questions import PART
+from ml_quest.rank_width import RANK_TEST, RANK_VALID
 
 # 学習のスクリプトが読み込むライブラリの, ML-Found の登録簿の機能の名前
 # (反応の表は ML-EDA の読み方で読む. config の model.spec の定義が無い
@@ -1120,8 +1121,8 @@ data:
   batch_size: 256
   # 時刻の順に分ける, 検証用とテスト用の反応の行の割合 (新しい反応から.
   # 同じ時刻の反応は同じ分割)
-  valid: 0.1
-  test: 0.1
+  valid: $valid
+  test: $test
 
 rank:
   # 反応の表の, 利用者, 品物, 時刻の列と, 反応の強さの列 (0 より大きい行
@@ -1213,7 +1214,7 @@ def rank_config(
         item=json.dumps(rank["item"], ensure_ascii=False),
         time=json.dumps(rank["time"], ensure_ascii=False),
         reaction=json.dumps(rank["reaction"], ensure_ascii=False),
-        k=json.dumps(rank["k"]),
+        k=json.dumps(rank["k"]), valid=RANK_VALID, test=RANK_TEST,
     )
 
     return text
