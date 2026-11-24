@@ -3,8 +3,8 @@ from pathlib import PurePath
 from typing import Any, Optional
 
 from ml_quest.check import (
-    check, env_id_of, is_column_part, is_generate_part, is_items_part,
-    is_pretrained_part, is_rank_part, sha256_of, split_errors
+    check, env_id_of, is_column_part, is_generate_part, is_group_part,
+    is_items_part, is_pretrained_part, is_rank_part, sha256_of, split_errors
 )
 from ml_quest.data import EXPORT_FUNCTIONS
 from ml_quest.problem import (
@@ -12,7 +12,8 @@ from ml_quest.problem import (
     active_value, data_location, get_value, upgrade_problem
 )
 from ml_quest.questions import (
-    CONSUMERS, FALLBACKS, GUARD_COUNTS, METRICS, PART, ROLES, TASKS
+    CONSUMERS, FALLBACKS, GROUP_STABILITIES, GUARD_COUNTS, METRICS, PART,
+    ROLES, TASKS
 )
 from ml_quest.requirements import required_features
 
@@ -201,7 +202,8 @@ def handoff(problem: dict) -> dict:
         予測は ready に一式づくりに渡す値, 守る指標は guard) ごとの値と,
         part (受け持ちの答え), requires (要る機能の名前), policy (方策の
         守り. 方策でなければ None), rank (並べるの反応の表の列と件数.
-        並べるで学習しなければ None), project (書き出したプロジェクトの
+        並べるで学習しなければ None), group (群を作る列, 群の数, 安定性の
+        数え方. まとめるで学習しなければ None), project (書き出したプロジェクトの
         path. データセットとモデルの定義の場所は data の project_dataset
         と model の project_model_spec. 記録が無ければ None)
 
@@ -336,6 +338,7 @@ def build_stages(problem: dict) -> dict:
                      **items_data(problem),
                      **generate_data(problem),
                      **rank_data(problem),
+                     **group_data(problem),
                      "project_dataset": project["dataset"]},
             "model": {"task": None, "outputs": None, "role": part["role"],
                       "target_kind": part["target_kind"],
@@ -348,6 +351,7 @@ def build_stages(problem: dict) -> dict:
             "requires": required_features(problem),
             "policy": policy_of(problem),
             "rank": rank_of(problem),
+            "group": group_of(problem),
             "project": {"path": project["path"]},
         }
         return stages
@@ -371,6 +375,7 @@ def build_stages(problem: dict) -> dict:
         "requires": required_features(problem),
         "policy": policy_of(problem),
         "rank": None,
+        "group": None,
         "project": {"path": project["path"]},
     }
 
@@ -575,6 +580,63 @@ def rank_data(problem: dict) -> dict:
         return data
     data = {"split": "time",
             "time_column": active_value(problem, f"{PART}.rank.time")}
+
+    return data
+
+
+def group_of(problem: dict) -> Optional[dict]:
+    """
+    まとめるの群を作る列, 群の数と, 群の安定性の数え方をまとめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    group: Optional[dict]
+        columns (群を作る列の名前の並び), id (行を見分ける列. 答えて
+        いなければ None), k (群の数. 整数), stability (seed か sample)
+        (まとめるで学習しなければ None)
+    """
+    # まとめるで学習するときだけ (要らなくなった問いの古い答えは除外)
+    if not is_group_part(problem):
+        return None
+    k = active_value(problem, f"{PART}.group.k")
+    group: dict[str, Any] = {
+        "columns": list(active_value(problem, f"{PART}.group.columns")
+                        or []),
+        "id": active_value(problem, f"{PART}.group.id"),
+        "k": (int(k) if isinstance(k, (int, float))
+              and not isinstance(k, bool) and float(k).is_integer()
+              else k),
+        "stability": active_value(problem, f"{PART}.group.stability"),
+    }
+
+    return group
+
+
+def group_data(problem: dict) -> dict:
+    """
+    まとめるの受け持ちの, データの分析の段階に渡す分割を作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    data: dict
+        split (random. 骨組みが行を無作為に学習用と検証用に分ける) (まとめる
+        で学習しなければ空)
+    """
+    # 正解が無いので, 行の順に意味を持たせない
+    data: dict = {}
+    if not is_group_part(problem):
+        return data
+    data = {"split": "random"}
 
     return data
 
@@ -811,7 +873,7 @@ def describe(problem: dict) -> list[str]:
     if kpi.get("name"):
         sentences.append(kpi_text(kpi))
     guard = value(problem, "issue.guard") or {}
-    if isinstance(guard, dict) and guard.get("name"):
+    if isinstance(guard, dict) and value(problem, "issue.guard.name"):
         sentences.append(guard_text(guard))
 
     # 決めること (予測より先) と機械学習の受け持ち
@@ -877,6 +939,18 @@ def describe(problem: dict) -> list[str]:
             + "並べる"
             + (f" (反応の時刻 {rank['time']} の順に分けて確かめる)"
                if rank["time"] else "")
+        )
+    group = group_of(problem)
+    if group and group["columns"]:
+        stabilities = {item["value"]: item["label"].split(" ")[0]
+                       for item in GROUP_STABILITIES}
+        method = stabilities.get(str(group["stability"]))
+        sentences.append(
+            f"まとめ方: {', '.join(map(str, group['columns']))} の列から"
+            + (f" {group['k']} つの群" if group["k"] else "群")
+            + "を作る"
+            + (f" (群の安定性は{method}ときの一致で数える)" if method
+               else "")
         )
     features = required_features(problem)
     if features:

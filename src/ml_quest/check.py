@@ -8,9 +8,10 @@ from ml_quest.problem import (
     upgrade_problem, version_message
 )
 from ml_quest.questions import (
-    COLLECTS, CONSUMERS, FALLBACKS, GUARD_COUNTS, METHODS, METRICS,
-    NOT_COUNTED, OUTPUTS, PART, QUESTIONS, READY_LIBRARIES, ROLES,
-    SIMULATORS, TARGET_KINDS, TARGET_SOURCES, UNITS, V1_METRICS
+    COLLECTS, CONSUMERS, FALLBACKS, GROUP_STABILITIES, GUARD_COUNTS,
+    METHODS, METRICS, NOT_COUNTED, OUTPUTS, PART, QUESTIONS,
+    READY_LIBRARIES, ROLES, SIMULATORS, TARGET_KINDS, TARGET_SOURCES, UNITS,
+    V1_METRICS
 )
 
 # その他の指標の名前 (学習の記録の名前と曲線のファイルの名前)
@@ -51,7 +52,7 @@ GENERATE_KINDS = ("image", "table")
 # 受け持ちの中の, 辞書で書く項目
 PART_DICTS = [f"{PART}.target", f"{PART}.target.process",
               f"{PART}.evaluation", f"{PART}.policy", f"{PART}.ready",
-              f"{PART}.rank"]
+              f"{PART}.rank", f"{PART}.group"]
 
 # 受け持ちの, 選んで書く項目と選択肢 (手で書いたファイルの確かめ)
 PART_CHOICES = {
@@ -61,6 +62,7 @@ PART_CHOICES = {
     f"{PART}.collect": COLLECTS, f"{PART}.simulator": SIMULATORS,
     f"{PART}.policy.fallback": FALLBACKS,
     f"{PART}.ready.library": READY_LIBRARIES,
+    f"{PART}.group.stability": GROUP_STABILITIES,
 }
 
 # 方策の守りの, 文で書く項目
@@ -99,7 +101,7 @@ TASK_NAMES = {"classification": "分類", "regression": "回帰",
 # 列の名前の並びの問い
 COLUMN_LISTS = ["information.columns", f"{PART}.series_by",
                 "information.known", "information.unknown",
-                "information.forbidden"]
+                "information.forbidden", f"{PART}.group.columns"]
 
 
 def finding(level: str, key: str, message: str) -> dict:
@@ -203,7 +205,8 @@ def check_shape(problem: dict) -> list[dict]:
                 "issue.guard.name", "issue.guard.counted",
                 f"{PART}.evaluation.name",
                 f"{PART}.target.process.name", *PART_CHOICES,
-                *POLICY_TEXTS, *READY_TEXTS, *RANK_COLUMNS):
+                *POLICY_TEXTS, *READY_TEXTS, *RANK_COLUMNS,
+                f"{PART}.group.id"):
         value = get_value(problem, key)
         if value is not None and not isinstance(value, str):
             found.append(finding("error", key,
@@ -966,6 +969,8 @@ def check(problem: dict) -> list[dict]:
             found += check_decision(problem)
         if is_rank_part(problem):
             found += check_rank(problem)
+        if is_group_part(problem):
+            found += check_group(problem)
         found += check_part(problem)
         found += check_evaluation(problem)
         found += check_consumer(problem)
@@ -1315,6 +1320,79 @@ def check_rank(problem: dict) -> list[dict]:
     ):
         found.append(finding("error", f"{PART}.rank.k",
                              "並べる件数は 1 以上の整数にしてください"))
+
+    return found
+
+
+def is_group_part(problem: dict) -> bool:
+    """
+    受け持ちが学習してまとめる (まとめるで, 作り方が既製のモデルをそのまま
+    でない) かを返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    group: bool
+        群分けの骨組みを書き出す受け持ちか (出力の形は問わない. 骨組みの
+        書き出しが群かを確かめる)
+    """
+    # 受け持ちと作り方の答え (要らない問いの古い答えは除外)
+    group = active_value(problem, f"{PART}.role") == "group" and (
+        active_value(problem, f"{PART}.method") != "pretrained"
+    )
+
+    return group
+
+
+def check_group(problem: dict) -> list[dict]:
+    """
+    群を作る列, 行を見分ける列と, 群の数を確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. まとめるで学習する)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (使えるデータの列に無い列, 群を作る列と同じ行を見分ける列,
+        群の数が 2 以上の整数でない, は error)
+    """
+    # 列を答え直した後の古い名前 (使えるデータの列の一覧が無ければ見ない)
+    found: list[dict] = []
+    columns = active_value(problem, "information.columns") or []
+    used = active_value(problem, f"{PART}.group.columns") or []
+    missing = [name for name in used if columns and name not in columns]
+    if missing:
+        found.append(finding(
+            "error", f"{PART}.group.columns",
+            f"{', '.join(missing)} は使えるデータの列にありません"
+        ))
+    key = f"{PART}.group.id"
+    name = active_value(problem, key)
+    if name and columns and name not in columns:
+        found.append(finding("error", key,
+                             f"{name} は使えるデータの列にありません"))
+    elif name and name in used:
+        found.append(finding(
+            "error", key,
+            f"{name} は群を作るのに使う列にもあります. 行を見分ける列は群を"
+            "作るのに使わないので, どちらかから外してください"
+        ))
+
+    # 群の数は 2 以上の整数
+    k = active_value(problem, f"{PART}.group.k")
+    if k is not None and (
+        isinstance(k, bool) or not isinstance(k, (int, float))
+        or not float(k).is_integer() or k < 2
+    ):
+        found.append(finding("error", f"{PART}.group.k",
+                             "群の数は 2 以上の整数にしてください"))
 
     return found
 

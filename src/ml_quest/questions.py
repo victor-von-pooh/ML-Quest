@@ -57,8 +57,14 @@ METRIC_TITLES = {"accuracy": "正解率", "mae": "平均絶対誤差",
                  "rmse": "二乗平均平方根誤差", "iou": "IoU",
                  "chamfer": "Chamfer 距離"}
 
+# 守る指標を問う場合 (まとめるの受け持ちでは要らない. 群は人が解釈して
+# 使い, 使われたかは運用の後に見るため)
+GUARD_ASKED = [{"any": [{"none": [USES_ML]},
+                        {"none": [{"id": f"{PART}.role",
+                                   "equals": "group"}]}]}]
+
 # 守る指標を書いた場合だけの問い
-HAS_GUARD = {"id": "issue.guard.name", "filled": True}
+HAS_GUARD = [*GUARD_ASKED, {"id": "issue.guard.name", "filled": True}]
 
 # たどり直しで数えられる守る指標の量 (意思決定の型ごと. 名前から説明と
 # 向き. lower は小さいほど良い. 割合は名前が _rate で終わり, 0 から 1).
@@ -103,7 +109,7 @@ GUARD_COUNTED = [
 # 守る指標をたどり直しで数えられる場合 (列の予測で, 数えられる量のある
 # 意思決定の型. 効果を確率の差で渡した対象を選ぶ型はたどり直せない)
 COUNTABLE_GUARD = [
-    *COLUMN_TARGET, HAS_GUARD,
+    *COLUMN_TARGET, *HAS_GUARD,
     {"id": "action.decision.type", "in": list(GUARD_COUNTS)},
     {"none": [{"id": "action.decision.effect_kind", "equals": "uplift"}]},
 ]
@@ -215,12 +221,25 @@ EFFECT = [USES_ML, {"id": f"{PART}.role", "equals": "effect"}]
 RANK = [USES_ML, {"id": f"{PART}.role", "equals": "rank"},
         {"none": [PRETRAINED]}]
 
-# 使えるデータの列を問う場合 (列の予測と, 並べるで学習する場合)
+# まとめるで学習する場合だけの問い (群を作る列, 群の数, 安定性の数え方).
+# 既製のモデルをそのまま使う場合は骨組みが無いので含めない
+GROUP = [USES_ML, {"id": f"{PART}.role", "equals": "group"},
+         {"none": [PRETRAINED]}]
+
+# 使えるデータの列を問う場合 (列の予測と, 並べるかまとめるで学習する場合)
 COLUMNS_ASKED = [USES_ML, {"none": [PRETRAINED]},
-                 {"id": f"{PART}.role", "in": ["predict", "rank"]},
-                 {"any": [{"id": f"{PART}.role", "equals": "rank"},
+                 {"id": f"{PART}.role", "in": ["predict", "rank", "group"]},
+                 {"any": [{"id": f"{PART}.role", "in": ["rank", "group"]},
                           {"id": f"{PART}.target.kind",
                            "equals": "column"}]}]
+
+# 群の安定性の数え方 (作り直し方)
+GROUP_STABILITIES = [
+    {"value": "seed", "label": "種を変えて作り直す (同じ行で, 群の中心の"
+     "初めの置き方を変える)"},
+    {"value": "sample", "label": "標本を変えて作り直す (行の 8 割を引き"
+     "直す)"},
+]
 
 # 続けて行動を選ぶ方策の場合だけの問い (守りの問い)
 AUTONOMOUS = [*EFFECT, {"id": f"{PART}.autonomous", "equals": True}]
@@ -452,7 +471,7 @@ QUESTIONS: list[dict[str, Any]] = [
      "required": False, "title": "目指す値は (分かれば)",
      "help": "例: 今の 2 割減"},
     {"id": "issue.guard.name", "section": 2, "kind": "text",
-     "required": False,
+     "required": False, "when": GUARD_ASKED,
      "title": "引き換えに悪くしてはいけない数字はありますか (守る指標)",
      "help": "良くしたい数字を追うと悪くなりうる数字. 例: 廃棄を減らすと"
              "増えうる品切れ, 引き止めの連絡への苦情, 確かめる件数を減らす"
@@ -651,6 +670,26 @@ QUESTIONS: list[dict[str, Any]] = [
      "title": "利用者ごとに上位何件を並べますか (K)",
      "help": "並べる品物の数 (1 以上の整数). Recall@K と NDCG もこの K "
              "で数える. 例: 10"},
+    {"id": f"{PART}.group.columns", "section": 5, "kind": "columns",
+     "required": True, "when": GROUP, "title": "群を作るのに使う列は",
+     "help": "1 行が 1 つの対象 (顧客など) の表の, 群を作るのに使う列. 数の"
+             "列は標準化し, 他の列は値ごとに 0 と 1 の列にして使う. ID や"
+             "名前のように行ごとに違う列は入れない"},
+    {"id": f"{PART}.group.id", "section": 5, "kind": "column",
+     "required": False, "when": GROUP, "title": "行を見分ける列は (あれば)",
+     "help": "群の割り当ての表に, 行の番号の代わりに書く列. 群を作るのには"
+             "使わない. 例: customer_id"},
+    {"id": f"{PART}.group.k", "section": 5, "kind": "number",
+     "required": True, "when": GROUP, "title": "いくつの群に分けますか",
+     "help": "2 以上の整数. 人が見分けて扱える数にする. 分からなければ 4 "
+             "などで始め, 学習の段階で config の group.k を変えて, 群の"
+             "まとまりと安定性を比べる"},
+    {"id": f"{PART}.group.stability", "section": 5, "kind": "choice",
+     "required": True, "when": GROUP, "choices": GROUP_STABILITIES,
+     "title": "群の安定性は, どう作り直して数えますか",
+     "help": "作り直した群と元の群の一致 (調整ランド指数. 1 は同じ群, 0 は"
+             "偶然と同じ) を数える. 作り直すと変わる群は, 人が解釈しても"
+             "当てにならない"},
     {"id": f"{PART}.task", "section": 5, "kind": "choice", "required": True,
      "when": COLUMN_TARGET, "choices": TASKS, "title": "どの種類の問題ですか",
      "help": "目的の値がクラスなら分類, 値なら回帰. 時刻の順に過去から先を"

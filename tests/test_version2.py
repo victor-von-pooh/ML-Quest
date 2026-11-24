@@ -371,7 +371,9 @@ def test_model_example() -> None:
              ("evaluation.metric", "chamfer")]
     group = [("unit", "row"), ("output", "cluster"),
              ("target.source", "none"), ("method", "scratch"),
-             ("evaluation.metric", "silhouette")]
+             ("evaluation.metric", "silhouette"),
+             ("group.columns", ["store", "item"]), ("group.k", 3),
+             ("group.stability", "seed")]
     cases = [
         (role_problem("predict", region), "unet_segmentation"),
         (role_problem("predict", cloud), "point_cloud_predictor"),
@@ -681,8 +683,7 @@ def test_project_error() -> None:
     plain = example_problem("総菜の作る量")
     plain["ml"]["parts"][0]["role"] = "translate"
     for problem, words in (
-        (role_problem("group", [*ROLE_ANSWERS["group"],
-                                ("method", "scratch")]), "表の列"),
+        (role_problem("effect", ROLE_ANSWERS["effect"]), "表の列"),
         (other, "その他"), (plain, "直すところ"),
     ):
         message = project_error(problem)
