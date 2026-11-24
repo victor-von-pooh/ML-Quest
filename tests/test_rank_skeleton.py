@@ -390,7 +390,7 @@ def test_rank_project(tmp_path: Path) -> None:
     # config: 要る機能, 監視, 反応の表の場所, 列と件数, モデルの定義
     config = yaml.safe_load((project / "configs" / "default" / "train.yaml")
                             .read_text(encoding="utf-8"))
-    assert config["requires"] == ["eda", "modelcontrol"]
+    assert config["requires"] == ["eda", "modelcontrol", "inference"]
     assert (config["trainer"]["monitor"], config["trainer"]["mode"]) == (
         "valid/ndcg", "max"
     )
@@ -404,16 +404,17 @@ def test_rank_project(tmp_path: Path) -> None:
     place = record_project(problem, project)["project"]["dataset"]
     assert place == str((project / "outputs/interactions.csv").resolve())
 
-    # README: 反応の表の列, 2 塔の例, 時刻の順の分割, 指標, 一式を作らない
+    # README: 反応の表の列, 2 塔の例, 時刻の順の分割, 指標, 並べるの一式
     readme = (project / "README.md").read_text(encoding="utf-8")
     for words in ("outputs/interactions.csv", "`member`", "`item_id`",
                   "`ts`", "`qty`", "two_tower_retrieval", "時刻の順",
                   "Recall@K", "NDCG", "ranking_test.json", "人気順",
-                  "rank_index.json", "推論の一式は作らない"):
+                  "rank_index.json", "並べるの推論の一式 (版 8",
+                  "`user_embedding`", "`rank.k` の 10"):
         assert words in readme, words
 
     # 反応の表が無ければ, 置き場を案内して止まる
-    for name in ("torch", "ml_eda", "ml_found"):
+    for name in ("torch", "ml_eda", "ml_found", "ml_inference"):
         pytest.importorskip(name)
     done = run_script(project)
     assert done.returncode == 1
@@ -436,7 +437,7 @@ def test_rank_placeholder(tmp_path: Path) -> None:
     None
     """
     # 入れた反応の表は data/ に写して読む
-    for name in ("torch", "ml_found"):
+    for name in ("torch", "ml_found", "ml_inference"):
         pytest.importorskip(name)
     problem = attached(tmp_path)
     project = tmp_path / "project"
@@ -451,7 +452,7 @@ def test_rank_placeholder(tmp_path: Path) -> None:
     assert "並べるもの: 会員ごとに勧める品" in log
     assert f"利用者の数: {USERS}" in log and f"品物の数: {ITEMS}" in log
     assert "反応の強さ (qty) が 0 以下か数でない" in log
-    assert "推論の一式は作りません" in log
+    assert "推論の一式を作りません" in log
     assert not (run / "inference").exists()
 
     # 検証のたびの NDCG で最良を選ぶ
@@ -490,8 +491,10 @@ def test_rank_placeholder(tmp_path: Path) -> None:
 def test_rank_training(tmp_path: Path) -> None:
     """
     並べるの骨組みを書き換えずに, 同梱の例 two_tower_retrieval の大きさを
-    合わせた定義で学び, 大きさの合わない定義では出力先を作る前に止まる
-    ことを確かめる関数 (PyTorch と段階のライブラリが無ければ飛ばす)
+    合わせた定義で学び, 並べるの一式で利用者ごとに上位 K 件を並べ,
+    一式の Recall@K と NDCG がテスト用の評価と同じになることと, 大きさの
+    合わない定義では出力先を作る前に止まることを確かめる関数 (PyTorch と
+    段階のライブラリが無ければ飛ばす)
 
     Parameters
     ----------
@@ -503,7 +506,7 @@ def test_rank_training(tmp_path: Path) -> None:
     None
     """
     # 大きさの合わない定義 (同梱の例のまま) は止まる
-    for name in ("torch", "ml_found", "ml_modelcontrol"):
+    for name in ("torch", "ml_found", "ml_modelcontrol", "ml_inference"):
         pytest.importorskip(name)
     problem = attached(tmp_path)
     project = tmp_path / "project"
@@ -526,15 +529,79 @@ def test_rank_training(tmp_path: Path) -> None:
     assert (run / "model_spec.yaml").is_file()
 
     # 学習の前に求めた数と分割の行の数が, train.log の初めの行と同じ
-    encoding = rank_encoding(problem, record_project(problem, project)[
-        "project"]["dataset"])
+    dataset = record_project(problem, project)["project"]["dataset"]
+    encoding = rank_encoding(problem, dataset)
     assert (f"利用者の数: {encoding['users']}, 品物の数: "
             f"{encoding['items']}. 反応: " + ", ".join(
                 f"{name} {rows} 行"
                 for name, rows in encoding["rows"].items())) in log
     table = json.loads((run / "evaluations" / "ranking_test.json")
                        .read_text(encoding="utf-8"))
-    assert 0 <= table["rows"][0]["ndcg"] <= 1
+    row = table["rows"][0]
+    assert 0 <= row["ndcg"] <= 1
+    check_bundle(run, dataset, row)
+
+
+def check_bundle(run: Path, dataset: str, row: dict) -> None:
+    """
+    学習の後に作った並べるの一式で利用者ごとに上位 K 件を並べ, 一式の
+    Recall@K と NDCG がテスト用の評価の表と同じになることを確かめる関数
+
+    Parameters
+    ----------
+    run: Path
+        実験のディレクトリ
+    dataset: str
+        反応の表の場所 (骨組みが読んだ写し)
+    row: dict
+        テスト用の評価の表の行
+
+    Returns
+    ----------
+    None
+    """
+    # 一式は版 8 で, 番号の表と config の rank.k と列を持つ
+    from ml_inference import infer, predict, rank_metrics
+    pd = pytest.importorskip("pandas")
+    log = (run / "train.log").read_text(encoding="utf-8")
+    assert "推論の一式 (並べる): inference/" in log
+    bundle = run / "inference"
+    info = yaml.safe_load((bundle / "inference.yaml")
+                          .read_text(encoding="utf-8"))
+    assert info["format_version"] == 8
+    assert info["output"]["form"] == "ranking"
+    assert (info["rank"]["users"], info["rank"]["items"]) == (USERS, ITEMS)
+    assert info["rank"]["k"] == 10
+    assert info["rank"]["columns"] == {"user": "member", "item": "item_id",
+                                       "reaction": "qty"}
+
+    # 骨組みと同じ分け方 (反応の強さが 0 より大きい行を, 行の数の割合で
+    # 時刻の順に切る). 前の分割の反応は除き, テスト用の反応を正解にする
+    frame = pd.read_csv(dataset)
+    kept = frame[frame["qty"] > 0].sort_values("ts", kind="stable")
+    cut = kept["ts"].iloc[int(len(kept) * 0.9)]
+    seen, truth = kept[kept["ts"] < cut], kept[kept["ts"] >= cut]
+
+    # 学習用にいる全ての利用者を並べ, 番号の表に無い利用者は飛ばす
+    index = json.loads((run / "rank_index.json").read_text(encoding="utf-8"))
+    users = [*index["users"], "m_unknown"]
+    ranked = predict(bundle, users, seen=seen)
+    done = ranked[ranked["status"] == "ok"]
+    assert done.groupby("user").size().eq(10).all()
+    assert set(done["user"]) <= set(index["users"])
+    assert ranked[ranked["user"] == "m_unknown"]["status"].tolist() == [
+        "skipped"
+    ]
+    found = rank_metrics(bundle, ranked, truth, seen=seen)
+    assert found["users"] == row["users"] and found["k"] == 10
+    assert found["recall_at_k"] == pytest.approx(row["recall_at_k"])
+    assert found["ndcg"] == pytest.approx(row["ndcg"])
+
+    # k を変えて並べ, 結論は利用者の人数だけ
+    result = infer(bundle, index["users"][:2], k=3)
+    assert len(result["frame"]) == 6
+    assert result["sentences"][0] == ("利用者 2 人のうち 2 人に, 上位 3 件の"
+                                      "品物を並べた")
 
 
 class FixedScores:
@@ -711,3 +778,101 @@ def test_rank_functions(tmp_path: Path) -> None:
                                   (3, 5))
     full[1, 0] = -float("inf")
     assert top == torch.topk(full, 2, dim=1).indices.tolist()
+
+
+class Messages:
+    def __init__(self):
+        # 段階ごとの文の並び
+        self.lines = {"info": [], "warning": []}
+
+    def info(self, text: str) -> None:
+        """
+        知らせの文を残す関数
+
+        Parameters
+        ----------
+        text: str
+            文
+
+        Returns
+        ----------
+        None
+        """
+        # 知らせの並びに足す
+        self.lines["info"].append(text)
+
+    def warning(self, text: str) -> None:
+        """
+        警告の文を残す関数
+
+        Parameters
+        ----------
+        text: str
+            文
+
+        Returns
+        ----------
+        None
+        """
+        # 警告の並びに足す
+        self.lines["warning"].append(text)
+
+
+def test_rank_inference_skips(tmp_path: Path) -> None:
+    """
+    書き出した train.py が, 仮のモデルと埋め込みの出力の無い定義では一式を
+    作らず, 点数が埋め込みの内積の定数倍でない定義では警告を残して止まらない
+    ことを確かめる関数 (ML-ModelControl と ML-Inference が無ければ飛ばす)
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 仮のモデルと, 出力が score だけの定義は作らない
+    for name in ("ml_modelcontrol", "ml_inference"):
+        pytest.importorskip(name)
+    module = script_module(tmp_path)
+    import torch
+    from types import SimpleNamespace
+    from ml_modelcontrol import build_model
+    from omegaconf import OmegaConf
+    cfg = OmegaConf.create({
+        "experiment": {"name": "shop"},
+        "rank": {"user": "member", "item": "item_id", "reaction": "qty",
+                 "k": 3},
+    })
+    run = tmp_path / "run"
+    run.mkdir()
+    messages = Messages()
+    experiment = SimpleNamespace(logger=messages)
+    module.make_inference(cfg, None, run, experiment)
+    assert "推論の一式を作りません" in messages.lines["info"][-1]
+    spec = tower_spec(4, 6)
+    only = {**spec, "outputs": {"score": spec["outputs"]["score"]}}
+    place = tmp_path / "only.yaml"
+    place.write_text(yaml.safe_dump(only), encoding="utf-8")
+    module.make_inference(cfg, place, run, experiment)
+    assert "user_embedding と item_embedding が無い" in (
+        messages.lines["info"][-1]
+    )
+
+    # 点数が内積の定数倍でない定義 (点数に sigmoid を通したもの) は,
+    # ML-Inference の誤りを警告に残し, 一式を作らない
+    squashed = json.loads(json.dumps(spec))
+    squashed["nodes"]["squash"] = {"unit": "nn.Sigmoid", "inputs": "score"}
+    squashed["outputs"]["score"] = "squash"
+    place = tmp_path / "squashed.yaml"
+    place.write_text(yaml.safe_dump(squashed), encoding="utf-8")
+    torch.save(build_model(place, seed=0).state_dict(),
+               run / "final_model.pt")
+    (run / "rank_index.json").write_text(json.dumps({
+        "users": list("abcd"), "items": list("uvwxyz")
+    }), encoding="utf-8")
+    module.make_inference(cfg, place, run, experiment)
+    assert messages.lines["warning"][-1].startswith("推論の一式を作れません")
+    assert not (run / "inference").exists()

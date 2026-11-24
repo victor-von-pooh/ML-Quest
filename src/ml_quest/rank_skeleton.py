@@ -9,8 +9,8 @@ from ml_quest.rank_width import RANK_TEST, RANK_VALID
 
 # 学習のスクリプトが読み込むライブラリの, ML-Found の登録簿の機能の名前
 # (反応の表は ML-EDA の読み方で読む. config の model.spec の定義が無い
-# うちは ml_modelcontrol を読まない)
-RANK_LIBRARIES = ["eda", "modelcontrol"]
+# うちは ml_modelcontrol と ml_inference を読まない)
+RANK_LIBRARIES = ["eda", "modelcontrol", "inference"]
 
 # 書き出していないときの, 反応の表の場所 (プロジェクトのディレクトリから)
 RANK_DATASET = "outputs/interactions.csv"
@@ -948,10 +948,75 @@ def write_index(run_dir: Path, index: dict) -> None:
     (run_dir / INDEX_FILE).write_text(text + "\\n", encoding="utf-8")
 
 
+def make_inference(
+    cfg: Any, spec: Optional[Path], run_dir: Path, experiment: Experiment
+) -> None:
+    """
+    学習した重みから, 実験の中に ML-Inference の並べるの一式を作る関数
+
+    Parameters
+    ----------
+    cfg: Any
+        config (一式の名前, 上位の件数と反応の表の列)
+    spec: Optional[Path]
+        ML-ModelControl の定義のファイル (無ければ None)
+    run_dir: Path
+        実験のディレクトリ (重みと番号の表 INDEX_FILE を書いた後)
+    experiment: Experiment
+        実験 (train.log に記録する)
+
+    Returns
+    ----------
+    None
+    """
+    # 仮のモデルは ML-ModelControl の定義が無いので一式にできない
+    if spec is None:
+        experiment.logger.info(
+            "仮のモデル (PlaceholderModel) は ML-ModelControl の定義が無い"
+            "ので, 推論の一式を作りません. config の model.spec の場所に"
+            "定義を置くと, 学習の後に作ります"
+        )
+        return
+
+    # 一式は品物の埋め込みを索引にするので, 埋め込みの出力が要る
+    loaded = yaml.safe_load(spec.read_text(encoding="utf-8")) or {}
+    missing = [name for name in (USER_EMBEDDING, ITEM_EMBEDDING)
+               if name not in (loaded.get("outputs") or {})]
+    if missing:
+        experiment.logger.info(
+            f"定義の出力に {' と '.join(missing)} が無いので, 推論の一式を"
+            "作りません. 一式は品物の埋め込みを索引にし, 利用者の埋め込みとの"
+            "内積で並べます"
+        )
+        return
+
+    # 上位の件数と反応の表の列は config の rank から. 点数が埋め込みの
+    # 内積の定数倍でない定義は作れないので, 理由を残して学習の結果は残す
+    from ml_inference import make_rank_bundle
+    columns = {"user": cfg.rank.user, "item": cfg.rank.item,
+               "reaction": cfg.rank.reaction}
+    try:
+        info = make_rank_bundle(
+            run_dir / "inference", run_dir, spec=spec, k=cfg.rank.k,
+            columns=columns, name=cfg.experiment.name
+        )
+    except ValueError as error:
+        experiment.logger.warning(f"推論の一式を作れません: {error}")
+        return
+    rank = info["rank"]
+    experiment.logger.info(
+        f"推論の一式 (並べる): inference/ (利用者 {rank['users']} 人, 品物 "
+        f"{rank['items']} 件の索引. 利用者ごとに上位 {rank['k']} 件を並べる. "
+        f"版 {info['format_version']})"
+    )
+    for note in info["notes"]:
+        experiment.logger.warning(f"推論の一式の注意: {note}")
+
+
 def main() -> None:
     """
-    反応の表で 2 塔のモデルを学習し, 検証用とテスト用の Recall@K と NDCG を
-    残す関数
+    反応の表で 2 塔のモデルを学習し, 検証用とテスト用の Recall@K と NDCG と
+    推論の一式を残す関数
 
     Parameters
     ----------
@@ -1080,11 +1145,9 @@ def main() -> None:
             baseline=BASELINE_NAME, epoch=epoch, better=EVALUATION_BETTER
         )
 
-    # 推論の一式は作らない (学習した重みと番号の表まで)
-    experiment.logger.info(
-        "推論の一式は作りません. 学習した重み (final_model.pt) と利用者と品物"
-        f"の番号の表 ({INDEX_FILE}) が実験に残ります"
-    )
+    # 実験の中に並べるの推論の一式 (ML-ModelControl の定義がある場合だけ.
+    # 上で書いた番号の表を一式に写す)
+    make_inference(cfg, spec, run_dir, experiment)
 
 
 if __name__ == "__main__":
@@ -1318,8 +1381,18 @@ def rank_readme(
         "`evaluations/ranking_valid.json` と `ranking_test.json` (数えた"
         "利用者の数, K, `recall_at_k`, `ndcg` と, 学習用の反応の多い順 "
         "(人気順) に並べた `_baseline` と差 `_diff`))",
-        "4. **推論**: 推論の一式は作らない. 学習した重みと番号の表が実験に"
-        "残る",
+        "4. **推論** (ML-Inference): `model.spec` の場所に定義を置いて"
+        "学習すると, `train.py` が学習の後に実験の中の `inference/` に"
+        "並べるの推論の一式 (版 8. 番号の表と品物の埋め込みの索引を持ち, "
+        f"上位の件数の既定は `rank.k` の {rank['k']}, 反応の表の列は "
+        "config の `rank` の列) を作る. 版 8 の一式を作れる ML-Inference が"
+        "要る. 一式を作るには, 定義の出力に利用者の埋め込み "
+        "`user_embedding` と品物の埋め込み `item_embedding` も持ち, 点数が"
+        "その内積の定数倍であること (同梱の例 `two_tower_retrieval` の形)."
+        " その `inference/` に利用者の値の並びを渡すと, 利用者と順位ごとの "
+        "`user`, `rank`, `item`, `score` の表が返る (前に反応した品物の表を"
+        "渡すと除く). 仮のモデル (`PlaceholderModel`) は定義が無いので一式を"
+        "作らない",
         "", "`train.py` の印 (TODO) の所 (モデルなど) は書き足す. 問題の"
         "設定を変えたら, 書き出し直すか手で直す.", "",
     ]
