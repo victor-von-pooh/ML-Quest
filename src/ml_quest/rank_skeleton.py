@@ -978,7 +978,9 @@ def make_inference(
         )
         return
 
-    # 一式は品物の埋め込みを索引にするので, 埋め込みの出力が要る
+    # 一式は品物の埋め込みを索引にするので, 埋め込みの出力が要る.
+    # ML-Inference も作る前に確かめるが, 骨組みは score だけの定義でも
+    # 学べるので, 誤りの警告でなく知らせの 1 行にするため先に見る
     loaded = yaml.safe_load(spec.read_text(encoding="utf-8")) or {}
     missing = [name for name in (USER_EMBEDDING, ITEM_EMBEDDING)
                if name not in (loaded.get("outputs") or {})]
@@ -990,8 +992,9 @@ def make_inference(
         )
         return
 
-    # 上位の件数と反応の表の列は config の rank から. 点数が埋め込みの
-    # 内積の定数倍でない定義は作れないので, 理由を残して学習の結果は残す
+    # 上位の件数と反応の表の列は config の rank から. 定義か設定が約束に
+    # 合わない (点数が内積の定数倍でない, k や列の名前の誤りなど) ときは,
+    # ML-Inference の誤りの文をそのまま残し, 学習の結果は残す
     from ml_inference import make_rank_bundle
     columns = {"user": cfg.rank.user, "item": cfg.rank.item,
                "reaction": cfg.rank.reaction}
@@ -1001,7 +1004,10 @@ def make_inference(
             columns=columns, name=cfg.experiment.name
         )
     except ValueError as error:
-        experiment.logger.warning(f"推論の一式を作れません: {error}")
+        experiment.logger.warning(
+            "定義か設定が並べるの一式の約束に合わないので, 推論の一式を"
+            f"作れません: {error}"
+        )
         return
     rank = info["rank"]
     experiment.logger.info(

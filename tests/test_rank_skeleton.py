@@ -860,6 +860,7 @@ def test_rank_inference_skips(tmp_path: Path) -> None:
     assert "user_embedding と item_embedding が無い" in (
         messages.lines["info"][-1]
     )
+    assert not (run / "inference").exists()
 
     # 点数が内積の定数倍でない定義 (点数に sigmoid を通したもの) は,
     # ML-Inference の誤りを警告に残し, 一式を作らない
@@ -874,5 +875,8 @@ def test_rank_inference_skips(tmp_path: Path) -> None:
         "users": list("abcd"), "items": list("uvwxyz")
     }), encoding="utf-8")
     module.make_inference(cfg, place, run, experiment)
-    assert messages.lines["warning"][-1].startswith("推論の一式を作れません")
+    warning = messages.lines["warning"][-1]
+    assert warning.startswith("定義か設定が並べるの一式の約束に合わないので,"
+                              " 推論の一式を作れません: ")
+    assert "埋め込みの内積の正の定数倍になっていません" in warning
     assert not (run / "inference").exists()
