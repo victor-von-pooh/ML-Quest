@@ -15,8 +15,8 @@ from ml_quest.baseline_skeleton import (
     reported_value
 )
 from ml_quest.check import (
-    choice_label, is_column_part, is_generate_part, is_policy_part,
-    is_rank_part, split_errors
+    choice_label, is_column_part, is_generate_part, is_group_part,
+    is_policy_part, is_rank_part, split_errors
 )
 from ml_quest.data import (
     ITEMS_KINDS, TABLE_LOADERS, content_kind, copy_data, dataset_info,
@@ -25,6 +25,10 @@ from ml_quest.data import (
 from ml_quest.generate_skeleton import (
     FID_LIBRARIES, FID_MONITOR, GENERATE_LIBRARIES, generate_config,
     generate_readme, generate_script
+)
+from ml_quest.group_skeleton import (
+    GROUP_DATASET, GROUP_LIBRARIES, group_config, group_name, group_readme,
+    group_script
 )
 from ml_quest.handoff import build_stages, describe, export_stages
 from ml_quest.items_skeleton import (
@@ -806,6 +810,7 @@ def experiment_name(problem: dict, name: Optional[str]) -> str:
     default = (f"{target}_{task}" if is_column_part(problem)
                else policy_name(problem) if is_policy_part(problem)
                else rank_name(problem) if is_rank_part(problem)
+               else group_name(problem) if is_group_part(problem)
                else items_name(problem))
     raw = name or default
     text = re.sub(r"[^\w-]+", "_", raw).strip("_") or "problem"
@@ -1077,23 +1082,25 @@ def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
         return message, exportable
 
     # 列の予測と, 予測するの画像の領域と点群と, 作るの画像と表と, 並べる
-    # と, 効果を見積もるの方策だけ
+    # と, まとめると, 効果を見積もるの方策だけ
     generate = is_generate_part(upgraded)
     policy = is_policy_part(upgraded)
     rank = is_rank_part(upgraded)
+    group = is_group_part(upgraded)
     if not is_column_part(upgraded) and skeleton_kind(upgraded) is None and (
-        not generate and not policy and not rank
+        not generate and not policy and not rank and not group
     ):
         message = ("骨組みを書き出せるのは, 予測するで正解の種類が表の列, "
                    "画像の領域, 点群の場合と, 作るで正解の種類が画像か表の場合"
-                   "と, 並べるの場合と, 効果を見積もるで続けて行動を選ぶ方策の"
-                   "場合と, 予測するで既製のモデルをそのまま使う画像の分類の"
-                   "場合だけです (まとめるの受け持ちと, 方策でない効果の見積"
-                   "もりと, 他の正解の種類はまだ扱えません)")
+                   "と, 並べるとまとめるの場合と, 効果を見積もるで続けて行動を"
+                   "選ぶ方策の場合と, 予測するで既製のモデルをそのまま使う画像"
+                   "の分類の場合だけです (方策でない効果の見積もりと, 他の正解"
+                   "の種類はまだ扱えません)")
         return message, exportable
-    if generate or policy or rank:
+    if generate or policy or rank or group:
         message = (policy_message(upgraded) if policy
                    else rank_message(upgraded) if rank
+                   else group_message(upgraded) if group
                    else table_message(upgraded)
                    if active_value(upgraded, f"{PART}.target.kind") == "table"
                    else generate_message(upgraded))
@@ -1223,6 +1230,41 @@ def rank_message(problem: dict) -> Optional[str]:
         message = ("並べるの骨組みは, 反応の表で学びます (入れたデータ "
                    f"{Path(str(source)).name} は表として読んでいません). "
                    "利用者, 品物, 時刻の列を持つ表のファイル (CSV, Parquet "
+                   "など) を入れてください")
+
+    return message
+
+
+def group_message(problem: dict) -> Optional[str]:
+    """
+    まとめるの骨組みを書き出せない理由を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. まとめるで学習する)
+
+    Returns
+    ----------
+    message: Optional[str]
+        誤りの文 (出力の形が群でない, 入れたデータが表でない. 書き出せる
+        なら None)
+    """
+    # 1 行が 1 つの対象の表を読む. 指標は受け持ちの候補 (シルエット係数,
+    # 損失) が全て書ける
+    output = active_value(problem, f"{PART}.output")
+    loader = active_value(problem, "data.loader")
+    options = get_value(problem, "data.options")
+    source = get_value(problem, "data.source")
+    text = isinstance(options, dict) and options.get("text_column")
+    message = None
+    if output != "cluster":
+        message = ("まとめるの骨組みは, 出力の形が「群」の場合だけです (今"
+                   f"は{choice_label(OUTPUTS, output, problem)})")
+    elif source and (loader not in TABLE_LOADERS or text):
+        message = ("まとめるの骨組みは, 1 行が 1 つの対象の表で群を作ります "
+                   f"(入れたデータ {Path(str(source)).name} は表として読んで"
+                   "いません). 群を作る列を持つ表のファイル (CSV, Parquet "
                    "など) を入れてください")
 
     return message
@@ -1489,6 +1531,23 @@ def project_files(
                 requires_text(RANK_LIBRARIES, stages)
             ),
             "train.py": rank_script(problem, literal),
+        }
+        return files
+
+    # まとめる (入れた表は data に写してそのまま読む. 入れていなければ
+    # 置き場の outputs/rows.csv)
+    if is_group_part(problem):
+        dataset = data_file.as_posix() if data_file else GROUP_DATASET
+        files = {
+            "README.md": group_readme(
+                problem, stages, dataset,
+                data_file.as_posix() if data_file else None
+            ),
+            "configs/default/train.yaml": group_config(
+                experiment_name(problem, name), stages, dataset,
+                requires_text(GROUP_LIBRARIES, stages)
+            ),
+            "train.py": group_script(problem, literal),
         }
         return files
 
