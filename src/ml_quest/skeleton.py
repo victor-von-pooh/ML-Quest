@@ -1463,7 +1463,8 @@ def skeleton_kind(problem: dict) -> Optional[str]:
 
 def project_files(
     problem: dict, stages: dict, name: Optional[str],
-    data_file: Optional[Path], info: Optional[dict], dropped: bool = False
+    data_file: Optional[Path], info: Optional[dict], dropped: bool = False,
+    spec_exists: bool = False
 ) -> dict:
     """
     受け持ちに合う README, config の基準, 学習のスクリプトを作る関数
@@ -1482,6 +1483,9 @@ def project_files(
         入れたデータセットの説明 (データセットでなければ None)
     dropped: bool = False
         損得と制約に直すところが残り, 意思決定の既定値を付けないか
+    spec_exists: bool = False
+        書き出し先に定義 (models/model.yaml) が既にあるか (まとめるの
+        config に仮のモデルの目印を書かない)
 
     Returns
     ----------
@@ -1545,7 +1549,7 @@ def project_files(
             ),
             "configs/default/train.yaml": group_config(
                 experiment_name(problem, name), stages, dataset,
-                requires_text(GROUP_LIBRARIES, stages)
+                requires_text(GROUP_LIBRARIES, stages), spec_exists
             ),
             "train.py": group_script(problem, literal),
         }
@@ -1738,7 +1742,8 @@ def make_project(
     files = {
         "problem.yaml": yaml.safe_dump(problem, allow_unicode=True,
                                        sort_keys=False),
-        **project_files(problem, stages, name, data_file, info, dropped),
+        **project_files(problem, stages, name, data_file, info, dropped,
+                        (path / "models" / "model.yaml").is_file()),
     }
     if stages["inference"].get("ready") is None:
         files["configs/experiment/train.yaml"] = EXPERIMENT

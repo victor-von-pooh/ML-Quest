@@ -538,10 +538,12 @@ def test_group_training(tmp_path: Path) -> None:
     task = yaml.safe_load((run / "task.yaml").read_text(encoding="utf-8"))
     assert (task["role"], task["output"]) == ("group", "cluster")
 
-    # 標本を変えて数える (config の差分だけ)
+    # 標本を変えて数える. 学習用の 192 行で最後のバッチが 1 行になる大きさ
+    # でも学ぶ (config の差分だけ)
     sample = tmp_path / "sample"
     make_project(problem, sample)
-    done = run_script(sample, ("group.stability=sample",))
+    done = run_script(sample, ("group.stability=sample",
+                               "data.batch_size=191"))
     assert done.returncode == 0, done.stdout[-2000:] + done.stderr[-2000:]
     found = sorted((sample / "outputs").glob(
         "*/*/*/evaluations/group_stability.json"
@@ -576,3 +578,10 @@ def test_group_training(tmp_path: Path) -> None:
     runs = sorted((wrong / "outputs").glob("*/*/*/train.log"))
     assert "PlaceholderModel" not in runs[0].read_text(encoding="utf-8")
     assert (runs[0].parent / "model_spec.yaml").is_file()
+
+    # 定義を置いて書き出し直すと, 仮のモデルの目印を書かない
+    make_project(problem, wrong, overwrite=True)
+    config = yaml.safe_load((wrong / "configs" / "default" / "train.yaml")
+                            .read_text(encoding="utf-8"))
+    assert "placeholder" not in config["model"]
+    assert config["model"]["spec"] == "models/model.yaml"

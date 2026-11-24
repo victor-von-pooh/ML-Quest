@@ -17,6 +17,14 @@ GROUP_DATASET = "outputs/rows.csv"
 # 無作為に分ける, 検証用の行の割合の既定 (config の data.valid)
 GROUP_VALID = 0.2
 
+# spec のファイルが無いときの, 仮のモデルで学習することの目印 (config の
+# model.placeholder)
+GROUP_PLACEHOLDER = """  # spec のファイルが無いうちは train.py の仮のモデルで学習することの目印
+  # (ML-Dashboard の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
+  # は spec のファイルがあるかで決まる)
+  placeholder: true
+"""
+
 # 群の要約の表の, 群を作る列と同じ名前にできない列
 SUMMARY_COLUMNS = ["group", "rows", "share", "stability"]
 
@@ -1186,8 +1194,11 @@ def main() -> None:
     )
     train_x = torch.tensor(features[train])
     valid_x = torch.tensor(features[valid])
-    train_loader = DataLoader(TensorDataset(train_x),
-                              batch_size=cfg.data.batch_size, shuffle=True)
+    # 最後のバッチが 1 行だけなら落とす (対照学習の負例が無いため)
+    train_loader = DataLoader(
+        TensorDataset(train_x), batch_size=cfg.data.batch_size, shuffle=True,
+        drop_last=len(train_x) % cfg.data.batch_size == 1
+    )
     valid_loader = DataLoader(TensorDataset(valid_x),
                               batch_size=cfg.data.batch_size, shuffle=False)
 
@@ -1338,11 +1349,7 @@ model:
   # 場所に保存する. 入力は行の特徴 x, 出力に埋め込み embedding と類似度の表
   # similarity)
   spec: models/model.yaml
-  # spec のファイルが無いうちは train.py の仮のモデルで学習することの目印
-  # (ML-Dashboard の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
-  # は spec のファイルがあるかで決まる)
-  placeholder: true
-  # 仮のモデルの埋め込みの幅
+$placeholder  # 仮のモデルの埋め込みの幅
   width: 16
 ''')
 
@@ -1382,7 +1389,8 @@ def group_script(problem: dict, literal: Callable) -> str:
 
 
 def group_config(
-    experiment: str, stages: dict, dataset: str, requires: str
+    experiment: str, stages: dict, dataset: str, requires: str,
+    spec_exists: bool = False
 ) -> str:
     """
     まとめるの config の基準を作る関数
@@ -1397,6 +1405,9 @@ def group_config(
         群を作る表の場所 (プロジェクトのディレクトリから)
     requires: str
         一番上の requires の行 (skeleton.requires_text)
+    spec_exists: bool = False
+        書き出し先に定義 (models/model.yaml) が既にあるか (あれば
+        model.placeholder を書かない)
 
     Returns
     ----------
@@ -1415,6 +1426,7 @@ def group_config(
         id=json.dumps(group["id"], ensure_ascii=False),
         k=json.dumps(group["k"]),
         stability=json.dumps(group["stability"], ensure_ascii=False),
+        placeholder="" if spec_exists else GROUP_PLACEHOLDER,
     )
 
     return text
