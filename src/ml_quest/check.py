@@ -8,9 +8,9 @@ from ml_quest.problem import (
     upgrade_problem, version_message
 )
 from ml_quest.questions import (
-    COLLECTS, CONSUMERS, FALLBACKS, METHODS, METRICS, OUTPUTS, PART,
-    QUESTIONS, READY_LIBRARIES, ROLES, SIMULATORS, TARGET_KINDS,
-    TARGET_SOURCES, UNITS, V1_METRICS
+    COLLECTS, CONSUMERS, FALLBACKS, GUARD_COUNTS, METHODS, METRICS,
+    NOT_COUNTED, OUTPUTS, PART, QUESTIONS, READY_LIBRARIES, ROLES,
+    SIMULATORS, TARGET_KINDS, TARGET_SOURCES, UNITS, V1_METRICS
 )
 
 # その他の指標の名前 (学習の記録の名前と曲線のファイルの名前)
@@ -200,7 +200,8 @@ def check_shape(problem: dict) -> list[dict]:
                 f"{PART}.evaluation.metric", "issue.kpi.better",
                 f"{PART}.consumer", f"{PART}.group_column",
                 f"{PART}.split_time_column", f"{PART}.downstream",
-                "issue.guard.name", f"{PART}.evaluation.name",
+                "issue.guard.name", "issue.guard.counted",
+                f"{PART}.evaluation.name",
                 f"{PART}.target.process.name", *PART_CHOICES,
                 *POLICY_TEXTS, *READY_TEXTS, *RANK_COLUMNS):
         value = get_value(problem, key)
@@ -1565,6 +1566,7 @@ def check_guard(problem: dict) -> list[dict]:
     ):
         found.append(finding("error", "issue.guard.better",
                              "守る指標の向きは lower か higher にしてください"))
+    found += check_guard_counted(problem, line)
     texts = [str(active_value(problem, key) or "")
              for key in ("verification.success", "operation.stop")]
     if get_value(problem, "ml.use") is True and not any(
@@ -1575,6 +1577,51 @@ def check_guard(problem: dict) -> list[dict]:
             f"守る指標 ({name.strip()}) が, 成功の基準 (9) にも止める条件 "
             "(10) にもありません. 守る線を割ったら成功と言わない, 止める, "
             "と書いておくと, 良くしたい数字だけを追わずに済みます"
+        ))
+
+    return found
+
+
+def check_guard_counted(problem: dict, line: Any) -> list[dict]:
+    """
+    守る指標がたどり直しで数える量が意思決定の型にあるかと, 割合の量の
+    守る線が 0 から 1 かを確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+    line: Any
+        守る線の答え
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ
+    """
+    # 型を変えた後の古い答えと, % のままの割合の線
+    found: list[dict] = []
+    counted = active_value(problem, "issue.guard.counted")
+    if not isinstance(counted, str) or counted == NOT_COUNTED:
+        return found
+    kind = get_value(problem, "action.decision.type")
+    counts = GUARD_COUNTS.get(kind, {}) if isinstance(kind, str) else {}
+    if counted not in counts:
+        found.append(finding(
+            "error", "issue.guard.counted",
+            f"守る指標が数える量の {counted} は, "
+            f"{DECISION_NAMES.get(str(kind), kind)}意思決定では数えられません. "
+            "選び直してください"
+        ))
+        return found
+    if counted.endswith("_rate") and isinstance(line, (int, float)) and (
+        not isinstance(line, bool) and not 0 <= line <= 1
+    ):
+        found.append(finding(
+            "error", "issue.guard.line",
+            f"守る指標が数える量 ({counts[counted]['description']}) は 0 から"
+            " 1 の割合なので, 守る線も 0 から 1 で書いてください (5 % なら "
+            "0.05)"
         ))
 
     return found

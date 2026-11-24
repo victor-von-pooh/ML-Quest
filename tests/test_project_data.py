@@ -422,6 +422,7 @@ EXPORTABLE_IDS = {
     "issue.kpi.unit", "issue.kpi.current", "issue.kpi.target",
     "issue.kpi.better", "issue.guard.name", "issue.guard.unit",
     "issue.guard.better", "issue.guard.line", "issue.guard.measure",
+    "issue.guard.counted",
     "decomposition", "action.who", "action.when", "action.what",
     "action.decision", "action.basis", "ml.constraints",
     "ml.parts.0.what", "ml.parts.0.item", "ml.parts.0.baseline",

@@ -1,4 +1,5 @@
 import ast
+import copy
 from pathlib import Path
 
 import pandas as pd
@@ -6,8 +7,8 @@ import pytest
 import yaml
 
 from ml_quest import (
-    EXAMPLES, QUESTIONS, SPLITS, answer, apply_recipe, check, describe,
-    example_problem, get_value, handoff, is_ready, load_problem,
+    EXAMPLES, GUARD_COUNTS, QUESTIONS, SPLITS, answer, apply_recipe, check,
+    describe, example_problem, get_value, handoff, is_ready, load_problem,
     make_project, new_problem, questions, read_columns, recipe_from,
     save_problem
 )
@@ -761,7 +762,7 @@ def test_guard_metric() -> None:
     # 推論の段階へ, たどり直しと測り直しで数える値として渡る
     assert handoff(problem)["inference"]["guard"] == {
         "name": "品切れした品と日の割合", "unit": "%", "better": "lower",
-        "line": 5, "measure": None,
+        "line": 5, "measure": None, "counted": None,
     }
 
     # 解けたと言える指標と同じ名前は見直し. 名前を消すと続きは要らない
@@ -779,6 +780,7 @@ def test_guard_metric() -> None:
         "name": "引き止めの連絡への苦情", "unit": "件 / 月",
         "better": "lower", "line": 5,
         "measure": "窓口に届いた, 連絡についての苦情を数える",
+        "counted": None,
     }
 
     # 手で書いた数でない線と知らない向きは誤り
@@ -787,6 +789,101 @@ def test_guard_metric() -> None:
     assert {"issue.guard.line", "issue.guard.better"} <= set(
         levels(raw)["error"]
     )
+
+
+def test_guard_counted() -> None:
+    """
+    守る指標がたどり直しで数える量を, 意思決定の型の量から選べ, 受け渡しの
+    推論の守る指標に入ることを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 守る指標を書くまで問わない. 選択肢は量を決める型の量と指さない
+    problem = example_problem("総菜の作る量")
+    item = {item["id"]: item for item in questions(problem)}
+    assert not item["issue.guard.counted"]["applies"]
+    problem = answer(problem, "issue.guard.name", "品切れした品と日の割合")
+    problem = answer(problem, "issue.guard.better", "lower")
+    problem = answer(problem, "issue.guard.line", 0.05)
+    item = {item["id"]: item for item in questions(problem)}
+    counted = item["issue.guard.counted"]
+    assert counted["applies"] and not counted["required"]
+    assert counted["section"] == 7 and "0.05" in counted["help"]
+    assert [choice["value"] for choice in counted["choices"]] == [
+        *GUARD_COUNTS["quantity"], "none"
+    ]
+    assert counted["choices"][0]["label"] == "足りなかった行の割合"
+    assert handoff(problem)["inference"]["guard"]["counted"] is None
+
+    # 選んだ量の名前が渡り, 指さないは None
+    chosen = answer(problem, "issue.guard.counted", "shortage_rate")
+    assert levels(chosen)["error"] == []
+    assert handoff(chosen)["inference"]["guard"]["counted"] == "shortage_rate"
+    unpointed = answer(chosen, "issue.guard.counted", "none")
+    assert handoff(unpointed)["inference"]["guard"]["counted"] is None
+    with pytest.raises(ValueError):
+        answer(problem, "issue.guard.counted", "complaints")
+
+    # 割合の量の守る線は 0 から 1 (% のままは誤り)
+    percent = answer(chosen, "issue.guard.line", 5)
+    assert any("0.05" in item["message"] for item in check(percent)
+               if item["id"] == "issue.guard.line")
+    counts = answer(percent, "issue.guard.counted", "shortage")
+    assert "issue.guard.line" not in levels(counts)["error"]
+
+    # 型を変えた後の古い量は誤りで, 受け渡しには渡さない
+    raw = copy.deepcopy(chosen)
+    raw["action"]["decision"] = {"type": "triage", "miss_cost": 9,
+                                 "false_alarm_cost": 1}
+    item = {item["id"]: item for item in questions(raw)}
+    assert [choice["value"] for choice in item["issue.guard.counted"][
+        "choices"]] == [*GUARD_COUNTS["triage"], "none"]
+    assert any("選び直して" in item["message"] for item in check(raw)
+               if item["id"] == "issue.guard.counted")
+
+    # 意思決定しない型と, 効果を確率の差で渡した対象を選ぶ型では問わない
+    churn = example_problem("解約の引き止め")
+    assert get_value(churn, "issue.guard.counted") == "none"
+    for decision in ({"type": "none"},
+                     {"type": "select", "value": 24000, "cost": 1500,
+                      "effect_kind": "uplift", "effect": -0.1,
+                      "effect_goal": "reduce"}):
+        other = answer(churn, "action.decision", decision)
+        other = answer(other, "issue.guard.counted", "selected")
+        item = {item["id"]: item for item in questions(other)}
+        assert not item["issue.guard.counted"]["applies"]
+        assert "issue.guard.counted" not in levels(other)["error"]
+    other = answer(churn, "issue.guard.counted", "selected")
+    assert handoff(other)["inference"]["guard"]["counted"] == "selected"
+
+    # 手で書いた文字列でない答えは形の誤り
+    raw = copy.deepcopy(chosen)
+    raw["issue"]["guard"]["counted"] = 1
+    assert "issue.guard.counted" in levels(raw)["error"]
+
+
+def test_guard_counts_match_inference() -> None:
+    """
+    写した数えられる量の一覧が ML-Inference の GUARD_COUNTS と同じことを
+    確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # ML-Inference が無ければ飛ばす
+    inference = pytest.importorskip("ml_inference")
+    assert GUARD_COUNTS == inference.GUARD_COUNTS
 
 
 def test_guard_line_finite() -> None:

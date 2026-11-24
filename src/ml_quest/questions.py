@@ -60,6 +60,54 @@ METRIC_TITLES = {"accuracy": "正解率", "mae": "平均絶対誤差",
 # 守る指標を書いた場合だけの問い
 HAS_GUARD = {"id": "issue.guard.name", "filled": True}
 
+# たどり直しで数えられる守る指標の量 (意思決定の型ごと. 名前から説明と
+# 向き. lower は小さいほど良い. 割合は名前が _rate で終わり, 0 から 1).
+# ML-Inference の GUARD_COUNTS を写す (食い違いはテストで確かめる)
+GUARD_COUNTS = {
+    "quantity": {
+        "shortage_rate": {"description": "足りなかった行の割合",
+                          "better": "lower"},
+        "shortage": {"description": "足りなかった量の合計 (目的の列の単位)",
+                     "better": "lower"},
+        "surplus": {"description": "余った量の合計 (目的の列の単位)",
+                    "better": "lower"},
+    },
+    "select": {
+        "selected": {"description": "選んだ件数", "better": "lower"},
+        "selected_cost": {"description": "選んだ行の費用の合計",
+                          "better": "lower"},
+        "selected_hit_rate": {"description": "選んだ行のうち当たりの割合",
+                              "better": "higher"},
+    },
+    "triage": {
+        "routed": {"description": "回した件数", "better": "lower"},
+        "missed": {"description": "見逃した件数 (回さなかった当たり)",
+                   "better": "lower"},
+        "false_alarms": {"description": "空振りの件数 (回した外れ)",
+                         "better": "lower"},
+    },
+}
+
+# 守る指標が数える量を指さない答え (受け渡しの counted は None)
+NOT_COUNTED = "none"
+
+# たどり直しで数える量の選択肢 (decisions は使える意思決定の型. 指さない
+# は全ての型)
+GUARD_COUNTED = [
+    {"value": name, "label": count["description"], "decisions": [kind]}
+    for kind, counts in GUARD_COUNTS.items()
+    for name, count in counts.items()
+] + [{"value": NOT_COUNTED, "label": "指さない (過去のデータでは数えられ"
+      "ない. 課題の場で数える)", "decisions": list(GUARD_COUNTS)}]
+
+# 守る指標をたどり直しで数えられる場合 (列の予測で, 数えられる量のある
+# 意思決定の型. 効果を確率の差で渡した対象を選ぶ型はたどり直せない)
+COUNTABLE_GUARD = [
+    *COLUMN_TARGET, HAS_GUARD,
+    {"id": "action.decision.type", "in": list(GUARD_COUNTS)},
+    {"none": [{"id": "action.decision.effect_kind", "equals": "uplift"}]},
+]
+
 # 予測の使い道の選択肢 (後段の仕組みと後段の機械学習は, 求める形を問う)
 CONSUMERS = [
     {"value": "human", "label": "人が見て決める (判断の材料)"},
@@ -423,7 +471,8 @@ QUESTIONS: list[dict[str, Any]] = [
      "required": True, "when": HAS_GUARD,
      "title": "どこまでなら許せますか (守る線)",
      "help": "これを割ったら, 良くしたい数字が良くなっても失敗とする値. "
-             "例: 品切れは今と同じ 5 % まで"},
+             "例: 品切れは今と同じ 5 % まで (たどり直しで割合の量を数えるなら, "
+             "0 から 1 で 0.05)"},
     {"id": "issue.guard.measure", "section": 2, "kind": "text",
      "required": False, "when": HAS_GUARD, "title": "どう測りますか",
      "help": "確かめ (9) と運用 (10) で同じ測り方を使う. 例: 閉店の 2 時間"
@@ -713,6 +762,13 @@ QUESTIONS: list[dict[str, Any]] = [
              " (前の週の同じ曜日なら 7) か, 直前の k 期の平均か, 今のやり方の"
              "値の列. 選ぶと振り分けなら, 行動したかの列. 書くと, データから"
              "今のやり方の損 (指標の今の値の候補) が出る"},
+    {"id": "issue.guard.counted", "section": 7, "kind": "choice",
+     "required": False, "when": COUNTABLE_GUARD, "choices": GUARD_COUNTED,
+     "title": "守る指標は, たどり直しで数えられる量のどれに当たりますか",
+     "help": "当たる量を選ぶと, 推論の段階のたどり直しが, 予測から決めた"
+             "行動でその量を数え, 守る線と並べる. 当たる量が無ければ「指さ"
+             "ない」(課題の場で数える). 割合の量は 0 から 1 で数えるので, "
+             "守る線 (2) も 0 から 1 で書く (5 % なら 0.05)"},
     {"id": "action.basis", "section": 7, "kind": "text", "required": False,
      "when": COLUMN_TARGET, "title": "損得の値の根拠は",
      "help": "例: 欠品は粗利 200 円, 廃棄は原価 150 円. 根拠の無い値では, "

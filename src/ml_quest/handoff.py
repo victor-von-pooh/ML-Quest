@@ -12,7 +12,7 @@ from ml_quest.problem import (
     active_value, data_location, get_value, upgrade_problem
 )
 from ml_quest.questions import (
-    CONSUMERS, FALLBACKS, METRICS, PART, ROLES, TASKS
+    CONSUMERS, FALLBACKS, GUARD_COUNTS, METRICS, PART, ROLES, TASKS
 )
 from ml_quest.requirements import required_features
 
@@ -128,8 +128,7 @@ def conclusion_of(problem: dict) -> dict:
 
 def guard_of(problem: dict) -> Optional[dict]:
     """
-    問題の設定から, 推論の段階のたどり直しと測り直しで数える守る指標を作る
-    関数
+    問題の設定から, 推論の段階のたどり直しで数える守る指標を作る関数
 
     Parameters
     ----------
@@ -140,8 +139,9 @@ def guard_of(problem: dict) -> Optional[dict]:
     ----------
     guard: Optional[dict]
         name, unit, better (lower か higher), line (守る線. 有限の数),
-        measure (測り方. どれも答えていなければ None. 名前を答えていな
-        ければ全体が None)
+        measure (測り方), counted (たどり直しで数える量の名前. 指さない
+        なら None. どれも答えていなければ None. 名前を答えていなければ
+        全体が None)
     """
     # 名前のある守る指標だけ (空の文, 崩れた向き, 有限の数でない線は None)
     name = active_value(problem, "issue.guard.name")
@@ -158,6 +158,7 @@ def guard_of(problem: dict) -> Optional[dict]:
         "line": line if isinstance(line, (int, float))
         and not isinstance(line, bool) and math.isfinite(line) else None,
         "measure": text_or_none(measure),
+        "counted": counted_of(problem),
     }
 
     return guard
@@ -947,6 +948,31 @@ def policy_text(problem: dict) -> str:
     text = "方策の守り: " + ". ".join(parts)
 
     return text
+
+
+def counted_of(problem: dict) -> Optional[str]:
+    """
+    守る指標がたどり直しで数える量の名前を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定
+
+    Returns
+    ----------
+    counted: Optional[str]
+        ML-Inference の GUARD_COUNTS の, 意思決定の型の量の名前 (指さない,
+        答えていない, 要らない問い, 型に無い量なら None)
+    """
+    # 今の意思決定の型の量だけ
+    counted = active_value(problem, "issue.guard.counted")
+    kind = get_value(problem, "action.decision.type")
+    counts = GUARD_COUNTS.get(kind, {}) if isinstance(kind, str) else {}
+    if not isinstance(counted, str) or counted not in counts:
+        return None
+
+    return counted
 
 
 def guard_text(guard: dict) -> str:

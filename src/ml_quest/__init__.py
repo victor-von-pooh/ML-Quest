@@ -14,8 +14,9 @@ from ml_quest.problem import (
     upgrade_problem
 )
 from ml_quest.questions import (
-    BASELINE_TYPES, METHODS, METRICS, OUTPUTS, PART, QUESTIONS, ROLES,
-    SECTIONS, SPLITS, TARGET_KINDS, TARGET_SOURCES, TASKS, UNITS
+    BASELINE_TYPES, GUARD_COUNTS, METHODS, METRICS, OUTPUTS, PART,
+    QUESTIONS, ROLES, SECTIONS, SPLITS, TARGET_KINDS, TARGET_SOURCES,
+    TASKS, UNITS
 )
 from ml_quest.requirements import FEATURES, required_features
 from ml_quest.sensitivity import SENSITIVITY_FIELDS, decision_sensitivity
@@ -26,8 +27,9 @@ from ml_quest.table_width import table_encoding
 
 __all__ = [
     "BASELINE_TYPES", "COPY_NAME", "EXAMPLES", "FEATURES", "FORMAT_VERSION",
-    "LEGACY_KEYS", "METHODS", "METRICS", "MODEL_EXAMPLES", "OUTPUTS", "PART",
-    "QUESTIONS", "ROLES", "SECTIONS", "SENSITIVITY_FIELDS", "SPLITS",
+    "GUARD_COUNTS", "LEGACY_KEYS", "METHODS", "METRICS", "MODEL_EXAMPLES",
+    "OUTPUTS", "PART", "QUESTIONS", "ROLES", "SECTIONS",
+    "SENSITIVITY_FIELDS", "SPLITS",
     "TARGET_KINDS", "TARGET_SOURCES", "TASKS", "UNITS", "active_value",
     "answer", "apply_recipe", "attach_data", "check",
     "decision_sensitivity", "decision_text", "describe", "example_problem",
