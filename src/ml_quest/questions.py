@@ -162,6 +162,18 @@ READY_LIBRARIES = [
 # 効果を見積もるの受け持ちの場合だけの問い
 EFFECT = [USES_ML, {"id": f"{PART}.role", "equals": "effect"}]
 
+# 並べるで学習する場合だけの問い (反応の表の列と, 並べる件数). 既製の
+# モデルをそのまま使う場合は骨組みが無いので含めない
+RANK = [USES_ML, {"id": f"{PART}.role", "equals": "rank"},
+        {"none": [PRETRAINED]}]
+
+# 使えるデータの列を問う場合 (列の予測と, 並べるで学習する場合)
+COLUMNS_ASKED = [USES_ML, {"none": [PRETRAINED]},
+                 {"id": f"{PART}.role", "in": ["predict", "rank"]},
+                 {"any": [{"id": f"{PART}.role", "equals": "rank"},
+                          {"id": f"{PART}.target.kind",
+                           "equals": "column"}]}]
+
 # 続けて行動を選ぶ方策の場合だけの問い (守りの問い)
 AUTONOMOUS = [*EFFECT, {"id": f"{PART}.autonomous", "equals": True}]
 
@@ -559,9 +571,35 @@ QUESTIONS: list[dict[str, Any]] = [
              "決めることはデータ無しで答える (データから考え始めると, 何が"
              "予測できるかが先に立つため)"},
     {"id": "information.columns", "section": 5, "kind": "list",
-     "required": True, "when": COLUMN_TARGET, "title": "使えるデータの列は",
+     "required": True, "when": COLUMNS_ASKED, "title": "使えるデータの列は",
      "help": "データのファイルから読める (画面では「ファイルから読む」). "
-             "後の問いで, この中から目的の列と使ってよい列を選ぶ"},
+             "後の問いで, この中から目的の列と使ってよい列 (並べるなら, "
+             "利用者, 品物, 時刻の列) を選ぶ"},
+    {"id": f"{PART}.rank.user", "section": 5, "kind": "column",
+     "required": True, "when": RANK, "title": "利用者の列は",
+     "help": "反応 (利用者が品物を買った, 見たなど) の表 (1 行が 1 つの"
+             "反応) の, 反応した利用者の列. 利用者ごとに品物を並べる. 例: "
+             "member_id"},
+    {"id": f"{PART}.rank.item", "section": 5, "kind": "column",
+     "required": True, "when": RANK, "title": "品物の列は",
+     "help": "反応の表の, 反応された品物の列. 例: item_id"},
+    {"id": f"{PART}.rank.time", "section": 5, "kind": "column",
+     "required": True, "when": RANK, "title": "反応の時刻の列は",
+     "help": "反応を時刻の順に並べ, 古い反応で学び, 新しい反応で確かめる "
+             "(無作為に分けると, 先の反応を学習に使って確かめが甘くなる). "
+             "数か日時の列"},
+    {"id": f"{PART}.rank.reaction", "section": 5, "kind": "column",
+     "required": False, "when": RANK,
+     "title": "反応の強さの列は (あれば)",
+     "help": "数の列. 0 より大きい行だけを反応とみなす (例: 買った数). "
+             "評価の点数のように全ての行が 0 より大きい列では, 見たい反応を "
+             "1, 他を 0 にした列を作ってから選ぶ. 無ければ空のまま (全ての"
+             "行を反応とみなす)"},
+    {"id": f"{PART}.rank.k", "section": 5, "kind": "number",
+     "required": True, "when": RANK,
+     "title": "利用者ごとに上位何件を並べますか (K)",
+     "help": "並べる品物の数 (1 以上の整数). Recall@K と NDCG もこの K "
+             "で数える. 例: 10"},
     {"id": f"{PART}.task", "section": 5, "kind": "choice", "required": True,
      "when": COLUMN_TARGET, "choices": TASKS, "title": "どの種類の問題ですか",
      "help": "目的の値がクラスなら分類, 値なら回帰. 時刻の順に過去から先を"

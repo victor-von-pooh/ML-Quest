@@ -16,7 +16,7 @@ from ml_quest.baseline_skeleton import (
 )
 from ml_quest.check import (
     choice_label, is_column_part, is_generate_part, is_policy_part,
-    split_errors
+    is_rank_part, split_errors
 )
 from ml_quest.data import (
     ITEMS_KINDS, TABLE_LOADERS, content_kind, copy_data, dataset_info,
@@ -37,6 +37,10 @@ from ml_quest.policy_skeleton import (
 )
 from ml_quest.problem import (
     active_value, data_location, get_value, set_value, upgrade_problem
+)
+from ml_quest.rank_skeleton import (
+    RANK_DATASET, RANK_LIBRARIES, rank_config, rank_name, rank_readme,
+    rank_script
 )
 from ml_quest.table_skeleton import (
     TABLE_LIBRARIES, table_config, table_readme, table_script
@@ -801,6 +805,7 @@ def experiment_name(problem: dict, name: Optional[str]) -> str:
     task = active_value(problem, f"{PART}.task")
     default = (f"{target}_{task}" if is_column_part(problem)
                else policy_name(problem) if is_policy_part(problem)
+               else rank_name(problem) if is_rank_part(problem)
                else items_name(problem))
     raw = name or default
     text = re.sub(r"[^\w-]+", "_", raw).strip("_") or "problem"
@@ -1071,22 +1076,24 @@ def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
         message = ready_message(upgraded)
         return message, exportable
 
-    # 列の予測と, 予測するの画像の領域と点群と, 作るの画像と表と, 効果を
-    # 見積もるの方策だけ
+    # 列の予測と, 予測するの画像の領域と点群と, 作るの画像と表と, 並べる
+    # と, 効果を見積もるの方策だけ
     generate = is_generate_part(upgraded)
     policy = is_policy_part(upgraded)
+    rank = is_rank_part(upgraded)
     if not is_column_part(upgraded) and skeleton_kind(upgraded) is None and (
-        not generate and not policy
+        not generate and not policy and not rank
     ):
         message = ("骨組みを書き出せるのは, 予測するで正解の種類が表の列, "
                    "画像の領域, 点群の場合と, 作るで正解の種類が画像か表の場合"
-                   "と, 効果を見積もるで続けて行動を選ぶ方策の場合と, 予測するで"
-                   "既製のモデルをそのまま使う画像の分類の場合だけです (並べ"
-                   "る, まとめるの受け持ちと, 方策でない効果の見積もりと, 他"
-                   "の正解の種類はまだ扱えません)")
+                   "と, 並べるの場合と, 効果を見積もるで続けて行動を選ぶ方策の"
+                   "場合と, 予測するで既製のモデルをそのまま使う画像の分類の"
+                   "場合だけです (まとめるの受け持ちと, 方策でない効果の見積"
+                   "もりと, 他の正解の種類はまだ扱えません)")
         return message, exportable
-    if generate or policy:
+    if generate or policy or rank:
         message = (policy_message(upgraded) if policy
+                   else rank_message(upgraded) if rank
                    else table_message(upgraded)
                    if active_value(upgraded, f"{PART}.target.kind") == "table"
                    else generate_message(upgraded))
@@ -1182,6 +1189,41 @@ def table_message(problem: dict) -> Optional[str]:
         message = ("表の生成の骨組みは, 表のデータで学びます (入れたデータ "
                    f"{Path(str(source)).name} は表として読んでいません). "
                    "表のファイル (CSV, Parquet, Excel など) を入れてください")
+
+    return message
+
+
+def rank_message(problem: dict) -> Optional[str]:
+    """
+    並べるの骨組みを書き出せない理由を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 並べるで学習する)
+
+    Returns
+    ----------
+    message: Optional[str]
+        誤りの文 (出力の形が順位でない, 入れたデータが表でない. 書き出せる
+        なら None)
+    """
+    # 2 塔のモデルで順位を出し, 反応の表を読む. 指標は受け持ちの候補
+    # (Recall@K, NDCG, 損失) が全て書ける
+    output = active_value(problem, f"{PART}.output")
+    loader = active_value(problem, "data.loader")
+    options = get_value(problem, "data.options")
+    source = get_value(problem, "data.source")
+    text = isinstance(options, dict) and options.get("text_column")
+    message = None
+    if output != "ranking":
+        message = ("並べるの骨組みは, 出力の形が「順位」の場合だけです (今"
+                   f"は{choice_label(OUTPUTS, output, problem)})")
+    elif source and (loader not in TABLE_LOADERS or text):
+        message = ("並べるの骨組みは, 反応の表で学びます (入れたデータ "
+                   f"{Path(str(source)).name} は表として読んでいません). "
+                   "利用者, 品物, 時刻の列を持つ表のファイル (CSV, Parquet "
+                   "など) を入れてください")
 
     return message
 
@@ -1431,6 +1473,23 @@ def project_files(
         env = policy_env(stages)
         if env is not None:
             files["env.py"] = env
+        return files
+
+    # 並べる (入れた反応の表は data に写してそのまま読む. 入れていなければ
+    # 置き場の outputs/interactions.csv)
+    if is_rank_part(problem):
+        dataset = data_file.as_posix() if data_file else RANK_DATASET
+        files = {
+            "README.md": rank_readme(
+                problem, stages, dataset,
+                data_file.as_posix() if data_file else None
+            ),
+            "configs/default/train.yaml": rank_config(
+                experiment_name(problem, name), stages, dataset,
+                requires_text(RANK_LIBRARIES, stages)
+            ),
+            "train.py": rank_script(problem, literal),
+        }
         return files
 
     # 表の生成 (入れた表は data に写し, データセットはデータの分析の段階が
