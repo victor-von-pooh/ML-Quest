@@ -8,8 +8,8 @@ from ml_quest.questions import GROUP_STABILITIES, PART
 
 # 学習のスクリプトが読み込むライブラリの, ML-Found の登録簿の機能の名前
 # (表は ML-EDA の読み方で読む. config の model.spec の定義が無いうちは
-# ml_modelcontrol を読まない)
-GROUP_LIBRARIES = ["eda", "modelcontrol"]
+# ml_modelcontrol と ml_inference を読まない)
+GROUP_LIBRARIES = ["eda", "modelcontrol", "inference"]
 
 # 書き出していないときの, 群を作る表の場所 (プロジェクトのディレクトリから)
 GROUP_DATASET = "outputs/rows.csv"
@@ -1098,6 +1098,76 @@ def compare_row(found: dict, base: dict, cfg: Any) -> dict:
     return row
 
 
+def make_inference(
+    cfg: Any, spec: Optional[Path], path: Path, run_dir: Path,
+    experiment: Experiment
+) -> None:
+    """
+    ML-Inference の群分けの一式を, 実験の中の inference/ に作る関数
+
+    Parameters
+    ----------
+    cfg: Any
+        config (一式の名前)
+    spec: Optional[Path]
+        ML-ModelControl の定義のファイル (無ければ None)
+    path: Path
+        学習に使った表のファイル (一式が割り当て直して確かめる)
+    run_dir: Path
+        実験のディレクトリ (評価の表, 割り当て, 列の符号化と群の中心を
+        書いた後)
+    experiment: Experiment
+        実験 (train.log に記録する)
+
+    Returns
+    ----------
+    None
+    """
+    # 仮のモデルは ML-ModelControl の定義が無いので一式にできない
+    if spec is None:
+        experiment.logger.info(
+            "仮のモデル (PlaceholderModel) は ML-ModelControl の定義が無い"
+            "ので, 推論の一式を作りません. config の model.spec の場所に"
+            "定義を置くと, 学習の後に作ります"
+        )
+        return
+
+    # 一式は実験に写した定義を読むので, 写せなかった実験は一式にしない
+    if experiment.model_spec_path is None:
+        experiment.logger.info(
+            "モデルの定義を実験に写せなかったので, 推論の一式を作りません "
+            "(理由は source.yaml の model_spec の status)"
+        )
+        return
+
+    # 学習の表と読み方を渡し, 割り当て直しを実験の割り当てと比べる. 定義
+    # か成果物が約束に合わないときは, ML-Inference の誤りの文をそのまま
+    # 残し, 学習の結果は残す
+    from ml_inference import make_group_bundle
+    options = {**OPTIONS, **({"loader": LOADER} if LOADER else {})}
+    try:
+        info = make_group_bundle(
+            run_dir / "inference", run_dir, name=cfg.experiment.name,
+            data=path, options=options
+        )
+    except ValueError as error:
+        experiment.logger.warning(
+            "定義か成果物が群分けの一式の約束に合わないので, 推論の一式を"
+            f"作れません: {error}"
+        )
+        return
+    group = info["group"]
+    check = group["check"]
+    agreement = ("割り当て直しは比べず" if check is None
+                 else f"割り当て直しの一致 {check['agreement'] * 100:.1f} %")
+    experiment.logger.info(
+        f"推論の一式 (まとめる): inference/ (群 {group['k']} 個, 学習の "
+        f"{group['rows']} 行. {agreement}. 版 {info['format_version']})"
+    )
+    for note in info["notes"]:
+        experiment.logger.warning(f"推論の一式の注意: {note}")
+
+
 def check_config(cfg: Any) -> Optional[str]:
     """
     config の群の設定の誤りを返す関数
@@ -1280,12 +1350,8 @@ def main() -> None:
     )
     write_results(run_dir, ids, labels, valid, encoding, centers, cfg)
 
-    # 推論の一式は作らない
-    experiment.logger.info(
-        "推論の一式は作りません. 実験に, 学習した重み, 行ごとの群の割り当て "
-        f"({ASSIGNMENT_FILE}) と, 列の符号化と群の中心 ({CENTERS_FILE}) が"
-        "残ります"
-    )
+    # 定義があれば, 群分けの一式 (新しい行を最も近い群に割り当てる)
+    make_inference(cfg, spec, path, run_dir, experiment)
 
 
 if __name__ == "__main__":
@@ -1494,7 +1560,7 @@ def group_readme(
     lines += [
         "", "## 次にすること", "",
         "学習する環境には ML-EDA, ML-Found (と, 定義を使うなら "
-        "ML-ModelControl) を入れる.", "",
+        "ML-ModelControl と ML-Inference) を入れる.", "",
         "1. **データ**: 1 行が 1 つの対象 (顧客など) の表を config の "
         f"`data.dataset` の場所 (`{dataset}`) に置く. 群を作る列は {columns}"
         " (config の `group.columns`) で, 他の列は読まない (群の割り当てには"
@@ -1533,9 +1599,13 @@ def group_readme(
         "安定性 `stability` と, 数の列の平均, 種類の列の最も多い値. 最後の"
         "行は全ての行), 行ごとの群の割り当て `group_assignments.csv`, 列の"
         "符号化と群の中心 `group_centers.json`)",
-        "4. **推論**: 推論の一式は作らない. 新しい行の群は, "
-        "`group_centers.json` の符号化をかけ, 学習した重みで埋め込み, 最も"
-        "近い群の中心に割り当てて求める",
+        "4. **推論** (ML-Inference, ML-Provide): 定義を置いて学習すると, "
+        "`train.py` が学習の後に実験の中の `inference/` に ML-Inference の"
+        "群分けの一式 (列の符号化と群の中心, 学習の群の安定性と群の要約を"
+        "持つ) を作り, 学習の表を割り当て直して実験の割り当てと比べる. "
+        "ML-Provide でその `inference/` を登録する. 新しい行の表を推論すると,"
+        " 行ごとに最も近い群の番号 `group` とその中心までの距離 `distance` "
+        "が返り, 群の要約も返る. 仮のモデルでは一式を作らない",
         "", "`train.py` の印 (TODO) の所 (モデル, 特徴, 崩し方) は書き足す. "
         "問題の設定を変えたら, 書き出し直すか手で直す.", "",
     ]

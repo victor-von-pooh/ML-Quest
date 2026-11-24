@@ -2,8 +2,10 @@ import ast
 import csv
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -345,13 +347,13 @@ def test_group_project(tmp_path: Path) -> None:
     assert 'ROLE = "group"' in script and 'OUTPUT = "cluster"' in script
     assert 'PREDICT = "顧客の群"' in script
     assert "PlaceholderModel" in script
-    assert "make_bundle" not in script and "guard" not in script
+    assert "make_group_bundle" in script and "guard" not in script
     assert all(len(line) <= 79 for line in script.splitlines())
 
     # config: 要る機能, 監視, 表の場所, 群の設定, モデルの定義
     config = yaml.safe_load((project / "configs" / "default" / "train.yaml")
                             .read_text(encoding="utf-8"))
-    assert config["requires"] == ["eda", "modelcontrol"]
+    assert config["requires"] == ["eda", "modelcontrol", "inference"]
     assert (config["trainer"]["monitor"], config["trainer"]["mode"]) == (
         "valid/silhouette", "max"
     )
@@ -368,12 +370,13 @@ def test_group_project(tmp_path: Path) -> None:
     place = record_project(problem, project)["project"]["dataset"]
     assert place == str((project / "outputs/rows.csv").resolve())
 
-    # README: 表の列, 例, 安定性, 群の要約, 推論の一式は作らない
+    # README: 表の列, 例, 安定性, 群の要約, 群分けの一式
     readme = (project / "README.md").read_text(encoding="utf-8")
     for words in ("outputs/rows.csv", "`spend`", "`region`", "`customer`",
                   "contrastive_encoder", "調整ランド指数",
                   "group_stability.json", "group_summary.json",
-                  "group_assignments.csv", "推論の一式は作らない",
+                  "group_assignments.csv", "inference/", "ML-Provide",
+                  "仮のモデルでは一式を作らない",
                   "種を変えて作り直す"):
         assert words in readme, words
     assert "守る指標" not in readme
@@ -489,7 +492,8 @@ def test_group_training(tmp_path: Path) -> None:
     assert "まとめるもの: 顧客の群" in log
     assert "train 192 行, valid 48 行" in log
     assert "符号化した行の幅: 5" in log
-    assert "推論の一式は作りません" in log
+    assert "推論の一式を作りません" in log
+    assert not (run / "inference").exists()
 
     # 検証のたびのシルエット係数で最良を選ぶ
     with open(run / "history.csv", encoding="utf-8", newline="") as file:
@@ -538,6 +542,23 @@ def test_group_training(tmp_path: Path) -> None:
     task = yaml.safe_load((run / "task.yaml").read_text(encoding="utf-8"))
     assert (task["role"], task["output"]) == ("group", "cluster")
 
+    # 群の要約の行は, ML-EDA の群の要約 (割り当てた群を labels で渡す) の
+    # 行と, 安定性の他は同じ鍵, 順, 値
+    from ml_eda import describe_groups
+    described = describe_groups(
+        project / "data" / "customers.csv",
+        columns=["spend", "visits", "region"],
+        labels=[int(item["group"]) for item in assigned]
+    )["groups"]
+    assert len(described) == len(groups)
+    for mine, theirs in zip(groups, described):
+        assert list(mine) == list(theirs)
+        assert {key: value for key, value in mine.items()
+                if key != "stability"} == pytest.approx(
+            {key: value for key, value in theirs.items()
+             if key != "stability"}
+        )
+
     # 標本を変えて数える. 学習用の 192 行で最後のバッチが 1 行になる大きさ
     # でも学ぶ (config の差分だけ)
     sample = tmp_path / "sample"
@@ -578,6 +599,8 @@ def test_group_training(tmp_path: Path) -> None:
     runs = sorted((wrong / "outputs").glob("*/*/*/train.log"))
     assert "PlaceholderModel" not in runs[0].read_text(encoding="utf-8")
     assert (runs[0].parent / "model_spec.yaml").is_file()
+    check_bundle(runs[0].parent, project / "data" / "customers.csv")
+    check_bundle_skips(wrong, runs[0].parent, tmp_path / "skips")
 
     # 定義を置いて書き出し直すと, 仮のモデルの目印を書かない
     make_project(problem, wrong, overwrite=True)
@@ -585,3 +608,113 @@ def test_group_training(tmp_path: Path) -> None:
                             .read_text(encoding="utf-8"))
     assert "placeholder" not in config["model"]
     assert config["model"]["spec"] == "models/model.yaml"
+
+
+def check_bundle(run: Path, dataset: Path) -> None:
+    """
+    定義で学んだ実験の中に群分けの一式 (版 9) ができ, 学習の表の割り当て
+    直しと一式の推論の群と群の要約が, 実験の割り当てと群の要約と同じこと
+    を確かめる関数 (ML-Inference が無ければ飛ばす)
+
+    Parameters
+    ----------
+    run: Path
+        定義で学んだ実験のディレクトリ
+    dataset: Path
+        学習に使った表
+
+    Returns
+    ----------
+    None
+    """
+    # 一式は版 9 で, 学習の表の割り当て直しが全て同じ
+    pytest.importorskip("ml_inference")
+    from ml_inference import group_summary, predict
+    log = (run / "train.log").read_text(encoding="utf-8")
+    assert "推論の一式 (まとめる): inference/" in log
+    assert "割り当て直しの一致 100.0 %" in log
+    bundle = run / "inference"
+    info = yaml.safe_load((bundle / "inference.yaml")
+                          .read_text(encoding="utf-8"))
+    assert info["format_version"] == 9
+    assert info["output"]["form"] == "cluster"
+    group = info["group"]
+    assert (group["k"], group["rows"], group["id"]) == (3, 240, "customer")
+    assert group["columns"] == ["spend", "visits", "region"]
+    assert group["check"] == {"rows": 240, "agreement": 1.0}
+
+    # 一式の推論の群は実験の割り当てと同じで, 群の要約も同じ
+    with open(run / "group_assignments.csv", encoding="utf-8",
+              newline="") as file:
+        assigned = {row["customer"]: int(row["group"])
+                    for row in csv.DictReader(file)}
+    prediction = predict(bundle, dataset)
+    assert (prediction["status"] == "ok").all()
+    assert dict(zip(prediction["customer"],
+                    prediction["group"].astype(int))) == assigned
+    summary = json.loads((run / "evaluations" / "group_summary.json")
+                         .read_text(encoding="utf-8"))["rows"]
+    found = group_summary(bundle, prediction)
+    assert len(found) == len(summary)
+    for mine, theirs in zip(found, summary):
+        assert list(mine) == list(theirs)
+        assert mine == pytest.approx(theirs)
+
+
+def check_bundle_skips(project: Path, run: Path, root: Path) -> None:
+    """
+    書き出した train.py が, 仮のモデルと定義を写せなかった実験では一式を
+    作らず, 埋め込みの出力の無い定義では警告を残して止まらないことを確かめ
+    る関数
+
+    Parameters
+    ----------
+    project: Path
+        定義を置いたプロジェクトのディレクトリ
+    run: Path
+        定義で学んだ実験のディレクトリ
+    root: Path
+        写した実験を置く場所
+
+    Returns
+    ----------
+    None
+    """
+    # 知らせと警告の文を残す記録
+    from omegaconf import OmegaConf
+    names = load_script(project)
+    info: list = []
+    warning: list = []
+    experiment = SimpleNamespace(
+        logger=SimpleNamespace(info=info.append, warning=warning.append),
+        model_spec_path=None
+    )
+    cfg = OmegaConf.create({"experiment": {"name": "group_3"}})
+    copied = root / "run"
+    root.mkdir(parents=True)
+    dataset = project / "data" / "customers.csv"
+
+    # 仮のモデルと, 定義を写せなかった実験は作らない
+    names["make_inference"](cfg, None, dataset, copied, experiment)
+    assert "仮のモデル (PlaceholderModel)" in info[-1]
+    spec = project / "models" / "model.yaml"
+    names["make_inference"](cfg, spec, dataset, copied, experiment)
+    assert "定義を実験に写せなかった" in info[-1]
+    assert not copied.exists()
+
+    # 埋め込みの出力の無い定義は, ML-Inference の誤りを警告に残す
+    shutil.copytree(run, copied, ignore=shutil.ignore_patterns("inference"))
+    written = yaml.safe_load((copied / "model_spec.yaml")
+                             .read_text(encoding="utf-8"))
+    written["outputs"].pop("embedding")
+    (copied / "model_spec.yaml").write_text(
+        yaml.safe_dump(written, allow_unicode=True), encoding="utf-8"
+    )
+    experiment.model_spec_path = str(copied / "model_spec.yaml")
+    names["make_inference"](cfg, spec, dataset, copied, experiment)
+    assert warning[-1].startswith(
+        "定義か成果物が群分けの一式の約束に合わないので, 推論の一式を"
+        "作れません: "
+    )
+    assert "embedding" in warning[-1]
+    assert not (copied / "inference").exists()
