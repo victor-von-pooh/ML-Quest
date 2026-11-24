@@ -112,6 +112,7 @@ EXAMPLES: dict[str, list[tuple[str, Any]]] = {
         ("information.forbidden", ["member_id"]),
         ("action.decision", {"type": "select", "value": 24000,
                              "cost": 1500, "effect": 0.2, "budget": 300}),
+        ("issue.guard.counted", "none"),
         ("action.basis", "1 人の 1 年分の料金 24,000 円. 連絡 1 件の人件費"
                          " 1,500 円. 防げる割合は前の年の試しから 2 割"),
         (f"{PART}.evaluation.metric", "loss"),
