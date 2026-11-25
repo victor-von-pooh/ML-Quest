@@ -11,8 +11,8 @@ import pytest
 import yaml
 
 from ml_quest import (
-    answer, attach_data, check, describe, example_problem, handoff,
-    make_project, project_error, questions, record_project
+    GROUP_TAKEN, answer, attach_data, check, describe, example_problem,
+    handoff, make_project, project_error, questions, record_project
 )
 
 # 受け持ちの場所
@@ -223,6 +223,23 @@ def test_group_questions() -> None:
     found = [item for item in check(same) if item["level"] == "error"]
     assert [item["id"] for item in found] == [f"{PART}.group.id"]
     assert "群を作るのに使う列にもあります" in found[0]["message"]
+
+    # 群の割り当ての表の列と同じ名前の行を見分ける列と, ML-EDA の群の要約
+    # が受け付けない名前の群を作る列
+    for name in ("group", "split"):
+        taken = answer(problem, "information.columns", [*COLUMNS, name])
+        taken = answer(taken, f"{PART}.group.id", name)
+        found = [item for item in check(taken) if item["level"] == "error"]
+        assert [item["id"] for item in found] == [f"{PART}.group.id"]
+        assert "群の割り当ての表の列" in found[0]["message"]
+    for name in ("group", "rows", "share", "stability", "id", "split"):
+        taken = answer(problem, "information.columns", [*COLUMNS, name])
+        taken = answer(taken, f"{PART}.group.columns", ["spend", name])
+        found = [item for item in check(taken) if item["level"] == "error"]
+        assert [item["id"] for item in found] == [f"{PART}.group.columns"]
+        assert f"群を作る列 {name} は群の要約か 1 件の鍵" in (
+            found[0]["message"]
+        )
     unknown = json.loads(json.dumps(problem))
     unknown["ml"]["parts"][0]["group"]["stability"] = "bootstrap"
     assert [item["id"] for item in check(unknown)
@@ -242,6 +259,26 @@ def test_group_questions() -> None:
         assert f"{PART}.group.k" in [
             item["id"] for item in check(wrong) if item["level"] == "error"
         ]
+
+
+def test_group_names_match_eda() -> None:
+    """
+    群を作る列にできない名前が, ML-EDA の群の要約が受け付けない名前と同じ
+    ことを確かめる関数 (ML-EDA が無ければ飛ばす)
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 群の要約の鍵と 1 件の決まった鍵
+    groups = pytest.importorskip("ml_eda.groups")
+    items = pytest.importorskip("ml_eda.items")
+    assert set(GROUP_TAKEN) == {*groups.SUMMARY_COLUMNS, *items.RESERVED}
+    assert len(GROUP_TAKEN) == len(set(GROUP_TAKEN))
 
 
 def test_group_handoff() -> None:
@@ -455,6 +492,22 @@ def test_group_functions(tmp_path: Path) -> None:
     assert not set(train) & set(valid)
     with pytest.raises(ValueError):
         names["split_rows"](3, cfg)
+
+    # 表の読み方: 決まった名前の群を作る列と行を見分ける列は, config を手で
+    # 直しても止まる
+    path = tmp_path / "named.csv"
+    pd.DataFrame({"spend": [1.0, 2.0], "id": [3, 4], "split": ["a", "b"],
+                  "customer": ["x", "y"]}).to_csv(path, index=False)
+    plain = omegaconf.OmegaConf.merge(
+        cfg, {"group": {"columns": ["spend"], "id": "customer"}}
+    )
+    frame, ids = names["read_rows"](path, plain)
+    assert list(frame.columns) == ["spend"] and ids.tolist() == ["x", "y"]
+    for change, words in (({"columns": ["spend", "id"]}, "群を作る列 id"),
+                          ({"id": "split"}, "行を見分ける列 split")):
+        changed = omegaconf.OmegaConf.merge(plain, {"group": change})
+        with pytest.raises(ValueError, match=words):
+            names["read_rows"](path, changed)
 
 
 def test_group_training(tmp_path: Path) -> None:

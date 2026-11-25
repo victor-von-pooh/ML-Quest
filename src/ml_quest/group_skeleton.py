@@ -4,7 +4,9 @@ from typing import Callable, Optional
 
 from ml_quest.handoff import describe
 from ml_quest.problem import active_value, get_value
-from ml_quest.questions import GROUP_STABILITIES, PART
+from ml_quest.questions import (
+    GROUP_ASSIGNED, GROUP_STABILITIES, GROUP_TAKEN, PART
+)
 
 # 学習のスクリプトが読み込むライブラリの, ML-Found の登録簿の機能の名前
 # (表は ML-EDA の読み方で読む. config の model.spec の定義が無いうちは
@@ -24,9 +26,6 @@ GROUP_PLACEHOLDER = """  # spec のファイルが無いうちは train.py の�
   # は spec のファイルがあるかで決まる)
   placeholder: true
 """
-
-# 群の要約の表の, 群を作る列と同じ名前にできない列
-SUMMARY_COLUMNS = ["group", "rows", "share", "stability"]
 
 # 学習のスクリプトの頭 (読み込みと, 問題の設定から決まる既定値). 答えの
 # 文字は JSON の文字列で埋め込み
@@ -83,8 +82,11 @@ SIMILARITY_OUTPUT = "similarity"
 # 種類の列の, 欠けた値の呼び方
 MISSING = "(欠損)"
 
-# 群の要約の表の列 (群を作る列と同じ名前にはできない)
-SUMMARY_COLUMNS = $summary_columns
+# 群を作る列にできない名前 (群の要約の鍵と, ML-EDA の 1 件の決まった鍵.
+# ML-EDA の群の要約が受け付けない名前と同じ) と, 行を見分ける列にできない
+# 名前 (群の割り当ての表の他の列)
+TAKEN_COLUMNS = $taken_columns
+ASSIGNED_COLUMNS = $assigned_columns
 
 # 群の安定性の数え方の名前
 STABILITY_NAMES = {"seed": "種を変えて作り直す",
@@ -767,7 +769,7 @@ def read_rows(
     Raises
     ----------
     ValueError
-        列が無い場合と, 群の要約の列と同じ名前の列がある場合
+        列が無い場合と, 群を作る列か行を見分ける列が決まった名前の場合
     """
     # 問題の設定の読み方で読み, 答えた列があるか
     table = load_data(path, loader=LOADER, **OPTIONS).frame
@@ -780,10 +782,15 @@ def read_rows(
     if missing:
         raise ValueError(f"表に {', '.join(map(str, missing))} の列があり"
                          "ません. config の group の列の名前を直してください")
-    taken = [name for name in names if name in SUMMARY_COLUMNS]
+    taken = [str(name) for name in names if str(name) in TAKEN_COLUMNS]
     if taken:
-        raise ValueError(f"群を作る列 {', '.join(taken)} は群の要約の列と同じ"
-                         "名前です. 名前を変えた列を作ってから選んでください")
+        raise ValueError(f"群を作る列 {', '.join(taken)} は群の要約か 1 件の"
+                         f"鍵 ({', '.join(TAKEN_COLUMNS)}) と同じ名前です. "
+                         "名前を変えた列を作ってから選んでください")
+    if cfg.group.id and str(cfg.group.id) in ASSIGNED_COLUMNS:
+        raise ValueError(f"行を見分ける列 {cfg.group.id} は群の割り当ての表"
+                         f"の列 ({', '.join(ASSIGNED_COLUMNS)}) と同じ名前"
+                         "です. 名前を変えた列を作ってから選んでください")
     frame = table[names].reset_index(drop=True)
     ids = (table[cfg.group.id].reset_index(drop=True) if cfg.group.id
            else None)
@@ -1444,7 +1451,8 @@ def group_script(problem: dict, literal: Callable) -> str:
         method=literal(active_value(problem, f"{PART}.method")),
         loader=literal(get_value(problem, "data.loader")),
         options=literal(options if isinstance(options, dict) else {}),
-        summary_columns=literal(SUMMARY_COLUMNS),
+        taken_columns=literal(list(GROUP_TAKEN)),
+        assigned_columns=literal(list(GROUP_ASSIGNED)),
     )
     # train.log の初めの行のまとめるもの (空なら省く)
     made = ("まとめるもの: {PREDICT}. "

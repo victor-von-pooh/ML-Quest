@@ -8,7 +8,8 @@ from ml_quest.problem import (
     upgrade_problem, version_message
 )
 from ml_quest.questions import (
-    COLLECTS, CONSUMERS, FALLBACKS, GROUP_STABILITIES, GUARD_COUNTS,
+    COLLECTS, CONSUMERS, FALLBACKS, GROUP_ASSIGNED, GROUP_STABILITIES,
+    GROUP_TAKEN, GUARD_COUNTS,
     METHODS, METRICS, NOT_COUNTED, OUTPUTS, PART, QUESTIONS,
     READY_LIBRARIES, ROLES, SIMULATORS, TARGET_KINDS, TARGET_SOURCES, UNITS,
     V1_METRICS
@@ -1361,7 +1362,8 @@ def check_group(problem: dict) -> list[dict]:
     ----------
     found: list[dict]
         確かめ (使えるデータの列に無い列, 群を作る列と同じ行を見分ける列,
-        群の数が 2 以上の整数でない, は error)
+        決まった名前の群を作る列と行を見分ける列, 群の数が 2 以上の整数で
+        ない, は error)
     """
     # 列を答え直した後の古い名前 (使えるデータの列の一覧が無ければ見ない)
     found: list[dict] = []
@@ -1373,6 +1375,14 @@ def check_group(problem: dict) -> list[dict]:
             "error", f"{PART}.group.columns",
             f"{', '.join(missing)} は使えるデータの列にありません"
         ))
+    taken = [name for name in used if name in GROUP_TAKEN]
+    if taken:
+        found.append(finding(
+            "error", f"{PART}.group.columns",
+            f"群を作る列 {', '.join(taken)} は群の要約か 1 件の鍵 ("
+            f"{', '.join(GROUP_TAKEN)}) と同じ名前です. 名前を変えた列を"
+            "作ってから選んでください"
+        ))
     key = f"{PART}.group.id"
     name = active_value(problem, key)
     if name and columns and name not in columns:
@@ -1383,6 +1393,13 @@ def check_group(problem: dict) -> list[dict]:
             "error", key,
             f"{name} は群を作るのに使う列にもあります. 行を見分ける列は群を"
             "作るのに使わないので, どちらかから外してください"
+        ))
+    if name in GROUP_ASSIGNED:
+        found.append(finding(
+            "error", key,
+            f"行を見分ける列 {name} は群の割り当ての表の列 ("
+            f"{', '.join(GROUP_ASSIGNED)}) と同じ名前です. 名前を変えた列を"
+            "作ってから選んでください"
         ))
 
     # 群の数は 2 以上の整数

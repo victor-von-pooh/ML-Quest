@@ -241,6 +241,13 @@ GROUP_STABILITIES = [
      "直す)"},
 ]
 
+# 群を作る列にできない名前 (群の要約の鍵と, ML-EDA の 1 件の決まった鍵.
+# ML-EDA の群の要約の関数 describe_groups が受け付けない名前と同じ値)
+GROUP_TAKEN = ("group", "rows", "share", "stability", "id", "split")
+
+# 行を見分ける列にできない名前 (群の割り当ての表の他の列)
+GROUP_ASSIGNED = ("group", "split")
+
 # 続けて行動を選ぶ方策の場合だけの問い (守りの問い)
 AUTONOMOUS = [*EFFECT, {"id": f"{PART}.autonomous", "equals": True}]
 
@@ -674,11 +681,12 @@ QUESTIONS: list[dict[str, Any]] = [
      "required": True, "when": GROUP, "title": "群を作るのに使う列は",
      "help": "1 行が 1 つの対象 (顧客など) の表の, 群を作るのに使う列. 数の"
              "列は標準化し, 他の列は値ごとに 0 と 1 の列にして使う. ID や"
-             "名前のように行ごとに違う列は入れない"},
+             "名前のように行ごとに違う列は入れない. group, rows, share, "
+             "stability, id, split の名前の列は使えない"},
     {"id": f"{PART}.group.id", "section": 5, "kind": "column",
      "required": False, "when": GROUP, "title": "行を見分ける列は (あれば)",
      "help": "群の割り当ての表に, 行の番号の代わりに書く列. 群を作るのには"
-             "使わない. 例: customer_id"},
+             "使わない. group, split の名前の列は使えない. 例: customer_id"},
     {"id": f"{PART}.group.k", "section": 5, "kind": "number",
      "required": True, "when": GROUP, "title": "いくつの群に分けますか",
      "help": "2 以上の整数. 人が見分けて扱える数にする. 分からなければ 4 "
