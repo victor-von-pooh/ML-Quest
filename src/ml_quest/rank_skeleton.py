@@ -1348,8 +1348,9 @@ def rank_readme(
                 else "全ての行を反応とみなす")
     lines += [
         "", "## 次にすること", "",
-        "学習する環境には ML-EDA, ML-Found (と, 定義を使うなら "
-        "ML-ModelControl) を入れる.", "",
+        "学習する環境には ML-EDA, ML-Found, ML-ModelControl, ML-Inference を"
+        " 入れる (config の `requires` の機能. 足りなければ学習の前に入れ方を"
+        "示して止まる. ML-ModelControl と ML-Inference は定義を置くと使う).", "",
         "1. **データ**: 反応の表 (1 行が 1 つの反応) を config の "
         f"`data.dataset` の場所 (`{dataset}`) に置く. 列は利用者 "
         f"`{rank['user']}`, 品物 `{rank['item']}`, 時刻 `{rank['time']}` "

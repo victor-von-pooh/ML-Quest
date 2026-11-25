@@ -1704,8 +1704,10 @@ def items_readme(
     origin = (', origin={"type": "process", "name": ..., "settings": '
               '{"note": ...}}' if process else "")
     lines += ["", "## 次にすること", "",
-              "学習する環境には ML-EDA, ML-Found (と, 定義を使うなら "
-              "ML-ModelControl) を入れる.", ""]
+              "学習する環境には ML-EDA, ML-Found, ML-ModelControl, "
+              "ML-Inference を入れる (config の `requires` の機能. 足りなけ"
+              "れば学習の前に入れ方を示して止まる. ML-ModelControl と "
+              "ML-Inference は定義を置くと使う).", ""]
     if info is not None:
         lines.append(f"1. **データ**: 入れた版 {info.get('format_version')} "
                      f"のデータセットを `{dataset}` に写した. 学習はこれを"
