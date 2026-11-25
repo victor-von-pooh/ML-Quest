@@ -14,42 +14,9 @@ READY_SCRIPT = "bundle.py"
 # 一式を作るディレクトリの既定 (プロジェクトのディレクトリから)
 READY_BUNDLE = "outputs/inference"
 
-# 一式を作るスクリプト. 学習はせず, config の ready の値を ML-Inference の
-# make_ready_bundle に渡す. 答えの文字は JSON の文字列で埋め込み
-READY_SCRIPT_TEXT = '''"""
-問題の設定 (problem.yaml) から ML-Quest が書き出した, 既製のモデルの推論の
-一式を作るスクリプト
-
-学習はしない. config の ready の値 (出どころ, モデルの名前, 重みの名前と
-hash) を ML-Inference の make_ready_bundle に渡し, 推論の一式を作る
-"""
-import importlib
-from pathlib import Path
-import sys
-from typing import Any, Callable, Optional
-
-import yaml
-
-# このプロジェクトのディレクトリと, 一式づくりの設定の場所
-PROJECT_DIR = Path(__file__).resolve().parent
-CONFIG = PROJECT_DIR / $config
-
-# 問題の名前と, 何を出すか
-PROBLEM_NAME = $name
-PREDICT = $predict
-
-# 一式づくりに渡す, 要る名前 (config の ready. sha256 は任意)
-READY_KEYS = ("library", "model", "weights")
-
-# ML-Inference と, torchvision の重みを読む ML-ModelControl の入れ方
-# (既製のモデルの一式は ML-Inference の推論の一式の版 6 から)
-INSTALL = (
-    "pip install \\"ml-inference @ git+https://github.com/victor-von-pooh/"
-    "ML-Inference.git\\" \\"ml-modelcontrol[torchvision] @ git+https://"
-    "github.com/victor-von-pooh/ML-ModelControl.git\\""
-)
-
-
+# 一式づくりの設定を読む関数 (既製の埋め込みの群分けの骨組みも同じ文を
+# 書き出す)
+READY_SETTINGS = '''
 def read_config(path: Path) -> dict:
     """
     一式づくりの設定を読む関数
@@ -135,7 +102,44 @@ def bundle_settings(config: dict) -> tuple[Path, Optional[str], bool]:
                 raw.get("overwrite") is True)
 
     return settings
+'''
 
+# 一式を作るスクリプト. 学習はせず, config の ready の値を ML-Inference の
+# make_ready_bundle に渡す. 答えの文字は JSON の文字列で埋め込み
+READY_SCRIPT_TEXT = '''"""
+問題の設定 (problem.yaml) から ML-Quest が書き出した, 既製のモデルの推論の
+一式を作るスクリプト
+
+学習はしない. config の ready の値 (出どころ, モデルの名前, 重みの名前と
+hash) を ML-Inference の make_ready_bundle に渡し, 推論の一式を作る
+"""
+import importlib
+from pathlib import Path
+import sys
+from typing import Any, Callable, Optional
+
+import yaml
+
+# このプロジェクトのディレクトリと, 一式づくりの設定の場所
+PROJECT_DIR = Path(__file__).resolve().parent
+CONFIG = PROJECT_DIR / $config
+
+# 問題の名前と, 何を出すか
+PROBLEM_NAME = $name
+PREDICT = $predict
+
+# 一式づくりに渡す, 要る名前 (config の ready. sha256 は任意)
+READY_KEYS = ("library", "model", "weights")
+
+# ML-Inference と, torchvision の重みを読む ML-ModelControl の入れ方
+# (既製のモデルの一式は ML-Inference の推論の一式の版 6 から)
+INSTALL = (
+    "pip install \\"ml-inference @ git+https://github.com/victor-von-pooh/"
+    "ML-Inference.git\\" \\"ml-modelcontrol[torchvision] @ git+https://"
+    "github.com/victor-von-pooh/ML-ModelControl.git\\""
+)
+
+''' + READY_SETTINGS + '''
 
 def load_maker() -> Callable:
     """
@@ -299,9 +303,9 @@ def ready_message(problem: dict) -> Optional[str]:
     output = active_value(problem, f"{PART}.output")
     message = None
     if role != "predict":
-        message = ("既製のモデルをそのまま使う骨組みは, 受け持ちが予測するの"
-                   "場合だけです (作り方を学習するものにするか, 受け持ちを"
-                   "予測するにしてください)")
+        message = ("既製のモデルをそのまま使う骨組みは, 受け持ちが予測するか"
+                   "まとめるの場合だけです (作り方を学習するものにするか, "
+                   "受け持ちを予測するかまとめるにしてください)")
     elif kind not in (None, "column"):
         message = ("既製のモデルをそのまま使う骨組みは, 正解の種類が"
                    f"{label_of(TARGET_KINDS, 'column')}の場合だけです (今は"

@@ -4,7 +4,8 @@ from ml_quest.problem import answer, new_problem
 from ml_quest.questions import PART
 
 # 見本の答え (架空の課題. 問いの順). 量を決める予測, 対象を選ぶ分類,
-# 既製のモデルをそのまま使う画像の分類, 機械学習を使わない出口
+# 既製のモデルをそのまま使う画像の分類, 既製の埋め込みの写真の群分け,
+# 機械学習を使わない出口
 EXAMPLES: dict[str, list[tuple[str, Any]]] = {
     "総菜の作る量": [
         ("issue.owner", "店長"),
@@ -168,6 +169,52 @@ EXAMPLES: dict[str, list[tuple[str, Any]]] = {
         ("verification.success", "仕分けにかかる時間が 1 日 1 時間になる"),
         ("operation.review", "月に 1 回"),
         ("operation.stop", "候補の直しが半分を超えたら止める"),
+    ],
+    "商品の写真の群分け (既製の埋め込み)": [
+        ("issue.owner", "通販の売り場の担当"),
+        ("issue.pain", "商品の写真が増え, 似た見た目の商品をまとめた売り場の"
+                       "棚を作るのに時間がかかる"),
+        ("issue.current", "担当が写真を見比べて, 似た商品を手で棚に分ける"),
+        ("issue.kpi.name", "棚を作るのにかかる時間"),
+        ("issue.kpi.unit", "時間 / 月"),
+        ("issue.kpi.better", "lower"),
+        ("issue.kpi.current", 20),
+        ("issue.kpi.target", 5),
+        ("decomposition", [
+            {"cause": "似た見た目の商品を人が全て見比べる",
+             "lever": "既製のモデルの埋め込みで写真を群に分け, 人は群を"
+                      "見て名前を付けるだけにする", "ml": True},
+            {"cause": "棚の名前の付け方が決まっていない",
+             "lever": "棚の名前の決まりを作る", "ml": False},
+        ]),
+        ("action.what", "商品を並べる売り場の棚"),
+        ("action.who", "通販の売り場の担当"),
+        ("action.when", "新しい商品の写真が届いたとき"),
+        ("ml.use", True),
+        ("ml.reason", "見た目の似方は決まりで書けない. 正解の群は無いが, "
+                      "画像の分類の既製のモデルの埋め込みで似た写真が近く"
+                      "なるので学習しない"),
+        (f"{PART}.role", "group"),
+        (f"{PART}.unit", "row"),
+        (f"{PART}.output", "cluster"),
+        (f"{PART}.target.source", "none"),
+        (f"{PART}.method", "pretrained"),
+        (f"{PART}.ready.library", "torchvision"),
+        (f"{PART}.ready.model", "resnet18"),
+        (f"{PART}.ready.weights", "IMAGENET1K_V1"),
+        (f"{PART}.ready.sha256", "8ec1484cdbb88ded96d21c3a5936faf3cdcc665aef"
+                                 "92f331f675d0c63038f0ba"),
+        (f"{PART}.group.k", 4),
+        (f"{PART}.group.stability", "seed"),
+        (f"{PART}.what", "見た目の似た商品の群"),
+        (f"{PART}.item", "商品の写真 1 枚"),
+        (f"{PART}.baseline", "担当が写真を見比べて手で分ける"),
+        (f"{PART}.consumer", "human"),
+        ("verification.method", "trial"),
+        ("verification.trial", "1 か月, 群を見ながら棚を作る"),
+        ("verification.success", "棚を作るのにかかる時間が月 5 時間になる"),
+        ("operation.review", "月に 1 回"),
+        ("operation.stop", "群を見ても棚に使えないと担当が判断したら止める"),
     ],
     "問い合わせの振り分け (機械学習を使わない)": [
         ("issue.owner", "サポートの窓口"),

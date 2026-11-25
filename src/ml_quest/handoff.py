@@ -4,7 +4,8 @@ from typing import Any, Optional
 
 from ml_quest.check import (
     check, env_id_of, is_column_part, is_generate_part, is_group_part,
-    is_items_part, is_pretrained_part, is_rank_part, sha256_of, split_errors
+    is_items_part, is_pretrained_part, is_rank_part, is_ready_group_part,
+    sha256_of, split_errors
 )
 from ml_quest.data import EXPORT_FUNCTIONS
 from ml_quest.problem import (
@@ -483,10 +484,11 @@ def ready_of(problem: dict) -> Optional[dict]:
     ----------
     ready: Optional[dict]
         library, model, weights (前後の空白を除いた名前), sha256 (決めて
-        いなければ None) (既製のモデルをそのまま使う予測でなければ None)
+        いなければ None) (既製のモデルをそのまま使う予測かまとめるでなけ
+        れば None. まとめるは埋め込みの一式づくりに渡す)
     """
-    # 予測するで既製のモデルをそのまま使うときだけ (要らなくなった問いの
-    # 古い答えは除外)
+    # 予測するかまとめるで既製のモデルをそのまま使うときだけ (要らなく
+    # なった問いの古い答えは除外)
     if not is_pretrained_part(problem):
         return None
     ready: dict[str, Any] = {}
@@ -941,14 +943,25 @@ def describe(problem: dict) -> list[str]:
                if rank["time"] else "")
         )
     group = group_of(problem)
+    stabilities = {item["value"]: item["label"].split(" ")[0]
+                   for item in GROUP_STABILITIES}
     if group and group["columns"]:
-        stabilities = {item["value"]: item["label"].split(" ")[0]
-                       for item in GROUP_STABILITIES}
         method = stabilities.get(str(group["stability"]))
         sentences.append(
             f"まとめ方: {', '.join(map(str, group['columns']))} の列から"
             + (f" {group['k']} つの群" if group["k"] else "群")
             + "を作る"
+            + (f" (群の安定性は{method}ときの一致で数える)" if method
+               else "")
+        )
+    if is_ready_group_part(problem):
+        k = value(problem, f"{PART}.group.k")
+        method = stabilities.get(
+            str(value(problem, f"{PART}.group.stability"))
+        )
+        sentences.append(
+            "まとめ方: 写真を既製のモデルの埋め込みで"
+            + (f" {k} つの群" if k else "群") + "に分ける"
             + (f" (群の安定性は{method}ときの一致で数える)" if method
                else "")
         )

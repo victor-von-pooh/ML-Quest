@@ -121,240 +121,10 @@ SUMMARY_BETTER = {"stability": "higher"}
 BASELINE_NAME = "列の特徴をそのまま k-means で分けた群"
 '''
 
-# 符号化器の部品, 表の符号化, Trainer, k-means と安定性, 学習の流れ
-GROUP_MAIN = '''
-
-class PlaceholderModel(nn.Module):
-    def __init__(self, features: int, width: int):
-        # 親クラスのコンストラクタを呼び出す
-        super(PlaceholderModel, self).__init__()
-
-        # 符号化した行の幅と, 埋め込みの幅を保存
-        self.features = features
-        self.width = width
-
-        # TODO: 課題に合うモデルに置き換える. 今は動くことを確かめるための,
-        # 全結合 2 段の符号化器
-        self.fc1 = nn.Linear(self.features, self.width * 2)
-        self.fc2 = nn.Linear(self.width * 2, self.width)
-
-        # 活性化関数の定義
-        self.relu = nn.ReLU()
-
-    def forward(self, x: torch.Tensor) -> dict:
-        """
-        順伝播を行う関数
-
-        Parameters
-        ----------
-        x: torch.Tensor
-            (件数, 符号化した行の幅) の行の特徴
-
-        Returns
-        ----------
-        outputs: dict
-            embedding (L2 正規化した埋め込み) と similarity (全ての組の
-            内積の 10 倍)
-        """
-        # 埋め込みを L2 正規化し, 全ての組の内積を温度 0.1 で割る
-        h = self.fc2(self.relu(self.fc1(x)))
-        e = h / h.norm(dim=1, keepdim=True).clamp_min(1e-12)
-        outputs = {EMBEDDING_OUTPUT: e, SIMILARITY_OUTPUT: e @ e.T * 10.0}
-
-        return outputs
-
-
-class GroupTrainer(Trainer):
-    def __init__(
-        self, model: nn.Module, experiment: Experiment,
-        features: torch.Tensor, valid: torch.Tensor, cfg: Any
-    ):
-        # 親クラスのコンストラクタを呼び出す (step を上書きするので
-        # step_fn は None)
-        super(GroupTrainer, self).__init__(model, experiment, None)
-
-        # 学習用と検証用の行の特徴 (崩すときに値を借りる行と, 群を作る行),
-        # 群の設定, 埋め込みを求めるまとまりの大きさ, 乱数の種を保存
-        self.features = features
-        self.valid = valid
-        self.group = cfg.group
-        self.batch_size = cfg.data.batch_size
-        self.seed = cfg.experiment.seed
-        self.generator: Optional[torch.Generator] = None
-
-        # 同じ行の 2 つの崩し方を正解にする交差エントロピー
-        self.criterion = nn.CrossEntropyLoss()
-
-    def on_epoch_start(self, phase: str) -> None:
-        """
-        検証の崩し方を, エポックごとに同じにする関数
-
-        Parameters
-        ----------
-        phase: str
-            train, valid, train_eval のどれか
-
-        Returns
-        ----------
-        None
-        """
-        # 検証は同じ種の乱数 (損失をエポックの間で比べられるように)
-        self.generator = (torch.Generator().manual_seed(self.seed)
-                          if phase != "train" else None)
-
-    def step(self, batch: tuple, phase: str) -> dict:
-        """
-        1 バッチ分の, 対照学習の損失を求める関数
-
-        Parameters
-        ----------
-        batch: tuple
-            (行の特徴,)
-        phase: str
-            train, valid, train_eval のどれか
-
-        Returns
-        ----------
-        outputs: dict
-            同じ行の 2 つの崩し方を当てる交差エントロピー (loss)
-        """
-        # 学習は学習しているモデル, 検証は評価のモデル (EMA があれば EMA)
-        (x,) = batch
-        model = self.model if phase == "train" else self.eval_model()
-        rate = self.group.corruption
-        views = torch.cat([corrupt(x, self.features, rate, self.generator),
-                           corrupt(x, self.features, rate, self.generator)])
-        similarity = encode(model, views)[SIMILARITY_OUTPUT]
-
-        # 自分自身との類似度は隠し, i 番目の正解は同じ行のもう一方
-        count = len(x)
-        same = torch.eye(2 * count, dtype=torch.bool,
-                         device=similarity.device)
-        similarity = similarity.masked_fill(same, -1e9)
-        target = (torch.arange(2 * count, device=similarity.device)
-                  + count) % (2 * count)
-        outputs = {"loss": self.criterion(similarity, target)}
-
-        return outputs
-
-    def on_epoch_end(self, phase: str) -> dict:
-        """
-        検証のときに, 検証用の行の埋め込みの群のシルエット係数を数える関数
-
-        Parameters
-        ----------
-        phase: str
-            train, valid, train_eval のどれか
-
-        Returns
-        ----------
-        metrics: dict
-            検証なら silhouette (valid/silhouette として記録. 大きいほど
-            良い). 他は空
-        """
-        # 学習用の行の埋め込みで群の中心を決め, 検証用の行を割り当てる
-        if phase != "valid":
-            return {}
-        model = self.eval_model()
-        train = embed(model, self.features, self.batch_size)
-        valid = embed(model, self.valid, self.batch_size)
-        rng = np.random.default_rng(self.seed)
-        centers = kmeans(train, self.group.k, rng, self.group.iterations,
-                         self.group.inits)
-        labels = assign(valid, centers)
-        metrics = {"silhouette": silhouette(valid, labels, self.group.sample,
-                                            rng)}
-
-        return metrics
-
-
-def corrupt(
-    x: torch.Tensor, pool: torch.Tensor, rate: float,
-    generator: Optional[torch.Generator]
-) -> torch.Tensor:
-    """
-    行の特徴の一部を, 他の行の同じ特徴の値に置き換えて崩す関数
-
-    Parameters
-    ----------
-    x: torch.Tensor
-        (件数, 符号化した行の幅) の行の特徴
-    pool: torch.Tensor
-        値を借りる行の特徴 (学習用の行)
-    rate: float
-        置き換える特徴の割合
-    generator: Optional[torch.Generator]
-        乱数 (None なら torch の乱数)
-
-    Returns
-    ----------
-    view: torch.Tensor
-        崩した行の特徴 (x と同じデバイス)
-    """
-    # TODO: 課題に合う崩し方 (数の列に雑音を足すなど) に置き換えられる.
-    # 今は特徴ごとに, 学習用の無作為な行の値を借りる
-    rows = torch.randint(len(pool), tuple(x.shape), generator=generator)
-    columns = torch.arange(x.shape[1]).expand_as(rows)
-    borrowed = pool[rows, columns].to(x.device)
-    mask = torch.rand(tuple(x.shape), generator=generator) < rate
-    view = torch.where(mask.to(x.device), borrowed, x)
-
-    return view
-
-
-def encode(model: nn.Module, x: torch.Tensor) -> Any:
-    """
-    行の特徴を, 入力の名前でモデルに渡して出力を返す関数
-
-    Parameters
-    ----------
-    model: nn.Module
-        符号化器
-    x: torch.Tensor
-        (件数, 符号化した行の幅) の行の特徴
-
-    Returns
-    ----------
-    outputs: Any
-        出力の名前の辞書 (embedding と similarity)
-    """
-    # ML-ModelControl の定義も仮のモデルも入力の名前で渡す
-    outputs = model(**{FEATURE_INPUT: x})
-
-    return outputs
-
-
-def embed(model: nn.Module, x: torch.Tensor, batch_size: int) -> np.ndarray:
-    """
-    行の特徴の埋め込みを, まとまりごとに求める関数
-
-    Parameters
-    ----------
-    model: nn.Module
-        符号化器
-    x: torch.Tensor
-        (件数, 符号化した行の幅) の行の特徴
-    batch_size: int
-        1 回に渡す行の数
-
-    Returns
-    ----------
-    points: np.ndarray
-        (件数, 埋め込みの幅) の float64
-    """
-    # 学習の切り替えは Trainer がする (検証の後は学習のエポックに戻る)
-    device = next(model.parameters()).device
-    parts = []
-    model.eval()
-    with torch.no_grad():
-        for start in range(0, len(x), batch_size):
-            chunk = x[start:start + batch_size].to(device)
-            parts.append(encode(model, chunk)[EMBEDDING_OUTPUT].cpu())
-    points = torch.cat(parts).double().numpy()
-
-    return points
-
-
+# k-means, シルエット係数, 調整ランド指数, 群ごとの安定性, 群の安定性の作り直し,
+# 比べる相手と並べる行, 群の設定の確かめ (既製の埋め込みの群分けの骨組みも
+# 同じ文を書き出す)
+GROUP_CLUSTER = '''
 def assign(points: np.ndarray, centers: np.ndarray) -> np.ndarray:
     """
     点を最も近い群の中心に割り当てる関数
@@ -539,7 +309,7 @@ def adjusted_rand(first: np.ndarray, second: np.ndarray) -> float:
     score: float
         1 は同じ群, 0 は偶然と同じ (負もある)
     """
-    # 同じ群に入る組の数を, 群の組の表から数える
+    # 群の組の表からの, 同じ群に入る組の数え上げ
     first = np.unique(first, return_inverse=True)[1]
     second = np.unique(second, return_inverse=True)[1]
     table = np.zeros((first.max() + 1, second.max() + 1))
@@ -639,6 +409,308 @@ def stability(
 
     return found
 
+
+def compare_row(found: dict, base: dict, cfg: Any) -> dict:
+    """
+    群の安定性とまとまりを, 比べる相手 (埋め込む前の値をそのまま分けた
+    群) と並べた 1 行にする関数
+
+    Parameters
+    ----------
+    found: dict
+        埋め込みの群の ari, ari_min, silhouette
+    base: dict
+        比べる相手の群の ari, ari_min, silhouette
+    cfg: Any
+        config (群の数と安定性の数え方)
+
+    Returns
+    ----------
+    row: dict
+        k, method, repeats と, 指標ごとの値, _baseline と _diff
+    """
+    # 差は埋め込み − そのまま
+    row: dict = {"k": int(cfg.group.k), "method": str(cfg.group.stability),
+                 "repeats": int(cfg.group.repeats)}
+    for name in ("ari", "ari_min", "silhouette"):
+        row[name] = found[name]
+        row[f"{name}_baseline"] = base[name]
+        row[f"{name}_diff"] = found[name] - base[name]
+
+    return row
+
+
+def check_config(cfg: Any) -> Optional[str]:
+    """
+    config の群の設定の誤りを返す関数
+
+    Parameters
+    ----------
+    cfg: Any
+        config (group)
+
+    Returns
+    ----------
+    message: Optional[str]
+        誤りの文 (無ければ None)
+    """
+    # 群の数は 2 以上の整数, 作り直しは 1 回以上, 数え方は名前の中から
+    group = cfg.group
+    message = None
+    if not isinstance(group.k, int) or isinstance(group.k, bool) or (
+        group.k < 2
+    ):
+        message = (f"config の group.k は 2 以上の整数にしてください (今は "
+                   f"{group.k})")
+    elif not isinstance(group.repeats, int) or group.repeats < 1:
+        message = ("config の group.repeats は 1 以上の整数にしてください "
+                   f"(今は {group.repeats})")
+    elif group.stability not in STABILITY_NAMES:
+        message = (f"config の group.stability は "
+                   f"{' か '.join(STABILITY_NAMES)} にしてください (今は "
+                   f"{group.stability})")
+    elif not 0 < group.fraction <= 1:
+        message = ("config の group.fraction は 0 より大きく 1 以下にして"
+                   "ください")
+
+    return message
+'''
+
+# 符号化器の部品, 表の符号化, Trainer, 学習の流れ (k-means と安定性は
+# GROUP_CLUSTER)
+GROUP_MAIN = '''
+
+class PlaceholderModel(nn.Module):
+    def __init__(self, features: int, width: int):
+        # 親クラスのコンストラクタを呼び出す
+        super(PlaceholderModel, self).__init__()
+
+        # 符号化した行の幅と, 埋め込みの幅を保存
+        self.features = features
+        self.width = width
+
+        # TODO: 課題に合うモデルに置き換える. 今は動くことを確かめるための,
+        # 全結合 2 段の符号化器
+        self.fc1 = nn.Linear(self.features, self.width * 2)
+        self.fc2 = nn.Linear(self.width * 2, self.width)
+
+        # 活性化関数の定義
+        self.relu = nn.ReLU()
+
+    def forward(self, x: torch.Tensor) -> dict:
+        """
+        順伝播を行う関数
+
+        Parameters
+        ----------
+        x: torch.Tensor
+            (件数, 符号化した行の幅) の行の特徴
+
+        Returns
+        ----------
+        outputs: dict
+            embedding (L2 正規化した埋め込み) と similarity (全ての組の
+            内積の 10 倍)
+        """
+        # 埋め込みの L2 正規化と, 温度 0.1 で割った全ての組の内積
+        h = self.fc2(self.relu(self.fc1(x)))
+        e = h / h.norm(dim=1, keepdim=True).clamp_min(1e-12)
+        outputs = {EMBEDDING_OUTPUT: e, SIMILARITY_OUTPUT: e @ e.T * 10.0}
+
+        return outputs
+
+
+class GroupTrainer(Trainer):
+    def __init__(
+        self, model: nn.Module, experiment: Experiment,
+        features: torch.Tensor, valid: torch.Tensor, cfg: Any
+    ):
+        # 親クラスのコンストラクタを呼び出す (step を上書きするので
+        # step_fn は None)
+        super(GroupTrainer, self).__init__(model, experiment, None)
+
+        # 学習用と検証用の行の特徴 (崩すときに値を借りる行と, 群を作る行),
+        # 群の設定, 埋め込みを求めるまとまりの大きさ, 乱数の種を保存
+        self.features = features
+        self.valid = valid
+        self.group = cfg.group
+        self.batch_size = cfg.data.batch_size
+        self.seed = cfg.experiment.seed
+        self.generator: Optional[torch.Generator] = None
+
+        # 同じ行の 2 つの崩し方を正解にする交差エントロピー
+        self.criterion = nn.CrossEntropyLoss()
+
+    def on_epoch_start(self, phase: str) -> None:
+        """
+        検証の崩し方を, エポックごとに同じにする関数
+
+        Parameters
+        ----------
+        phase: str
+            train, valid, train_eval のどれか
+
+        Returns
+        ----------
+        None
+        """
+        # 検証は同じ種の乱数 (損失をエポックの間で比べられるように)
+        self.generator = (torch.Generator().manual_seed(self.seed)
+                          if phase != "train" else None)
+
+    def step(self, batch: tuple, phase: str) -> dict:
+        """
+        1 バッチ分の, 対照学習の損失を求める関数
+
+        Parameters
+        ----------
+        batch: tuple
+            (行の特徴,)
+        phase: str
+            train, valid, train_eval のどれか
+
+        Returns
+        ----------
+        outputs: dict
+            同じ行の 2 つの崩し方を当てる交差エントロピー (loss)
+        """
+        # 学習は学習しているモデル, 検証は評価のモデル (EMA があれば EMA)
+        (x,) = batch
+        model = self.model if phase == "train" else self.eval_model()
+        rate = self.group.corruption
+        views = torch.cat([corrupt(x, self.features, rate, self.generator),
+                           corrupt(x, self.features, rate, self.generator)])
+        similarity = encode(model, views)[SIMILARITY_OUTPUT]
+
+        # 自分自身との類似度は隠し, i 番目の正解は同じ行のもう一方
+        count = len(x)
+        same = torch.eye(2 * count, dtype=torch.bool,
+                         device=similarity.device)
+        similarity = similarity.masked_fill(same, -1e9)
+        target = (torch.arange(2 * count, device=similarity.device)
+                  + count) % (2 * count)
+        outputs = {"loss": self.criterion(similarity, target)}
+
+        return outputs
+
+    def on_epoch_end(self, phase: str) -> dict:
+        """
+        検証のときに, 検証用の行の埋め込みの群のシルエット係数を数える関数
+
+        Parameters
+        ----------
+        phase: str
+            train, valid, train_eval のどれか
+
+        Returns
+        ----------
+        metrics: dict
+            検証なら silhouette (valid/silhouette として記録. 大きいほど
+            良い). 他は空
+        """
+        # 学習用の行の埋め込みによる群の中心と, 検証用の行の割り当て
+        if phase != "valid":
+            return {}
+        model = self.eval_model()
+        train = embed(model, self.features, self.batch_size)
+        valid = embed(model, self.valid, self.batch_size)
+        rng = np.random.default_rng(self.seed)
+        centers = kmeans(train, self.group.k, rng, self.group.iterations,
+                         self.group.inits)
+        labels = assign(valid, centers)
+        metrics = {"silhouette": silhouette(valid, labels, self.group.sample,
+                                            rng)}
+
+        return metrics
+
+
+def corrupt(
+    x: torch.Tensor, pool: torch.Tensor, rate: float,
+    generator: Optional[torch.Generator]
+) -> torch.Tensor:
+    """
+    行の特徴の一部を, 他の行の同じ特徴の値に置き換えて崩す関数
+
+    Parameters
+    ----------
+    x: torch.Tensor
+        (件数, 符号化した行の幅) の行の特徴
+    pool: torch.Tensor
+        値を借りる行の特徴 (学習用の行)
+    rate: float
+        置き換える特徴の割合
+    generator: Optional[torch.Generator]
+        乱数 (None なら torch の乱数)
+
+    Returns
+    ----------
+    view: torch.Tensor
+        崩した行の特徴 (x と同じデバイス)
+    """
+    # TODO: 課題に合う崩し方 (数の列に雑音を足すなど) に置き換えられる.
+    # 特徴ごとの, 学習用の無作為な行の値による置き換え
+    rows = torch.randint(len(pool), tuple(x.shape), generator=generator)
+    columns = torch.arange(x.shape[1]).expand_as(rows)
+    borrowed = pool[rows, columns].to(x.device)
+    mask = torch.rand(tuple(x.shape), generator=generator) < rate
+    view = torch.where(mask.to(x.device), borrowed, x)
+
+    return view
+
+
+def encode(model: nn.Module, x: torch.Tensor) -> Any:
+    """
+    行の特徴を, 入力の名前でモデルに渡して出力を返す関数
+
+    Parameters
+    ----------
+    model: nn.Module
+        符号化器
+    x: torch.Tensor
+        (件数, 符号化した行の幅) の行の特徴
+
+    Returns
+    ----------
+    outputs: Any
+        出力の名前の辞書 (embedding と similarity)
+    """
+    # ML-ModelControl の定義も仮のモデルも入力の名前で渡す
+    outputs = model(**{FEATURE_INPUT: x})
+
+    return outputs
+
+
+def embed(model: nn.Module, x: torch.Tensor, batch_size: int) -> np.ndarray:
+    """
+    行の特徴の埋め込みを, まとまりごとに求める関数
+
+    Parameters
+    ----------
+    model: nn.Module
+        符号化器
+    x: torch.Tensor
+        (件数, 符号化した行の幅) の行の特徴
+    batch_size: int
+        1 回に渡す行の数
+
+    Returns
+    ----------
+    points: np.ndarray
+        (件数, 埋め込みの幅) の float64
+    """
+    # 学習の切り替えは Trainer がする (検証の後は学習のエポックに戻る)
+    device = next(model.parameters()).device
+    parts = []
+    model.eval()
+    with torch.no_grad():
+        for start in range(0, len(x), batch_size):
+            chunk = x[start:start + batch_size].to(device)
+            parts.append(encode(model, chunk)[EMBEDDING_OUTPUT].cpu())
+    points = torch.cat(parts).double().numpy()
+
+    return points
+
+''' + GROUP_CLUSTER + '''
 
 def category_text(value: Any) -> str:
     """
@@ -1075,36 +1147,6 @@ def write_results(
     (run_dir / CENTERS_FILE).write_text(text + "\\n", encoding="utf-8")
 
 
-def compare_row(found: dict, base: dict, cfg: Any) -> dict:
-    """
-    群の安定性とまとまりを, 列の特徴をそのまま分けた群と並べた 1 行にする
-    関数
-
-    Parameters
-    ----------
-    found: dict
-        埋め込みの群の ari, ari_min, silhouette
-    base: dict
-        列の特徴をそのまま分けた群の ari, ari_min, silhouette
-    cfg: Any
-        config (群の数と安定性の数え方)
-
-    Returns
-    ----------
-    row: dict
-        k, method, repeats と, 指標ごとの値, _baseline と _diff
-    """
-    # 差はモデル − そのまま
-    row: dict = {"k": int(cfg.group.k), "method": str(cfg.group.stability),
-                 "repeats": int(cfg.group.repeats)}
-    for name in ("ari", "ari_min", "silhouette"):
-        row[name] = found[name]
-        row[f"{name}_baseline"] = base[name]
-        row[f"{name}_diff"] = found[name] - base[name]
-
-    return row
-
-
 def make_inference(
     cfg: Any, spec: Optional[Path], path: Path, run_dir: Path,
     experiment: Experiment
@@ -1173,42 +1215,6 @@ def make_inference(
     )
     for note in info["notes"]:
         experiment.logger.warning(f"推論の一式の注意: {note}")
-
-
-def check_config(cfg: Any) -> Optional[str]:
-    """
-    config の群の設定の誤りを返す関数
-
-    Parameters
-    ----------
-    cfg: Any
-        config (group)
-
-    Returns
-    ----------
-    message: Optional[str]
-        誤りの文 (無ければ None)
-    """
-    # 群の数は 2 以上の整数, 作り直しは 1 回以上, 数え方は名前の中から
-    group = cfg.group
-    message = None
-    if not isinstance(group.k, int) or isinstance(group.k, bool) or (
-        group.k < 2
-    ):
-        message = (f"config の group.k は 2 以上の整数にしてください (今は "
-                   f"{group.k})")
-    elif not isinstance(group.repeats, int) or group.repeats < 1:
-        message = ("config の group.repeats は 1 以上の整数にしてください "
-                   f"(今は {group.repeats})")
-    elif group.stability not in STABILITY_NAMES:
-        message = (f"config の group.stability は "
-                   f"{' か '.join(STABILITY_NAMES)} にしてください (今は "
-                   f"{group.stability})")
-    elif not 0 < group.fraction <= 1:
-        message = ("config の group.fraction は 0 より大きく 1 以下にして"
-                   "ください")
-
-    return message
 
 
 def main() -> None:

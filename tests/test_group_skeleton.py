@@ -325,6 +325,9 @@ def test_group_handoff() -> None:
     # 他の受け持ちと, 既製のモデルをそのまま使うまとめるでは None
     assert handoff(example_problem("総菜の作る量"))["group"] is None
     ready = answer(problem, f"{PART}.method", "pretrained")
+    for key, value in (("library", "torchvision"), ("model", "resnet18"),
+                       ("weights", "IMAGENET1K_V1")):
+        ready = answer(ready, f"{PART}.ready.{key}", value)
     assert handoff(ready)["group"] is None
 
 
@@ -342,7 +345,8 @@ def test_group_errors(tmp_path: Path) -> None:
     ----------
     None
     """
-    # 表でないデータと, 既製のモデルをそのまま使うまとめる
+    # 表でないデータと, 一式づくりの値を答えていない既製のモデルをそのまま
+    # 使うまとめる
     images = group_problem()
     images["data"] = {"source": str(tmp_path / "images"),
                       "loader": "image_folder"}
