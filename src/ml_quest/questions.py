@@ -33,8 +33,10 @@ COLUMN_TARGET = [USES_ML, {"id": f"{PART}.role", "equals": "predict"},
                  {"id": f"{PART}.target.kind", "equals": "column"},
                  {"none": [PRETRAINED]}]
 
-# 予測するで, 既製のモデルをそのまま使う場合だけの問い (一式づくりに渡す値)
-READY = [USES_ML, {"id": f"{PART}.role", "equals": "predict"}, PRETRAINED]
+# 予測するかまとめるで, 既製のモデルをそのまま使う場合だけの問い (一式
+# づくりに渡す値. まとめるは既製のモデルの埋め込みで群を作る)
+READY = [USES_ML, {"id": f"{PART}.role", "in": ["predict", "group"]},
+         PRETRAINED]
 
 # 入れたデータが画像, 文か音声 (1 件の中身で学ぶ) の場合と, 骨組みが今の
 # やり方の結果を 1 件ずつ並べられない場合 (画像, 文か音声の列の予測と, 画像
@@ -225,6 +227,10 @@ RANK = [USES_ML, {"id": f"{PART}.role", "equals": "rank"},
 # 既製のモデルをそのまま使う場合は骨組みが無いので含めない
 GROUP = [USES_ML, {"id": f"{PART}.role", "equals": "group"},
          {"none": [PRETRAINED]}]
+
+# まとめるの, 作り方に依らない問い (群の数と安定性の数え方. 既製の埋め込み
+# の群分けも群の中心を作り直して数える)
+GROUP_ANY = [USES_ML, {"id": f"{PART}.role", "equals": "group"}]
 
 # 使えるデータの列を問う場合 (列の予測と, 並べるかまとめるで学習する場合)
 COLUMNS_ASKED = [USES_ML, {"none": [PRETRAINED]},
@@ -688,12 +694,13 @@ QUESTIONS: list[dict[str, Any]] = [
      "help": "群の割り当ての表に, 行の番号の代わりに書く列. 群を作るのには"
              "使わない. group, split の名前の列は使えない. 例: customer_id"},
     {"id": f"{PART}.group.k", "section": 5, "kind": "number",
-     "required": True, "when": GROUP, "title": "いくつの群に分けますか",
+     "required": True, "when": GROUP_ANY,
+     "title": "いくつの群に分けますか",
      "help": "2 以上の整数. 人が見分けて扱える数にする. 分からなければ 4 "
-             "などで始め, 学習の段階で config の group.k を変えて, 群の"
-             "まとまりと安定性を比べる"},
+             "などで始め, 学習の段階 (既製の埋め込みでは一式づくり) で "
+             "config の group.k を変えて, 群のまとまりと安定性を比べる"},
     {"id": f"{PART}.group.stability", "section": 5, "kind": "choice",
-     "required": True, "when": GROUP, "choices": GROUP_STABILITIES,
+     "required": True, "when": GROUP_ANY, "choices": GROUP_STABILITIES,
      "title": "群の安定性は, どう作り直して数えますか",
      "help": "作り直した群と元の群の一致 (調整ランド指数. 1 は同じ群, 0 は"
              "偶然と同じ) を数える. 作り直すと変わる群は, 人が解釈しても"

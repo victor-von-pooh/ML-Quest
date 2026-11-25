@@ -972,6 +972,8 @@ def check(problem: dict) -> list[dict]:
             found += check_rank(problem)
         if is_group_part(problem):
             found += check_group(problem)
+        if is_ready_group_part(problem):
+            found += check_group_k(problem)
         found += check_part(problem)
         found += check_evaluation(problem)
         found += check_consumer(problem)
@@ -1162,8 +1164,8 @@ def choice_label(
 
 def is_pretrained_part(problem: dict) -> bool:
     """
-    受け持ちが既製のモデルをそのまま使う予測 (予測するで, 作り方が既製の
-    モデルをそのまま) かを返す関数
+    受け持ちが既製のモデルをそのまま使う予測かまとめる (予測するか
+    まとめるで, 作り方が既製のモデルをそのまま) かを返す関数
 
     Parameters
     ----------
@@ -1173,15 +1175,39 @@ def is_pretrained_part(problem: dict) -> bool:
     Returns
     ----------
     pretrained: bool
-        既製のモデルをそのまま使う予測の受け持ちか (出力の形と正解の種類
-        は問わない. 骨組みの書き出しが画像の分類かを確かめる)
+        一式づくりに渡す値を問う受け持ちか (出力の形と正解の種類は問わ
+        ない. 骨組みの書き出しが画像の分類か群かを確かめる)
     """
     # 受け持ちと作り方の答え (要らない問いの古い答えは除外)
-    pretrained = active_value(problem, f"{PART}.role") == "predict" and (
+    pretrained = active_value(problem, f"{PART}.role") in (
+        "predict", "group"
+    ) and active_value(problem, f"{PART}.method") == "pretrained"
+
+    return pretrained
+
+
+def is_ready_group_part(problem: dict) -> bool:
+    """
+    受け持ちが既製の埋め込みの群分け (まとめるで, 作り方が既製のモデルを
+    そのまま) かを返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    group: bool
+        既製の埋め込みの群分けの骨組みを書き出す受け持ちか (出力の形は
+        問わない. 骨組みの書き出しが群かを確かめる)
+    """
+    # 受け持ちと作り方の答え (要らない問いの古い答えは除外)
+    group = active_value(problem, f"{PART}.role") == "group" and (
         active_value(problem, f"{PART}.method") == "pretrained"
     )
 
-    return pretrained
+    return group
 
 
 def sha256_of(problem: dict) -> Optional[str]:
@@ -1401,8 +1427,27 @@ def check_group(problem: dict) -> list[dict]:
             f"{', '.join(GROUP_ASSIGNED)}) と同じ名前です. 名前を変えた列を"
             "作ってから選んでください"
         ))
+    found += check_group_k(problem)
 
+    return found
+
+
+def check_group_k(problem: dict) -> list[dict]:
+    """
+    群の数を確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. まとめる)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (群の数が 2 以上の整数でない, は error)
+    """
     # 群の数は 2 以上の整数
+    found: list[dict] = []
     k = active_value(problem, f"{PART}.group.k")
     if k is not None and (
         isinstance(k, bool) or not isinstance(k, (int, float))

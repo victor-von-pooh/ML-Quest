@@ -16,7 +16,7 @@ from ml_quest.baseline_skeleton import (
 )
 from ml_quest.check import (
     choice_label, is_column_part, is_generate_part, is_group_part,
-    is_policy_part, is_rank_part, split_errors
+    is_policy_part, is_rank_part, is_ready_group_part, split_errors
 )
 from ml_quest.data import (
     ITEMS_KINDS, TABLE_LOADERS, content_kind, copy_data, dataset_info,
@@ -50,6 +50,10 @@ from ml_quest.table_skeleton import (
     TABLE_LIBRARIES, table_config, table_readme, table_script
 )
 from ml_quest.questions import METRICS, OUTPUTS, PART
+from ml_quest.ready_group_skeleton import (
+    READY_GROUP_PHOTOS, ready_group_config, ready_group_message,
+    ready_group_readme, ready_group_script
+)
 from ml_quest.ready_skeleton import (
     READY_CONFIG, READY_SCRIPT, ready_config, ready_message, ready_readme,
     ready_script
@@ -1076,9 +1080,12 @@ def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
         return message, exportable
 
     # 既製のモデルをそのまま使う (学習しない) のは, 予測するの画像の分類
-    # だけ. 学習しないので指標と入れたデータセットは見ない
+    # と, まとめるの写真の群分け. 学習しないので指標と入れたデータセット
+    # は見ない
     if active_value(upgraded, f"{PART}.method") == "pretrained":
-        message = ready_message(upgraded)
+        message = (ready_group_message(upgraded)
+                   if is_ready_group_part(upgraded)
+                   else ready_message(upgraded))
         return message, exportable
 
     # 列の予測と, 予測するの画像の領域と点群と, 作るの画像と表と, 並べる
@@ -1494,6 +1501,21 @@ def project_files(
         モデルは configs/default/bundle.yaml と bundle.py. 方策は model.py
         と env.py も)
     """
+    # 既製のモデルの埋め込みで写真を群に分ける (学習せず, 群と推論の一式
+    # を作る. 入れた写真は data に写してそのまま読む. 入れていなければ
+    # 置き場の outputs/photos)
+    if is_ready_group_part(problem):
+        photos = data_file.as_posix() if data_file else READY_GROUP_PHOTOS
+        files = {
+            "README.md": ready_group_readme(
+                problem, stages, photos,
+                data_file.as_posix() if data_file else None
+            ),
+            READY_CONFIG: ready_group_config(stages, problem, name, photos),
+            READY_SCRIPT: ready_group_script(problem, literal),
+        }
+        return files
+
     # 既製のモデルをそのまま使う (学習せず, 推論の一式だけを作る)
     if stages["inference"].get("ready") is not None:
         files = {
