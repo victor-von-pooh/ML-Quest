@@ -20,7 +20,7 @@ PART = "ml.parts.0"
 EXAMPLE = "商品の写真の群分け (既製の埋め込み)"
 
 # 小さな作り物の出どころ (チャンネルの平均を埋め込みにする 1 段の全結合.
-# 本物の重みを取りに行かない). bundle.py を動かす前に読み込む
+# 本物の重みを取りに行かない). bundle.py を動かす前の読み込み
 FAKE_SOURCE = '''import torch
 from torch import nn
 
@@ -342,7 +342,7 @@ def test_ready_group_project(tmp_path: Path) -> None:
                                  "groups": "outputs/groups"}
     assert config["bundle"]["name"] == "resnet18_group_4"
 
-    # README とスクリプトは 79 文字以内で, スクリプトは Python として読める
+    # README とスクリプトの 79 文字以内と, Python として読めること
     script = (project / "bundle.py").read_text(encoding="utf-8")
     compile(script, "bundle.py", "exec")
     for name in ("bundle.py", "configs/default/bundle.yaml"):
@@ -379,7 +379,7 @@ def test_ready_group_script_stops(tmp_path: Path) -> None:
     make_project(example_problem(EXAMPLE), project)
     script = str(project / "bundle.py")
 
-    # 写真の置き場が無い
+    # 写真の置き場の無い場合
     done = subprocess.run([sys.executable, script], capture_output=True,
                           text=True, cwd=str(tmp_path))
     assert done.returncode == 1

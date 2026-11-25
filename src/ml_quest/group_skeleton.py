@@ -309,7 +309,7 @@ def adjusted_rand(first: np.ndarray, second: np.ndarray) -> float:
     score: float
         1 は同じ群, 0 は偶然と同じ (負もある)
     """
-    # 同じ群に入る組の数を, 群の組の表から数える
+    # 群の組の表からの, 同じ群に入る組の数え上げ
     first = np.unique(first, return_inverse=True)[1]
     second = np.unique(second, return_inverse=True)[1]
     table = np.zeros((first.max() + 1, second.max() + 1))
@@ -512,7 +512,7 @@ class PlaceholderModel(nn.Module):
             embedding (L2 正規化した埋め込み) と similarity (全ての組の
             内積の 10 倍)
         """
-        # 埋め込みを L2 正規化し, 全ての組の内積を温度 0.1 で割る
+        # 埋め込みの L2 正規化と, 温度 0.1 で割った全ての組の内積
         h = self.fc2(self.relu(self.fc1(x)))
         e = h / h.norm(dim=1, keepdim=True).clamp_min(1e-12)
         outputs = {EMBEDDING_OUTPUT: e, SIMILARITY_OUTPUT: e @ e.T * 10.0}
@@ -608,7 +608,7 @@ class GroupTrainer(Trainer):
             検証なら silhouette (valid/silhouette として記録. 大きいほど
             良い). 他は空
         """
-        # 学習用の行の埋め込みで群の中心を決め, 検証用の行を割り当てる
+        # 学習用の行の埋め込みによる群の中心と, 検証用の行の割り当て
         if phase != "valid":
             return {}
         model = self.eval_model()
@@ -648,7 +648,7 @@ def corrupt(
         崩した行の特徴 (x と同じデバイス)
     """
     # TODO: 課題に合う崩し方 (数の列に雑音を足すなど) に置き換えられる.
-    # 今は特徴ごとに, 学習用の無作為な行の値を借りる
+    # 特徴ごとの, 学習用の無作為な行の値による置き換え
     rows = torch.randint(len(pool), tuple(x.shape), generator=generator)
     columns = torch.arange(x.shape[1]).expand_as(rows)
     borrowed = pool[rows, columns].to(x.device)

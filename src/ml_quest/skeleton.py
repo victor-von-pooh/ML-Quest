@@ -1080,8 +1080,8 @@ def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
         return message, exportable
 
     # 既製のモデルをそのまま使う (学習しない) のは, 予測するの画像の分類
-    # と, まとめるの写真の群分け. 学習しないので指標と入れたデータセット
-    # は見ない
+    # と, まとめるの写真の群分けだけ (学習しないので, 指標と入れたデータ
+    # セットの確かめは無し)
     if active_value(upgraded, f"{PART}.method") == "pretrained":
         message = (ready_group_message(upgraded)
                    if is_ready_group_part(upgraded)

@@ -345,7 +345,7 @@ def test_ready_project_limits() -> None:
     mask = answer(mask, f"{PART}.output", "region")
     assert "「表の列」の場合だけ" in project_error(mask)
 
-    # 予測するとまとめるでない受け持ちは学習する骨組みも書き出さない
+    # 予測するとまとめるでない受け持ちの, 学習する骨組みも書き出さないこと
     generate = answer(ready_problem(), f"{PART}.role", "generate")
     generate = answer(generate, f"{PART}.output", "image")
     generate = answer(generate, f"{PART}.target.kind", "image")

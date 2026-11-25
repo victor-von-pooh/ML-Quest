@@ -252,7 +252,7 @@ def shrink(images: np.ndarray, batch_size: int = 256) -> np.ndarray:
     pixels: np.ndarray
         (件数, 3 × PIXELS × PIXELS) の画素の値
     """
-    # 平均の縮め方 (割り切れない大きさも同じ数の区画に)
+    # 平均の縮め方 (割り切れない大きさも同じ数の区画)
     pool = nn.AdaptiveAvgPool2d(PIXELS)
     parts = []
     with torch.no_grad():
@@ -289,8 +289,8 @@ def embed_photos(
         から), (枚数, 埋め込みの幅) の埋め込み, (枚数, 192) の縮めた画素,
         埋め込みの一式の inference.yaml の中身
     """
-    # 既製のモデルの埋め込みの一式 (重みは出どころから読む. 初回は取りに
-    # 行く)
+    # 既製のモデルの埋め込みの一式 (重みの出どころからの読み込み. 初回は
+    # 取得)
     try:
         info = libraries.make_ready_bundle(
             place, ready["model"], ready["weights"],
@@ -309,7 +309,7 @@ def embed_photos(
               "にそろえてください")
         sys.exit(1)
 
-    # 読めた写真だけ (読めない写真は理由を表示して除く)
+    # 読めた写真だけの絞り込み (読めない写真の理由の表示)
     ok = (result["status"] == "ok").to_numpy()
     skipped = result.loc[~ok]
     if len(skipped):
@@ -342,7 +342,7 @@ def split_photos(count: int, cfg: Any) -> tuple[np.ndarray, np.ndarray]:
     valid: np.ndarray
         検証用の写真の番号 (小さい順)
     """
-    # 乱数の種で並べ替えて, 前を検証用に
+    # 乱数の種による並べ替えと, 前の検証用
     order = np.random.default_rng(cfg.experiment.seed).permutation(count)
     size = int(round(count * cfg.data.valid))
     valid, train = np.sort(order[:size]), np.sort(order[size:])
@@ -413,7 +413,7 @@ def summary_rows(
     rows: list[dict]
         群の番号の順の行と, 最後に全ての写真の行 (group は「全体」)
     """
-    # 列は写真の幅と高さ. 全体の行の安定性は None のまま
+    # 列は写真の幅と高さ. 全体の行の安定性は None
     table = libraries.Data(kind="table",
                            frame=frame[SUMMARY_COLUMNS].reset_index(
                                drop=True
@@ -543,7 +543,7 @@ def build_bundle(
     info: dict
         一式の inference.yaml の中身 (作れなければ理由を示して止まる)
     """
-    # 重みは一式に写さず, 使うときに出どころから読む
+    # 重みの扱い (一式には写さず, 使うときに出どころからの読み込み)
     place, name, overwrite = settings
     try:
         info = libraries.make_group_bundle(place, artifacts, name=name,
