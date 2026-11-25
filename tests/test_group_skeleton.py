@@ -664,8 +664,8 @@ def check_bundle(run: Path, dataset: Path) -> None:
 def check_bundle_skips(project: Path, run: Path, root: Path) -> None:
     """
     書き出した train.py が, 仮のモデルと定義を写せなかった実験では一式を
-    作らず, 埋め込みの出力の無い定義では警告を残して止まらないことを確かめ
-    る関数
+    作らず, 埋め込みの出力の無い定義と成果物の欠けた実験では警告を残して
+    止まらないことを確かめる関数
 
     Parameters
     ----------
@@ -718,3 +718,12 @@ def check_bundle_skips(project: Path, run: Path, root: Path) -> None:
     )
     assert "embedding" in warning[-1]
     assert not (copied / "inference").exists()
+
+    # 成果物の欠けた実験も, ML-Inference の誤りを警告に残す
+    lacking = root / "lacking"
+    shutil.copytree(run, lacking, ignore=shutil.ignore_patterns("inference"))
+    (lacking / "group_centers.json").unlink()
+    experiment.model_spec_path = str(lacking / "model_spec.yaml")
+    names["make_inference"](cfg, spec, dataset, lacking, experiment)
+    assert "group_centers.json" in warning[-1]
+    assert not (lacking / "inference").exists()

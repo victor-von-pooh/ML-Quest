@@ -1141,8 +1141,8 @@ def make_inference(
         return
 
     # 学習の表と読み方を渡し, 割り当て直しを実験の割り当てと比べる. 定義
-    # か成果物が約束に合わないときは, ML-Inference の誤りの文をそのまま
-    # 残し, 学習の結果は残す
+    # か成果物が約束に合わないか欠けるときは, ML-Inference の誤りの文を
+    # そのまま残し, 学習の結果は残す
     from ml_inference import make_group_bundle
     options = {**OPTIONS, **({"loader": LOADER} if LOADER else {})}
     try:
@@ -1150,7 +1150,7 @@ def make_inference(
             run_dir / "inference", run_dir, name=cfg.experiment.name,
             data=path, options=options
         )
-    except ValueError as error:
+    except (ValueError, FileNotFoundError) as error:
         experiment.logger.warning(
             "定義か成果物が群分けの一式の約束に合わないので, 推論の一式を"
             f"作れません: {error}"
@@ -1559,8 +1559,9 @@ def group_readme(
            if group["id"] else "行の番号")
     lines += [
         "", "## 次にすること", "",
-        "学習する環境には ML-EDA, ML-Found (と, 定義を使うなら "
-        "ML-ModelControl と ML-Inference) を入れる.", "",
+        "学習する環境には ML-EDA, ML-Found, ML-ModelControl, ML-Inference を"
+        " 入れる (config の `requires` の機能. 足りなければ学習の前に入れ方を"
+        "示して止まる. ML-ModelControl と ML-Inference は定義を置くと使う).", "",
         "1. **データ**: 1 行が 1 つの対象 (顧客など) の表を config の "
         f"`data.dataset` の場所 (`{dataset}`) に置く. 群を作る列は {columns}"
         " (config の `group.columns`) で, 他の列は読まない (群の割り当てには"

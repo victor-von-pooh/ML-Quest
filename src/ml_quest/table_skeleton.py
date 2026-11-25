@@ -1407,8 +1407,9 @@ def table_readme(
     monitor = stages["training"]["monitor"]
     lines += [
         "", "## 次にすること", "",
-        "学習する環境には ML-EDA, ML-Found (と, 定義を使うなら "
-        "ML-ModelControl, ML-Inference) を入れる.", "",
+        "学習する環境には ML-EDA, ML-Found, ML-ModelControl, ML-Inference を"
+        " 入れる (config の `requires` の機能. 足りなければ学習の前に入れ方を"
+        "示して止まる. ML-ModelControl と ML-Inference は定義を置くと使う).", "",
         "1. **データの分析** (ML-EDA, ML-Fathom): 表のファイルを ML-EDA で"
         "読み, 目的の列の無いレシピ (`task: none`. `recipe_from` の雛形) で"
         "このディレクトリの `" + dataset + "` に書き出す. 検証用の分割は"
