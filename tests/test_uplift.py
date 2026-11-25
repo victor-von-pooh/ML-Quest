@@ -166,7 +166,7 @@ def test_uplift_check() -> None:
     problem = answer(problem, f"{PART}.uplift.id", None)
     assert f"{PART}.uplift.id" in errors_of(problem)
 
-    # 配る数の上限は 1 以上の整数. 他の型と書けない項目は誤り
+    # 配る数の上限の型と, 他の型と書けない項目の誤り
     for decision in ({"type": "treat", "budget": 0},
                      {"type": "treat", "budget": 2.5},
                      {"type": "treat", "budget": "slots"},
@@ -217,7 +217,7 @@ def test_uplift_handoff() -> None:
         "valid/qini", "max"
     )
 
-    # 推論は配る判断を同じ形で, 守る指標と結論は無し
+    # 推論の配る判断 (守る指標と結論は無し)
     assert stages["inference"]["decision"] == {"type": "treat", "budget": 50}
     assert stages["inference"]["guard"] is None
     assert stages["inference"]["conclusion"] == {}
@@ -273,7 +273,7 @@ def test_uplift_recipe() -> None:
     }
     assert any("one_hot" in note for note in start["notes"])
 
-    # 書き戻すと往復で同じ. 答えと違う列と分割は食い違い
+    # 書き戻しの往復と, 答えと違う列と分割の食い違い
     result = apply_recipe(uplift_problem(), recipe)
     assert result["conflicts"] == [] and result["choices"] == []
     assert recipe_from(result["problem"])["recipe"] == recipe

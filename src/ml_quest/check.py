@@ -1692,7 +1692,7 @@ def treat_findings(problem: dict) -> list[dict]:
         確かめ (配る判断でない, 配る数の上限が 1 以上の整数でない, 書けない
         項目. どれも error)
     """
-    # 型は配る判断だけ, 上限は数 (列の名前は書けない)
+    # 型と上限 (型は配る判断だけ. 上限に列の名前は書けない)
     found: list[dict] = []
     decision = active_value(problem, "action.decision")
     if not isinstance(decision, dict):
@@ -1738,7 +1738,7 @@ def uplift_columns(problem: dict) -> list[dict]:
         確かめ (使えるデータの列に無い, 見積もりに使う列と重なる, 処置,
         結果, 行の id の列が同じ, 行の id の列の名前の決まり. どれも error)
     """
-    # 使えるデータの列の一覧が無ければ, 列に無いかは見ない
+    # 使えるデータの列の一覧が無いときの, 列に無いかの確かめの省略
     found: list[dict] = []
     columns = active_value(problem, "information.columns") or []
     used = active_value(problem, f"{PART}.uplift.columns") or []

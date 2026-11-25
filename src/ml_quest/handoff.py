@@ -107,8 +107,8 @@ def model_example(problem: dict) -> Optional[str]:
            active_value(problem, f"{PART}.target.kind"))
     example = MODEL_EXAMPLES.get(key)
 
-    # 異常の検知の距離に基づく度合いはモデルを使わない. 方策の頭は骨組みの
-    # 約束 (入力と出力が 1 つずつ) が同梱の例と違う
+    # 異常の検知の距離に基づく度合い (モデル無し) と, 方策の頭 (入力と出力
+    # が 1 つずつの約束が同梱の例と別の形) の雛形無し
     if is_anomaly_part(problem) and (
         active_value(problem, f"{PART}.anomaly.score") != "autoencoder"
     ):
