@@ -18,7 +18,8 @@ from ml_quest.problem import (
 from ml_quest.questions import (
     ANOMALY_ASSIGNED, ANOMALY_SCORES, BASELINE_TYPES, GROUP_ASSIGNED,
     GROUP_TAKEN, GUARD_COUNTS, METHODS, METRICS, OUTPUTS, PART, QUESTIONS,
-    ROLES, SECTIONS, SPLITS, TARGET_KINDS, TARGET_SOURCES, TASKS, UNITS
+    ROLES, SECTIONS, SPLITS, TARGET_KINDS, TARGET_SOURCES, TASKS, UNITS,
+    UPLIFT_ASSIGNED, UPLIFT_OUTCOMES
 )
 from ml_quest.requirements import FEATURES, required_features
 from ml_quest.sensitivity import SENSITIVITY_FIELDS, decision_sensitivity
@@ -34,7 +35,8 @@ __all__ = [
     "GROUP_ASSIGNED", "GROUP_TAKEN", "GUARD_COUNTS", "LEGACY_KEYS",
     "METHODS", "METRICS", "MODEL_EXAMPLES", "OUTPUTS", "PART", "QUESTIONS",
     "ROLES", "SECTIONS", "SENSITIVITY_FIELDS", "SPLITS",
-    "TARGET_KINDS", "TARGET_SOURCES", "TASKS", "UNITS", "active_value",
+    "TARGET_KINDS", "TARGET_SOURCES", "TASKS", "UNITS", "UPLIFT_ASSIGNED",
+    "UPLIFT_OUTCOMES", "active_value",
     "answer", "apply_group", "apply_recipe", "attach_data", "check",
     "decision_sensitivity", "decision_text", "describe", "example_problem",
     "get_value", "handoff", "inspect_data", "inspect_key", "is_column_part",

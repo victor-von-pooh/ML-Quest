@@ -59,6 +59,25 @@ ANOMALY_SCORES = [
 ANOMALY_ASSIGNED = ("split", "score", "anomaly", "rank", "column",
                     "column_share")
 
+# 効果を見積もるで, 続けて行動を選ぶ方策でなく, 今ある記録から効果を見積
+# もる場合だけの問い (以下「効果の見積もり」. 既製のモデルをそのまま使う
+# 場合は骨組みが無いので含めない)
+UPLIFT = [USES_ML, {"id": f"{PART}.role", "equals": "effect"},
+          {"none": [{"id": f"{PART}.autonomous", "equals": True}]},
+          {"id": f"{PART}.collect", "equals": "log"},
+          {"none": [PRETRAINED]}]
+
+# 効果の見積もりの結果の種類 (ML-EDA の介入の記録の表の outcome)
+UPLIFT_OUTCOMES = [
+    {"value": "binary", "label": "起きたか (買ったかの 0 と 1. 効果は確率の"
+     "差)"},
+    {"value": "amount", "label": "量 (買った額. 効果は値の差)"},
+]
+
+# 効果の見積もりの行の id の列にできない名前 (行ごとの効果の表の他の列)
+UPLIFT_ASSIGNED = ("split", "effect", "treated", "control", "treatment",
+                   "outcome")
+
 # 予測するかまとめるで, 既製のモデルをそのまま使う場合だけの問い (一式
 # づくりに渡す値. まとめるは既製のモデルの埋め込みで群を作る)
 READY = [USES_ML, {"id": f"{PART}.role", "in": ["predict", "group"]},
@@ -261,12 +280,18 @@ GROUP = [USES_ML, {"id": f"{PART}.role", "equals": "group"},
 GROUP_ANY = [USES_ML, {"id": f"{PART}.role", "equals": "group"}]
 
 # 使えるデータの列を問う場合 (列の予測と異常の検知と, 並べるかまとめるで
-# 学習する場合)
-COLUMNS_ASKED = [USES_ML, {"none": [PRETRAINED]},
-                 {"id": f"{PART}.role", "in": ["predict", "rank", "group"]},
-                 {"any": [{"id": f"{PART}.role", "in": ["rank", "group"]},
-                          {"id": f"{PART}.target.kind",
-                           "in": ["column", "anomaly"]}]}]
+# 学習する場合と, 効果の見積もり)
+COLUMNS_ASKED = [{"any": [
+    {"all": [USES_ML, {"none": [PRETRAINED]},
+             {"id": f"{PART}.role", "in": ["predict", "rank", "group"]},
+             {"any": [{"id": f"{PART}.role", "in": ["rank", "group"]},
+                      {"id": f"{PART}.target.kind",
+                       "in": ["column", "anomaly"]}]}]},
+    {"all": UPLIFT},
+]}]
+
+# 意思決定の型と損得を問う場合 (列の予測と, 効果の見積もり)
+DECIDED = [{"any": [{"all": COLUMN_TARGET}, {"all": UPLIFT}]}]
 
 # 群の安定性の数え方 (作り直し方)
 GROUP_STABILITIES = [
@@ -309,10 +334,11 @@ FALLBACKS = [
 
 # 意思決定の型と, 型ごとの欄 (画面はこれだけで描く. 項目は ML-Inference の
 # 形. required は要る欄, choices は選んで書く欄, unset は選ばないときの意味,
-# when は他の欄の値で要るかが決まる欄)
+# when は他の欄の値で要るかが決まる欄. fits は合う受け持ち (方策でない効果の
+# 見積もりは配る判断だけ))
 DECISION_TYPES = [
     {"value": "quantity", "label": "量を決める (仕入れ, 補充, 人員)",
-     "fields": [
+     "fits": [{"role": "predict"}], "fields": [
          {"key": "under_cost", "required": True,
           "label": "1 単位足りないときの損 (欠品の粗利など)"},
          {"key": "over_cost", "required": True,
@@ -322,7 +348,7 @@ DECISION_TYPES = [
          {"key": "step", "required": False, "label": "量の刻み (任意)"},
      ]},
     {"value": "select", "label": "対象を選ぶ (引き止め, 営業先)",
-     "fields": [
+     "fits": [{"role": "predict"}], "fields": [
          {"key": "value", "required": True,
           "label": "当たり 1 件の価値 (行ごとに違えば列の名前)"},
          {"key": "cost", "required": True, "label": "行動 1 件の費用"},
@@ -350,7 +376,7 @@ DECISION_TYPES = [
           "label": "費用の上限 (任意)"},
      ]},
     {"value": "triage", "label": "振り分ける (人が確かめる, 再検査)",
-     "fields": [
+     "fits": [{"role": "predict"}], "fields": [
          {"key": "miss_cost", "required": True, "label": "当たりを見逃す損"},
          {"key": "false_alarm_cost", "required": True,
           "label": "外れを回す損 (空振り)"},
@@ -358,7 +384,12 @@ DECISION_TYPES = [
           "label": "回せる件数の上限 (任意)"},
      ]},
     {"value": "none", "label": "意思決定しない (人が予測を見て決める)",
-     "fields": []},
+     "fits": [{"role": "predict"}], "fields": []},
+    {"value": "treat", "label": "効果の上位から配る (クーポン, 案内)",
+     "fits": [{"role": "effect", "policy": False}], "fields": [
+         {"key": "budget", "required": True,
+          "label": "配る数の上限 (守る指標. 1 以上の整数)"},
+     ]},
 ]
 
 # タスクの選択肢
@@ -768,6 +799,32 @@ QUESTIONS: list[dict[str, Any]] = [
              "戻せない行ほど異常とする (列の組み合わせの複雑な外れも見る). "
              "距離は学習用の正常の行の中心と散らばりから, 遠い行ほど異常と"
              "する (学習しないので速く, 列の少ない表で始めやすい)"},
+    {"id": f"{PART}.uplift.treatment", "section": 5, "kind": "column",
+     "required": True, "when": UPLIFT, "title": "処置の列は",
+     "help": "行動した (クーポンを配った) 行は 1 か真, しなかった行は 0 か偽"
+             "の列. 無作為に配った記録を前提にする (配る相手を選んだ記録"
+             "では効果を取り違える). 例: coupon"},
+    {"id": f"{PART}.uplift.outcome", "section": 5, "kind": "column",
+     "required": True, "when": UPLIFT, "title": "結果の列は",
+     "help": "行動の後の結果の列 (買ったか, 買った額). 処置の群と対照の群の"
+             "この列の差が効果. 例: purchased"},
+    {"id": f"{PART}.uplift.outcome_kind", "section": 5, "kind": "choice",
+     "required": True, "when": UPLIFT, "choices": UPLIFT_OUTCOMES,
+     "title": "結果は, 起きたかですか, 量ですか",
+     "help": "起きたか (0 と 1) なら効果は確率の差, 量 (額) なら値の差"},
+    {"id": f"{PART}.uplift.id", "section": 5, "kind": "column",
+     "required": False, "when": UPLIFT,
+     "title": "行の id の列は (あれば)",
+     "help": "行ごとの効果の表と配る判断が 1 行 (顧客) を指すための列. 欠けも"
+             "同じ値も無い列. 効果の見積もりには使わない. split, effect, "
+             "treated, control, treatment, outcome の名前の列は使えない. 無け"
+             "れば空のまま (行の位置で指す). 例: customer_id"},
+    {"id": f"{PART}.uplift.columns", "section": 5, "kind": "columns",
+     "required": True, "when": UPLIFT,
+     "title": "効果の見積もりに使う列は",
+     "help": "配る前に分かっている顧客の特徴の列 (年齢, 来店の回数など). 処置"
+             "の列, 結果の列, 行の id の列と, 配った後に決まる列 (クーポンを"
+             "使ったかなど) は入れない"},
     {"id": f"{PART}.task", "section": 5, "kind": "choice", "required": True,
      "when": COLUMN_TARGET, "choices": TASKS, "title": "どの種類の問題ですか",
      "help": "目的の値がクラスなら分類, 値なら回帰. 時刻の順に過去から先を"
@@ -866,12 +923,14 @@ QUESTIONS: list[dict[str, Any]] = [
 
     # 7. 損得と制約
     {"id": "action.decision", "section": 7, "kind": "decision",
-     "required": True, "when": COLUMN_TARGET, "choices": DECISION_TYPES,
+     "required": True, "when": DECIDED, "choices": DECISION_TYPES,
      "title": "行動の損得と制約は",
      "help": "量を決める: 1 単位足りないときの損と余ったときの損. 対象を選ぶ: "
              "当たり 1 件の価値, 行動 1 件の費用, 行動で防げる割合 (仮定), "
              "件数か費用の上限. 振り分ける: 見逃しの損と空振りの損, 回せる件数"
-             ". 人が予測を見て決めるなら「意思決定しない」"},
+             ". 人が予測を見て決めるなら「意思決定しない」. 効果の上位から"
+             "配る: 配る数の上限 (守る指標. 1 回に配れる数. 効果の高い順に"
+             "上限まで配る)"},
     {"id": f"{PART}.anomaly.capacity", "section": 7, "kind": "number",
      "required": True, "when": ANOMALY,
      "title": "人が 1 回に確かめられる件数の上限は (守る指標)",
@@ -966,6 +1025,12 @@ QUESTIONS: list[dict[str, Any]] = [
      "required": False, "when": TRAINED,
      "title": "その指標が良くなると, 課題の指標はどう良くなりますか",
      "help": "例: 誤差が小さいほど作る量の外れが減り, 廃棄と欠品の損が減る"},
+    {"id": f"{PART}.uplift.k", "section": 8, "kind": "number",
+     "required": True, "when": UPLIFT,
+     "title": "評価で見る上位の割合 K は (0 より大きく 1 以下)",
+     "help": "効果の見積もりの高い順の上位 K 割の行で, 処置の群と対照の群の"
+             "結果の平均の差 (上位 K 割の効果の差) を数える. 配る数の上限が"
+             "顧客の何割かに当たるかで決める. 例: 3 割に配れるなら 0.3"},
     {"id": f"{PART}.evaluation.current", "section": 8, "kind": "number",
      "required": False, "when": REPORTED_BASELINE,
      "title": "今のやり方 (人の目視や今の仕組み) で, この指標は幾つですか "

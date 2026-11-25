@@ -4,7 +4,8 @@ from typing import Any, Optional
 
 from ml_quest.check import (
     check_group, finding, is_anomaly_part, is_column_part,
-    is_generate_part, is_group_part, is_items_part, is_policy_part
+    is_generate_part, is_group_part, is_items_part, is_policy_part,
+    is_uplift_part
 )
 from ml_quest.data import EXPORT_FUNCTIONS, ITEMS_LOADER, PAIR_NAMES
 from ml_quest.handoff import export_split, export_stages, project_of
@@ -17,6 +18,11 @@ from ml_quest.questions import PART, SPLITS
 # レシピの分割の割合の既定値 (データの分析の段階で変えられる)
 VALID_RATIO = 0.15
 TEST_RATIO = 0.15
+
+# 効果の見積もりのレシピの分割の割合の既定値 (2 つの群の差で数える Qini の
+# 揺れを抑えるため, 他より多く検証用とテスト用に置く)
+UPLIFT_VALID_RATIO = 0.2
+UPLIFT_TEST_RATIO = 0.2
 
 # 正解の種類から, ML-EDA のファイルの組の書き出しと, 入力と正解のディレク
 # トリの名前 (ML-EDA の合成の見本と同じ)
@@ -57,8 +63,8 @@ GROUP_KEYS = {"columns": "群を作る列", "id": "行を見分ける列",
 
 def require_column_part(problem: dict, purpose: str) -> None:
     """
-    列の予測, ファイルの組, 画像か表の生成, 異常の検知の受け持ちでなければ
-    止める関数
+    列の予測, ファイルの組, 画像か表の生成, 異常の検知, 効果の見積もりの
+    受け持ちでなければ止める関数
 
     Parameters
     ----------
@@ -75,7 +81,8 @@ def require_column_part(problem: dict, purpose: str) -> None:
     ----------
     ValueError
         方策の受け持ち (データの分析の段階を通らない) の場合と, 列の予測
-        でも, ファイルの組でも, 画像か表の生成でも, 異常の検知でもない場合
+        でも, ファイルの組でも, 画像か表の生成でも, 異常の検知でも, 効果の
+        見積もりでもない場合
     """
     # 方策は環境とのやり取りで集めるので, データの分析の段階が無い. 他の
     # 受け持ちのデータの約束は, データの分析の段階の版の上げの後
@@ -86,11 +93,13 @@ def require_column_part(problem: dict, purpose: str) -> None:
         )
     if not is_column_part(problem) and not is_items_part(problem) and (
         not is_generate_part(problem) and not is_anomaly_part(problem)
+        and not is_uplift_part(problem)
     ):
         raise ValueError(
             f"{purpose}は, 予測するで正解の種類が表の列, 画像の領域, 点群, "
-            "異常の場合と, 作るで正解の種類が画像か表の場合だけです (他の"
-            "受け持ちと正解の種類はまだ扱えません)"
+            "異常の場合と, 作るで正解の種類が画像か表の場合と, 効果を見積もる"
+            "で今ある記録から効果を見積もる場合だけです (他の受け持ちと正解"
+            "の種類はまだ扱えません)"
         )
 
 
@@ -143,13 +152,16 @@ def recipe_from(problem: dict) -> dict:
             problem, recipe
         )[0] if item["id"] == f"{PART}.group_column"
             and not is_generate_part(problem)
-            and not is_anomaly_part(problem)]
+            and not is_anomaly_part(problem)
+            and not is_uplift_part(problem)]
     elif is_generate_part(problem):
         recipe = generate_recipe(
             active_value(problem, f"{PART}.target.kind"), notes
         )
     elif is_anomaly_part(problem):
         recipe = anomaly_recipe(data, notes)
+    elif is_uplift_part(problem):
+        recipe = uplift_recipe(data, notes)
     else:
         recipe = skeleton_recipe(problem, data, notes)
 
@@ -445,6 +457,48 @@ def anomaly_recipe(data: dict, notes: list) -> dict:
     return recipe
 
 
+def uplift_recipe(data: dict, notes: list) -> dict:
+    """
+    効果の見積もりのレシピの雛形を作る関数
+
+    Parameters
+    ----------
+    data: dict
+        受け渡しのデータの分析の値 (効果の見積もり)
+    notes: list
+        知らせの文の並び (書き足す)
+
+    Returns
+    ----------
+    recipe: dict
+        ML-EDA の介入の記録の表のレシピ (task: uplift. 結果の列, 処置の列,
+        結果の種類と, 行の id の列は答えたときだけ. 分割は処置で層を作る
+        stratified)
+    """
+    # 見積もりに使わない列の削除と, 数の列の標準化 (欠けた値と種類の列の
+    # 扱いはデータの分析の段階)
+    steps: list[dict] = []
+    if data["drop"]:
+        steps.append({"op": "drop_columns", "columns": list(data["drop"])})
+    steps.append({"op": "standardize", "columns": "auto"})
+    notes.append("骨組みは数の列だけを読み, 欠けた値を読めません. 欠けた値"
+                 "は impute か drop_missing で無くし, 種類の列は one_hot で"
+                 "数の列にしてください. 配った後に決まる列 (クーポンを使った"
+                 "かなど) は drop_columns で落としてください")
+    recipe: dict[str, Any] = {
+        "format_version": 1, "task": "uplift", "target": data["target"],
+        "treatment": data["treatment"], "outcome": data["outcome_kind"],
+    }
+    if data["id"]:
+        recipe["id"] = data["id"]
+    recipe.update(steps=steps, split={
+        "method": "stratified", "valid": UPLIFT_VALID_RATIO,
+        "test": UPLIFT_TEST_RATIO, "seed": 0, "unlabeled": data["unlabeled"],
+    })
+
+    return recipe
+
+
 def recipe_columns(recipe: dict) -> tuple[set[str], int]:
     """
     レシピで落とす列と, 過去の値の最も小さいずらし幅を集める関数
@@ -512,6 +566,9 @@ def apply_recipe(problem: dict, recipe: dict) -> dict:
         return result
     if is_anomaly_part(updated):
         result = apply_anomaly(updated, recipe)
+        return result
+    if is_uplift_part(updated):
+        result = apply_uplift(updated, recipe)
         return result
     changes = []
     old_target = get_value(updated, f"{PART}.target.column")
@@ -642,6 +699,67 @@ def apply_anomaly(problem: dict, recipe: dict) -> dict:
             "warning", "data.recipe",
             "検証用の分割がありません. 自己符号化器の骨組みは最も良いモデル"
             "を選べず止まるので, 検証用の割合を 0 より大きくしてください"
+        ))
+    set_value(problem, "data.recipe", copy.deepcopy(recipe))
+    result = {"problem": problem, "changes": [], "conflicts": conflicts,
+              "choices": []}
+
+    return result
+
+
+def apply_uplift(problem: dict, recipe: dict) -> dict:
+    """
+    効果の見積もりのレシピを問題の設定に書き戻す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 効果の見積もり. 写したもの)
+    recipe: dict
+        ML-EDA のレシピ
+
+    Returns
+    ----------
+    result: dict
+        apply_recipe と同じ形 (他の答えは変えず, 選ぶ問いは無い)
+    """
+    # タスク, 結果, 処置, 結果の種類と行の id の列は答えのまま (推論の段階
+    # の行ごとの効果の表と配る判断が同じ列で行を指すため). 分割は ML-EDA の
+    # 効果を見積もるの stratified だけ
+    conflicts = []
+    if recipe.get("task") != "uplift":
+        conflicts.append(finding(
+            "error", "data.recipe",
+            "効果の見積もりのレシピのタスクは uplift にしてください (今は "
+            f"{recipe.get('task')})"
+        ))
+    for key, name, title in (
+        ("target", f"{PART}.uplift.outcome", "結果の列"),
+        ("treatment", f"{PART}.uplift.treatment", "処置の列"),
+        ("outcome", f"{PART}.uplift.outcome_kind", "結果の種類"),
+        ("id", f"{PART}.uplift.id", "行の id の列"),
+    ):
+        answered = active_value(problem, name)
+        if recipe.get(key) != answered:
+            conflicts.append(finding(
+                "error", "data.recipe",
+                f"レシピの {key} ({recipe.get(key)}) が答えた{title} ("
+                f"{answered}) と違います. 問題の設定の答えに合わせるか, 答え"
+                "を直してください"
+            ))
+    split = recipe.get("split")
+    split = split if isinstance(split, dict) else {}
+    if split.get("method") != "stratified":
+        conflicts.append(finding(
+            "error", "data.recipe",
+            "効果の見積もりの分割は stratified にしてください (全ての分割に"
+            "処置の群と対照の群を置くため)"
+        ))
+    if split.get("valid", SPLIT_DEFAULTS["valid"]) == 0:
+        conflicts.append(finding(
+            "warning", "data.recipe",
+            "検証用の分割がありません. 骨組みは最も良いモデルを選べず止まる"
+            "ので, 検証用の割合を 0 より大きくしてください"
         ))
     set_value(problem, "data.recipe", copy.deepcopy(recipe))
     result = {"problem": problem, "changes": [], "conflicts": conflicts,

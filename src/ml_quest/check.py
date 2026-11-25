@@ -12,7 +12,7 @@ from ml_quest.questions import (
     GROUP_ASSIGNED, GROUP_STABILITIES, GROUP_TAKEN, GUARD_COUNTS,
     METHODS, METRICS, NOT_COUNTED, OUTPUTS, PART, QUESTIONS,
     READY_LIBRARIES, ROLES, SIMULATORS, TARGET_KINDS, TARGET_SOURCES, UNITS,
-    V1_METRICS
+    UPLIFT_ASSIGNED, UPLIFT_OUTCOMES, V1_METRICS
 )
 
 # その他の指標の名前 (学習の記録の名前と曲線のファイルの名前)
@@ -53,7 +53,8 @@ GENERATE_KINDS = ("image", "table")
 # 受け持ちの中の, 辞書で書く項目
 PART_DICTS = [f"{PART}.target", f"{PART}.target.process",
               f"{PART}.evaluation", f"{PART}.policy", f"{PART}.ready",
-              f"{PART}.rank", f"{PART}.group", f"{PART}.anomaly"]
+              f"{PART}.rank", f"{PART}.group", f"{PART}.anomaly",
+              f"{PART}.uplift"]
 
 # 受け持ちの, 選んで書く項目と選択肢 (手で書いたファイルの確かめ)
 PART_CHOICES = {
@@ -65,6 +66,7 @@ PART_CHOICES = {
     f"{PART}.ready.library": READY_LIBRARIES,
     f"{PART}.group.stability": GROUP_STABILITIES,
     f"{PART}.anomaly.score": ANOMALY_SCORES,
+    f"{PART}.uplift.outcome_kind": UPLIFT_OUTCOMES,
 }
 
 # 方策の守りの, 文で書く項目
@@ -81,6 +83,11 @@ READY_TEXTS = [f"{PART}.ready.{name}" for name in (
 RANK_COLUMNS = [f"{PART}.rank.{name}" for name in (
     "user", "item", "time", "reaction"
 )]
+
+# 効果の見積もりの, 列の名前の項目 (処置, 結果, 行の id) と文の中の呼び方
+UPLIFT_COLUMNS = {f"{PART}.uplift.treatment": "処置の列",
+                  f"{PART}.uplift.outcome": "結果の列",
+                  f"{PART}.uplift.id": "行の id の列"}
 
 # 並べるの列の項目の, 文の中の呼び方
 RANK_TITLES = dict(zip(RANK_COLUMNS, ("利用者の列", "品物の列", "時刻の列",
@@ -104,7 +111,7 @@ TASK_NAMES = {"classification": "分類", "regression": "回帰",
 COLUMN_LISTS = ["information.columns", f"{PART}.series_by",
                 "information.known", "information.unknown",
                 "information.forbidden", f"{PART}.group.columns",
-                f"{PART}.anomaly.columns"]
+                f"{PART}.anomaly.columns", f"{PART}.uplift.columns"]
 
 
 def finding(level: str, key: str, message: str) -> dict:
@@ -210,7 +217,7 @@ def check_shape(problem: dict) -> list[dict]:
                 f"{PART}.target.process.name", *PART_CHOICES,
                 *POLICY_TEXTS, *READY_TEXTS, *RANK_COLUMNS,
                 f"{PART}.group.id", f"{PART}.anomaly.label",
-                f"{PART}.anomaly.id"):
+                f"{PART}.anomaly.id", *UPLIFT_COLUMNS):
         value = get_value(problem, key)
         if value is not None and not isinstance(value, str):
             found.append(finding("error", key,
@@ -558,6 +565,14 @@ def check_decision(problem: dict) -> list[dict]:
     if not decision:
         return found
     kind = decision["type"]
+    if kind == "treat":
+        found.append(finding(
+            "error", "action.decision",
+            f"{DECISION_NAMES[kind]}判断は, 効果を見積もるで方策でなく, 今ある"
+            "記録から効果を見積もる受け持ちだけです. 予測を使う判断は, 量を"
+            "決める, 対象を選ぶ, 振り分けるのどれかにしてください"
+        ))
+        return found
     columns = active_value(problem, "information.columns") or []
     uplift = kind == "select" and decision.get("effect_kind") == "uplift"
     for field, required in DECISION_FIELDS[kind].items():
@@ -979,6 +994,8 @@ def check(problem: dict) -> list[dict]:
             found += check_group_k(problem)
         if is_anomaly_part(problem):
             found += check_anomaly(problem)
+        if is_uplift_part(problem):
+            found += check_uplift(problem)
         found += check_part(problem)
         found += check_evaluation(problem)
         found += check_consumer(problem)
@@ -1574,6 +1591,200 @@ def check_anomaly(problem: dict) -> list[dict]:
         found.append(finding(
             "error", f"{PART}.anomaly.capacity",
             "人が確かめる件数の上限は 1 以上の整数にしてください"
+        ))
+
+    return found
+
+
+def is_uplift_part(problem: dict) -> bool:
+    """
+    受け持ちが効果の見積もり (効果を見積もるで, 方策でなく, 今ある記録から
+    効果を見積もる. 作り方が既製のモデルをそのままでない) かを返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    uplift: bool
+        効果の見積もりの骨組みを書き出す受け持ちか
+    """
+    # 受け持ち, 方策か, 集め方と作り方の答え (要らない問いの古い答えは除外)
+    uplift = active_value(problem, f"{PART}.role") == "effect" and (
+        active_value(problem, f"{PART}.autonomous") is not True
+        and active_value(problem, f"{PART}.collect") == "log"
+        and active_value(problem, f"{PART}.method") != "pretrained"
+    )
+
+    return uplift
+
+
+def check_uplift(problem: dict) -> list[dict]:
+    """
+    効果の見積もりの正解の出どころ, 列, 上位の割合, 配る判断と指標を確かめる
+    関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 効果の見積もり)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (下の決まりに当たるものは全て error)
+    """
+    # 正解は介入の記録 (処置と結果の組)
+    found: list[dict] = []
+    source = active_value(problem, f"{PART}.target.source")
+    if source not in (None, "intervention"):
+        found.append(finding(
+            "error", f"{PART}.target.source",
+            "今ある記録から効果を見積もるので, 正解の出どころは"
+            f"{choice_label(TARGET_SOURCES, 'intervention')}にしてください "
+            "(処置の列と結果の列を持つ表)"
+        ))
+
+    # 列を答え直した後の古い名前と, 処置, 結果, 行の id の列の重なり
+    found += uplift_columns(problem)
+
+    # 上位の割合は 0 より大きく 1 以下
+    k = active_value(problem, f"{PART}.uplift.k")
+    if k is not None and (
+        isinstance(k, bool) or not isinstance(k, (int, float))
+        or not math.isfinite(k) or not 0 < k <= 1
+    ):
+        found.append(finding(
+            "error", f"{PART}.uplift.k",
+            "評価で見る上位の割合 K は 0 より大きく 1 以下の数にしてください "
+            "(3 割なら 0.3)"
+        ))
+
+    # 配る判断の型と, 配る数の上限 (1 以上の整数)
+    found += treat_findings(problem)
+
+    # 方策の報酬は環境の評価のエピソードの値で, 記録からは数えない
+    if active_value(problem, f"{PART}.evaluation.metric") == "reward":
+        found.append(finding(
+            "error", f"{PART}.evaluation.metric",
+            f"{choice_label(METRICS, 'reward')}は方策の指標です. 今ある"
+            f"記録から効果を見積もるなら{choice_label(METRICS, 'qini')}か"
+            "損失にしてください"
+        ))
+
+    return found
+
+
+def treat_findings(problem: dict) -> list[dict]:
+    """
+    効果の見積もりの, 配る判断の型と配る数の上限を確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 効果の見積もり)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (配る判断でない, 配る数の上限が 1 以上の整数でない, 書けない
+        項目. どれも error)
+    """
+    # 型は配る判断だけ, 上限は数 (列の名前は書けない)
+    found: list[dict] = []
+    decision = active_value(problem, "action.decision")
+    if not isinstance(decision, dict):
+        return found
+    if decision.get("type") != "treat":
+        found.append(finding(
+            "error", "action.decision",
+            f"効果の見積もりの判断は「{DECISION_NAMES['treat']}」(treat) に"
+            "してください (効果の高い順に配る数の上限まで配る)"
+        ))
+        return found
+    budget = decision.get("budget")
+    if budget is None:
+        found.append(finding(
+            "error", "action.decision",
+            f"{DECISION_NAMES['treat']}判断の budget (配る数の上限) を書いて"
+            "ください"
+        ))
+    elif (isinstance(budget, bool) or not isinstance(budget, (int, float))
+          or not math.isfinite(budget) or not float(budget).is_integer()
+          or budget < 1):
+        found.append(finding(
+            "error", "action.decision",
+            "配る数の上限 (budget) は 1 以上の整数にしてください"
+        ))
+    found += option_findings(decision)
+
+    return found
+
+
+def uplift_columns(problem: dict) -> list[dict]:
+    """
+    効果の見積もりの列の答えを確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 効果の見積もり)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (使えるデータの列に無い, 見積もりに使う列と重なる, 処置,
+        結果, 行の id の列が同じ, 行の id の列の名前の決まり. どれも error)
+    """
+    # 使えるデータの列の一覧が無ければ, 列に無いかは見ない
+    found: list[dict] = []
+    columns = active_value(problem, "information.columns") or []
+    used = active_value(problem, f"{PART}.uplift.columns") or []
+    missing = [name for name in used if columns and name not in columns]
+    if missing:
+        found.append(finding(
+            "error", f"{PART}.uplift.columns",
+            f"{', '.join(missing)} は使えるデータの列にありません"
+        ))
+    named: dict[str, str] = {}
+    for item, title in UPLIFT_COLUMNS.items():
+        name = active_value(problem, item)
+        if not name:
+            continue
+        if columns and name not in columns:
+            found.append(finding("error", item,
+                                 f"{name} は使えるデータの列にありません"))
+        elif name in used:
+            found.append(finding(
+                "error", item,
+                f"{name} は効果の見積もりに使う列にもあります. {title}は"
+                "見積もりに使いません"
+            ))
+        same = [key for key, value in named.items() if value == name]
+        if same:
+            found.append(finding(
+                "error", item,
+                f"{name} は{UPLIFT_COLUMNS[same[0]]}と同じです. 別の列にして"
+                "ください"
+            ))
+        named[item] = name
+
+    # 行の id の列の名前 (行ごとの効果の表の他の列と, ML-EDA の行の位置)
+    key = active_value(problem, f"{PART}.uplift.id")
+    if key and key in UPLIFT_ASSIGNED:
+        found.append(finding(
+            "error", f"{PART}.uplift.id",
+            f"行の id の列 {key} は行ごとの効果の表の列 ("
+            f"{', '.join(UPLIFT_ASSIGNED)}) と同じ名前です. 名前を変えた"
+            "列を作ってから選んでください"
+        ))
+    if not key and "row_id" in columns:
+        found.append(finding(
+            "error", f"{PART}.uplift.id",
+            "使えるデータの列に row_id があります. データの分析の段階は行の"
+            "位置を row_id の列にするので, 行の id の列を答えてください"
         ))
 
     return found
