@@ -84,7 +84,13 @@ LABEL_METRICS = ("precision_at_k", "average_precision")
 SCORES_FILE = "anomaly_scores.csv"
 SCORER_FILE = "anomaly_scorer.json"
 
-# 行ごとの度合いの表の, 行の id の列にできない名前
+# 成果物の版 (anomaly_scorer.json の format_version. anomaly_scores.csv の
+# 列もこの版に従う) と, 実験に写す前処理のレシピ (ML-EDA の当てはめた値を
+# 含む recipe.yaml) の名前
+SCORER_VERSION = 1
+RECIPE_FILE = "anomaly_recipe.yaml"
+
+# 行ごとの度合いの表と上位の行の要約の, 行の id の列にできない名前
 ASSIGNED_COLUMNS = $assigned_columns
 
 # 評価の名前 (evaluations/<名前>_<分割>.json), 説明, 向き
@@ -148,7 +154,7 @@ class PlaceholderModel(nn.Module):
         outputs: dict
             recon (入力と同じ形の再構成)
         """
-        # 縮めてから戻す
+        # 縮めて戻す順伝播
         outputs = {RECON_OUTPUT: self.decoder(self.relu(self.encoder(x)))}
 
         return outputs
@@ -159,8 +165,8 @@ class AnomalyTrainer(Trainer):
         self, model: nn.Module, experiment: Experiment,
         valid: tuple[torch.Tensor, np.ndarray], cfg: Any
     ):
-        # 親クラスのコンストラクタを呼び出す (step を上書きするので
-        # step_fn は None)
+        # step を上書きするので step_fn は None
+        # 親クラスのコンストラクタを呼び出す
         super(AnomalyTrainer, self).__init__(model, experiment, None)
 
         # 検証用の全ての行の特徴と正解, K, まとまりの大きさを保存
@@ -269,7 +275,7 @@ def autoencoder_parts(
     parts: np.ndarray
         (件数, 学習に使う列の数) の float64 (行の平均が度合い)
     """
-    # 学習の切り替えは Trainer がする (検証の後は学習のエポックに戻る)
+    # 評価のモードへの切り替え (学習に戻すのは Trainer)
     device = next(model.parameters()).device
     chunks = []
     model.eval()
@@ -299,7 +305,7 @@ def fit_distance(x: np.ndarray, ridge: float) -> dict:
     distance: dict
         center (中心), precision (精度行列), ridge
     """
-    # 行が 1 つなら散らばりは 0
+    # 中心と, 対角に ridge を足した共分散の逆 (行が 1 つなら散らばりは 0)
     points = x.astype(np.float64)
     center = points.mean(axis=0)
     diff = points - center
@@ -441,8 +447,8 @@ def check_splits(splits: dict, cfg: Any) -> Optional[str]:
     message: Optional[str]
         誤りの文 (無ければ None)
     """
-    # 学習用は正常の行が 2 行以上. 自己符号化器は検証用の正常の行が要り,
-    # 正解の要る指標を監視するなら検証用の異常の行も
+    # 学習用の正常の行の数と, 自己符号化器の検証用の正常の行と, 正解の
+    # 要る指標の検証用の異常の行の確かめ
     message = None
     train = splits.get("train")
     if train is None or len(train["x"]) < 2:
@@ -481,7 +487,7 @@ def project_spec(cfg: Any) -> Optional[Path]:
     spec: Optional[Path]
         定義のファイル (場所を書いていないか, ファイルがまだ無ければ None)
     """
-    # ML-CreateArchitecture で組んで保存するまでは無い
+    # 定義のファイル (ML-CreateArchitecture で組んで保存するまでは None)
     spec = PROJECT_DIR / cfg.model.spec if cfg.model.spec else None
     if spec is not None and not spec.is_file():
         spec = None
@@ -505,8 +511,8 @@ def spec_errors(spec: Optional[Path], width: int) -> list[str]:
     errors: list[str]
         誤りの文 (定義が無いか誤りが無ければ空)
     """
-    # 定義の無いうちは ML-ModelControl を読まない. 読めない定義も誤りと
-    # して返る (例外にならない)
+    # ML-ModelControl の確かめ (定義の無いうちは読み込み無し. 読めない
+    # 定義も例外でなく誤りの文)
     if spec is None:
         return []
     from ml_modelcontrol import validate
@@ -745,7 +751,7 @@ def top_rows(
         rank, 行の id, score, column (最も大きい分の列), column_share
         (度合いのうちその列の分の割合)
     """
-    # 同じ度合いは前の行から (並べ替えを安定に)
+    # 度合いの高い順 (同じ度合いは前の行からの安定な並べ替え)
     order = np.argsort(-scores, kind="stable")[:k]
     rows = []
     for rank, index in enumerate(order, 1):
@@ -832,16 +838,19 @@ def evaluate_splits(
 
 
 def write_results(
-    run_dir: Path, splits: dict, found: dict, info: dict,
+    run_dir: Path, dataset: Path, splits: dict, found: dict, info: dict,
     distance: Optional[dict], labeled: bool, cfg: Any
 ) -> None:
     """
-    行ごとの度合いと, 度合いの決め方を実験のディレクトリに書く関数
+    行ごとの度合い, 度合いの決め方と前処理のレシピを実験のディレクトリに
+    書く関数
 
     Parameters
     ----------
     run_dir: Path
         実験のディレクトリ
+    dataset: Path
+        ML-EDA の異常の検知の表のディレクトリ (recipe.yaml を写す)
     splits: dict
         read_splits の結果
     found: dict
@@ -859,7 +868,7 @@ def write_results(
     ----------
     None
     """
-    # 行の id, 分割, 度合い, 正解 (正解の無い表と unlabeled は空)
+    # 行の id, 分割, 度合い, 正解の表 (正解の無い表と unlabeled の正解は空欄)
     tables = []
     for split, part in splits.items():
         known = labeled and split != "unlabeled"
@@ -873,10 +882,13 @@ def write_results(
     pd.concat(tables, ignore_index=True).to_csv(run_dir / SCORES_FILE,
                                                 index=False)
 
-    # 度合いの決め方 (推論の段階が読む. 新しい行はデータセットのレシピの
-    # 前処理の後の features から求める)
+    # 推論の段階が読む前処理のレシピの写しと度合いの決め方 (新しい行は
+    # レシピの前処理の後の features から)
+    shutil.copy(dataset / "recipe.yaml", run_dir / RECIPE_FILE)
     scorer = {
-        "score": str(cfg.anomaly.score), "features": list(info["features"]),
+        "format_version": SCORER_VERSION, "score": str(cfg.anomaly.score),
+        "recipe": RECIPE_FILE, "scores": SCORES_FILE,
+        "features": list(info["features"]),
         "id": info["id"], "capacity": int(cfg.anomaly.capacity),
         "k": int(cfg.anomaly.k),
         "normal": normal_summary(found["train"]["scores"]),
@@ -931,7 +943,7 @@ def main() -> None:
               "書き出し直してください")
         sys.exit(1)
 
-    # 分割ごとの行の特徴, 正解, 行の id (数でない列と欠けた値は止まる)
+    # 分割ごとの行の特徴, 正解, 行の id (数でない列と欠けた値で停止)
     try:
         splits = read_splits(dataset)
     except ValueError as error:
@@ -944,8 +956,8 @@ def main() -> None:
     features = list(dataset.features)
     width = len(features)
 
-    # モデルの定義の確かめ (自己符号化器だけ. 誤りなら出力先を作る前に
-    # 止まる)
+    # モデルの定義の確かめ (自己符号化器だけ. 誤りなら出力先を作る前の
+    # 停止)
     autoencoder = cfg.anomaly.score == "autoencoder"
     spec = project_spec(cfg) if autoencoder else None
     errors = spec_errors(spec, width)
@@ -988,17 +1000,18 @@ def main() -> None:
             parts = distance_parts(part["x"], distance)
             found[split] = {"parts": parts, "scores": parts.mean(axis=1)}
 
-    # 実験だけで見直せるように, 問題の設定の写し (元の問題の設定の場所
-    # origin も残る. モデルの定義は ML-Found が start_experiment で写す)
+    # 実験だけで見直すための問題の設定の写し (元の問題の設定の場所
+    # origin も. モデルの定義の写しは ML-Found の start_experiment)
     run_dir = Path(experiment.run_dir)
     shutil.copy(PROJECT_DIR / "problem.yaml", run_dir / "problem.yaml")
     print(f"保存先: {run_dir}")
 
-    # 度合いの評価を evaluations/ へ, 行ごとの度合いと決め方を実験へ
+    # 度合いの評価の evaluations/ への書き出しと, 行ごとの度合いと決め方の
+    # 実験への書き出し
     info = {"id": key, "features": features, "weights": weights,
             "epoch": epoch, "score": SCORE_NAMES[cfg.anomaly.score]}
     evaluate_splits(experiment, splits, found, info, cfg)
-    write_results(run_dir, splits, found, info, distance,
+    write_results(run_dir, path, splits, found, info, distance,
                   dataset.target is not None, cfg)
     experiment.logger.info(
         f"行ごとの度合い: {SCORES_FILE}. 度合いの決め方: {SCORER_FILE} "
@@ -1092,9 +1105,11 @@ def anomaly_script(problem: dict, literal: Callable) -> str:
         predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         method=literal(active_value(problem, f"{PART}.method")),
         score_names=literal(names),
-        assigned_columns=literal(list(ANOMALY_ASSIGNED)),
+        assigned_columns="[\n" + "".join(
+            f"    {json.dumps(name)},\n" for name in ANOMALY_ASSIGNED
+        ) + "]",
     )
-    # train.log の初めの行の度合いを出すもの (空なら省く)
+    # train.log の初めの行の度合いを出すもの (空なら省略)
     made = ("異常の度合い: {PREDICT}. "
             if active_value(problem, f"{PART}.what") else "")
     script = head + Template(ANOMALY_MAIN).substitute(predict_log=made)
@@ -1278,18 +1293,20 @@ def anomaly_readme(
         "に残る (`task.yaml`, "
         + ("学習した重み `final_model.pt`, " if autoencoder else "")
         + "行ごとの度合い `anomaly_scores.csv`, 度合いの決め方 "
-        "`anomaly_scorer.json`)"
+        "`anomaly_scorer.json` と前処理のレシピの写し `anomaly_recipe.yaml`)"
     )
 
     # 4. 推論
     lines += [
         "4. **推論** (ML-Inference, ML-Provide): ML-Inference の異常の度合い"
-        "の一式が, 実験の `anomaly_scorer.json` "
+        "の一式が, 実験の度合いの決め方 `anomaly_scorer.json` と前処理の"
+        "レシピの写し `anomaly_recipe.yaml` "
         + ("と, 学習した重みと写した定義 " if autoencoder else "")
-        + "とデータセットのレシピを読み, 新しい行の度合いを出す. 推論の 1 回"
+        + "を読み, 新しい行にレシピの前処理をかけて度合いを出す. 推論の 1 回"
         "で, 度合いの高い順に人が確かめる件数の上限 "
         f"({anomaly['capacity']} 件. config の `anomaly.capacity`) まで人の"
-        "確認に回す",
+        "確認に回す (受け渡しの推論の意思決定 `{type: triage, capacity}` "
+        "は, ML-Inference の異常の度合いの一式が読む形)",
         "", "`train.py` の印 (TODO) の所 (モデル) は書き足す. 問題の設定を"
         "変えたら, 書き出し直すか手で直す.", "",
     ]

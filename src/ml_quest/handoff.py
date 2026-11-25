@@ -342,6 +342,9 @@ def build_stages(problem: dict) -> dict:
     training.update(role=part["role"], target_kind=part["target_kind"])
     project = project_of(problem)
     if not is_column_part(problem):
+        # 異常の検知の自己符号化器は入力と同じ幅を出す (ML-EDA の
+        # model_inputs の outputs と同じく学習に使う列の数)
+        anomaly = anomaly_of(problem)
         stages = {
             "part": part,
             "data": {**column_data(problem, None),
@@ -351,7 +354,10 @@ def build_stages(problem: dict) -> dict:
                      **group_data(problem),
                      **anomaly_data(problem),
                      "project_dataset": project["dataset"]},
-            "model": {"task": None, "outputs": None, "role": part["role"],
+            "model": {"task": None,
+                      "outputs": (len(anomaly["columns"]) if anomaly
+                                  else None),
+                      "role": part["role"],
                       "target_kind": part["target_kind"],
                       "example": model_example(problem),
                       "project_model_spec": project["model_spec"]},
@@ -364,7 +370,7 @@ def build_stages(problem: dict) -> dict:
             "policy": policy_of(problem),
             "rank": rank_of(problem),
             "group": group_of(problem),
-            "anomaly": anomaly_of(problem),
+            "anomaly": anomaly,
             "project": {"path": project["path"]},
         }
         return stages
@@ -704,7 +710,7 @@ def whole(value: Any) -> Any:
     number: Any
         整数の値なら int, 他はそのまま
     """
-    # 4.0 は 4 に (真偽値は数にしない)
+    # 4.0 から 4 への直し (真偽値は対象外)
     number = (int(value) if isinstance(value, (int, float))
               and not isinstance(value, bool) and math.isfinite(value)
               and float(value).is_integer() else value)

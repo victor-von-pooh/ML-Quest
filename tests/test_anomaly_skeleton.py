@@ -236,7 +236,8 @@ def test_anomaly_questions() -> None:
     assert metrics[:3] == ["loss", "average_precision", "precision_at_k"]
     kinds = [item["value"] for item in by_id[f"{PART}.target.kind"]["choices"]]
     assert "anomaly" in kinds
-    assert ANOMALY_ASSIGNED == ("split", "score", "anomaly")
+    assert ANOMALY_ASSIGNED == ("split", "score", "anomaly", "rank",
+                                "column", "column_share")
 
     # 正解が無いと正解の列を問わず, 指標は損失だけ
     plain = anomaly_problem("none")
@@ -271,10 +272,11 @@ def test_anomaly_questions() -> None:
     stale = answer(problem, "information.columns", COLUMNS[:3] + COLUMNS[4:])
     assert any("current は使えるデータの列にありません" in item["message"]
                for item in check(stale))
-    named = answer(answer(problem, "information.columns",
-                          [*COLUMNS, "score"]), f"{PART}.anomaly.id", "score")
-    assert any("行ごとの度合いの表の列" in item["message"]
-               for item in check(named))
+    for name in ANOMALY_ASSIGNED:
+        named = answer(answer(problem, "information.columns",
+                              [*COLUMNS, name]), f"{PART}.anomaly.id", name)
+        assert any("行ごとの度合いの表の列" in item["message"]
+                   for item in check(named) if item["level"] == "error"), name
     rowid = answer(answer(problem, "information.columns",
                           [*COLUMNS, "row_id"]), f"{PART}.anomaly.id", None)
     assert any("row_id" in item["message"] for item in check(rowid)
@@ -314,6 +316,7 @@ def test_anomaly_handoff() -> None:
     assert data["drop"] == []
     assert (data["id"], data["unlabeled"]) == ("reading_id", "normal")
     assert stages["model"]["example"] == "tabular_autoencoder"
+    assert stages["model"]["outputs"] == 3
     assert (stages["training"]["monitor"], stages["training"]["mode"]) == (
         "valid/average_precision", "max"
     )
@@ -522,7 +525,14 @@ def test_anomaly_training(tmp_path: Path) -> None:
                if row["split"] == "train")
     scorer = json.loads((run / "anomaly_scorer.json")
                         .read_text(encoding="utf-8"))
+    assert scorer["format_version"] == 1
     assert scorer["score"] == "autoencoder"
+    assert (scorer["recipe"], scorer["scores"]) == (
+        "anomaly_recipe.yaml", "anomaly_scores.csv"
+    )
+    recipe = yaml.safe_load((run / "anomaly_recipe.yaml")
+                            .read_text(encoding="utf-8"))
+    assert recipe["task"] == "anomaly" and recipe["id"] == "reading_id"
     assert scorer["features"] == ["temp", "vibration", "current"]
     assert (scorer["id"], scorer["capacity"], scorer["k"]) == (
         "reading_id", 5, 5
@@ -624,3 +634,83 @@ def test_anomaly_unlabeled(tmp_path: Path) -> None:
     log = (run / "train.log").read_text(encoding="utf-8")
     assert "PlaceholderModel" not in log
     assert (run / "model_spec.yaml").is_file()
+
+
+def load_script(project: Path) -> dict:
+    """
+    書き出した train.py を, 実行せずに関数として読む関数
+
+    Parameters
+    ----------
+    project: Path
+        プロジェクトのディレクトリ
+
+    Returns
+    ----------
+    names: dict
+        train.py の名前 (main は呼ばない)
+    """
+    # __name__ が __main__ でないので main は動かない
+    for name in ("torch", "ml_eda", "ml_found"):
+        pytest.importorskip(name)
+    names: dict = {"__name__": "anomaly_train",
+                   "__file__": str(project / "train.py")}
+    code = (project / "train.py").read_text(encoding="utf-8")
+    exec(compile(code, str(project / "train.py"), "exec"), names)
+
+    return names
+
+
+def test_anomaly_functions(tmp_path: Path) -> None:
+    """
+    書き出した train.py の, 距離に基づく度合いの式と ridge の境界と, 上位の
+    行の要約の列を確かめる関数 (PyTorch と段階のライブラリが無ければ飛ばす)
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 手で書いた (x - 中心) P (x - 中心) / 列の数 との一致
+    np = pytest.importorskip("numpy")
+    project = tmp_path / "project"
+    make_project(anomaly_problem(score="distance"), project)
+    names = load_script(project)
+    rng = np.random.default_rng(1)
+    x = rng.normal(size=(40, 3)).astype(np.float32)
+    distance = names["fit_distance"](x, 0.01)
+    points = x.astype(np.float64)
+    center = points.mean(axis=0)
+    covariance = np.cov(points, rowvar=False) + np.eye(3) * 0.01
+    precision = np.linalg.inv(covariance)
+    assert np.allclose(distance["center"], center)
+    assert np.allclose(distance["precision"], precision)
+    expected = np.array([(row - center) @ precision @ (row - center) / 3
+                         for row in points])
+    scores = names["distance_parts"](x, distance).mean(axis=1)
+    assert np.allclose(scores, expected)
+
+    # 散らばりの無い列と, 列の数が行の数より多い表でも有限
+    flat = x.copy()
+    flat[:, 1] = 5.0
+    wide = rng.normal(size=(4, 10)).astype(np.float32)
+    for table in (flat, wide):
+        fitted = names["fit_distance"](table, 0.001)
+        parts = names["distance_parts"](table, fitted)
+        assert np.isfinite(parts).all()
+        assert (parts.sum(axis=1) >= -1e-6).all()
+
+    # 上位の行の要約は度合いの高い順で, 列の名前が重ならない
+    part = {"ids": np.array(["a", "b", "c"])}
+    rows = names["top_rows"](part, np.array([0.1, 0.9, 0.5]),
+                             np.array([[1.0, 0.0], [0.2, 0.8], [0.5, 0.5]]),
+                             "reading_id", ["temp", "vibration"], 2)
+    assert [row["reading_id"] for row in rows] == ["b", "c"]
+    assert rows[0] == {"rank": 1, "reading_id": "b", "score": 0.9,
+                       "column": "vibration",
+                       "column_share": pytest.approx(0.8)}
+    assert set(names["ASSIGNED_COLUMNS"]) == set(ANOMALY_ASSIGNED)

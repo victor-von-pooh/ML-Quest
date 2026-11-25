@@ -422,8 +422,8 @@ def anomaly_recipe(data: dict, notes: list) -> dict:
         ML-EDA の異常の検知の表のレシピ (task: anomaly. 正解の列と行の
         id の列は答えたときだけ. 正解の欠けた行は正常と見なす)
     """
-    # 度合いに使わない列を落とし, 数の列を標準化. 欠けた値と種類の列は
-    # データを見て決める
+    # 度合いに使わない列の削除と, 数の列の標準化 (欠けた値と種類の列の
+    # 扱いはデータの分析の段階)
     steps: list[dict] = []
     if data["drop"]:
         steps.append({"op": "drop_columns", "columns": list(data["drop"])})

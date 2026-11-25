@@ -54,8 +54,10 @@ ANOMALY_SCORES = [
      "(Mahalanobis 距離. 学習しない)"},
 ]
 
-# 異常の検知の行の id の列にできない名前 (行ごとの度合いの表の他の列)
-ANOMALY_ASSIGNED = ("split", "score", "anomaly")
+# 異常の検知の行の id の列にできない名前 (行ごとの度合いの表と, 上位の
+# 行の要約の他の列)
+ANOMALY_ASSIGNED = ("split", "score", "anomaly", "rank", "column",
+                    "column_share")
 
 # 予測するかまとめるで, 既製のモデルをそのまま使う場合だけの問い (一式
 # づくりに渡す値. まとめるは既製のモデルの埋め込みで群を作る)
@@ -751,8 +753,9 @@ QUESTIONS: list[dict[str, Any]] = [
      "required": False, "when": ANOMALY,
      "title": "行の id の列は (あれば)",
      "help": "人が確かめた結果の記録が 1 行を指すための列. 欠けも同じ値も"
-             "無い列. 度合いには使わない. split, score, anomaly の名前の列は"
-             "使えない. 無ければ空のまま (行の位置で指す). 例: reading_id"},
+             "無い列. 度合いには使わない. split, score, anomaly, rank, "
+             "column, column_share の名前の列は使えない. 無ければ空のまま "
+             "(行の位置で指す). 例: reading_id"},
     {"id": f"{PART}.anomaly.columns", "section": 5, "kind": "columns",
      "required": True, "when": ANOMALY,
      "title": "異常の度合いを出すのに使う列は",
