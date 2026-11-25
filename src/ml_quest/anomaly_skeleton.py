@@ -3,14 +3,14 @@ from string import Template
 from typing import Callable, Optional
 
 from ml_quest.handoff import describe
-from ml_quest.problem import active_value
+from ml_quest.problem import active_value, get_value
 from ml_quest.questions import ANOMALY_ASSIGNED, ANOMALY_SCORES, PART
 
 # 学習のスクリプトが読み込むライブラリの, ML-Found の登録簿の機能の名前
 # (データセットは ML-EDA で読む. 自己符号化器は config の model.spec の
-# 定義を置くと ML-ModelControl を読む)
-ANOMALY_LIBRARIES = {"autoencoder": ["eda", "modelcontrol"],
-                     "distance": ["eda"]}
+# 定義を置くと ML-ModelControl の読み込み. 推論の一式は ML-Inference)
+ANOMALY_LIBRARIES = {"autoencoder": ["eda", "modelcontrol", "inference"],
+                     "distance": ["eda", "inference"]}
 
 # データの分析の段階が書き出す, 異常の検知の表の場所 (プロジェクトの
 # ディレクトリから)
@@ -68,6 +68,14 @@ PREDICT = $predict
 ROLE = "predict"
 OUTPUT = "value"
 METHOD = $method
+
+# 元の表の読み方 (問題の設定の手元のデータの読み方. 推論の一式づくりが
+# ML-EDA の load_data に渡す. None は ML-EDA の推定)
+LOADER = $loader
+OPTIONS = $options
+
+# 推論の一式を作る場所 (実験のディレクトリの中)
+INFERENCE_DIR = "inference"
 
 # 度合いの決め方の名前
 SCORE_NAMES = $score_names
@@ -904,6 +912,85 @@ def write_results(
     (run_dir / SCORER_FILE).write_text(text + "\\n", encoding="utf-8")
 
 
+def make_inference(
+    cfg: Any, spec: Optional[Path], run_dir: Path, experiment: Experiment
+) -> None:
+    """
+    ML-Inference の異常の度合いの一式を, 実験の中の inference/ に作る関数
+
+    Parameters
+    ----------
+    cfg: Any
+        config (度合いの決め方, 元の表の場所, 一式の名前)
+    spec: Optional[Path]
+        ML-ModelControl の定義のファイル (自己符号化器. 無ければ None)
+    run_dir: Path
+        実験のディレクトリ (行ごとの度合いと度合いの決め方を書いた後)
+    experiment: Experiment
+        実験 (train.log に記録する)
+
+    Returns
+    ----------
+    None
+    """
+    # 定義が無い仮のモデルの一式の省略
+    autoencoder = cfg.anomaly.score == "autoencoder"
+    if autoencoder and spec is None:
+        experiment.logger.info(
+            "仮のモデル (PlaceholderModel) は ML-ModelControl の定義が無い"
+            "ので, 推論の一式を作りません. config の model.spec の場所に"
+            "定義を置くと, 学習の後に作ります"
+        )
+        return
+
+    # 定義を写せなかった実験の一式の省略 (一式は実験に写した定義を読む)
+    if autoencoder and experiment.model_spec_path is None:
+        experiment.logger.info(
+            "モデルの定義を実験に写せなかったので, 推論の一式を作りません "
+            "(理由は source.yaml の model_spec の status)"
+        )
+        return
+
+    # 元の表 (config の data.source) との度合いの比べ (元の表が無ければ
+    # 省略)
+    data = None
+    if cfg.data.source:
+        path = PROJECT_DIR / str(cfg.data.source)
+        data = path if path.is_file() else None
+    if data is None:
+        experiment.logger.info(
+            f"元の表 (config の data.source: {cfg.data.source}) が無いので,"
+            " 推論の一式の度合いを実験の度合いと比べません"
+        )
+
+    # 約束に合わない場合の ML-Inference の誤りの文の警告と, 学習の結果の
+    # 保存
+    from ml_inference import make_anomaly_bundle
+    options = {**OPTIONS, **({"loader": LOADER} if LOADER else {})}
+    try:
+        info = make_anomaly_bundle(
+            run_dir / INFERENCE_DIR, run_dir, name=cfg.experiment.name,
+            data=data, options=options if data is not None else None
+        )
+    except (ValueError, FileNotFoundError) as error:
+        experiment.logger.warning(
+            "成果物か定義が異常の度合いの一式の約束に合わないので, 推論の"
+            f"一式を作れません: {error}"
+        )
+        return
+    check = info["anomaly"]["check"]
+    compared = ("度合いは比べず" if check is None
+                else f"度合いの一致 {check['agreement'] * 100:.1f} % "
+                f"({check['rows']} 行. 差の最大 {check['max_diff']:.3g})")
+    experiment.logger.info(
+        f"推論の一式 (異常の度合い): {INFERENCE_DIR}/ ({compared}. 人の"
+        f"確認に回す件数の上限 {info['decision']['capacity']}. 版 "
+        f"{info['format_version']})"
+    )
+    for note in info["notes"]:
+        experiment.logger.warning(f"推論の一式の注意: {note}")
+
+
 def main() -> None:
     """
     学習用の正常の行から度合いの決め方を作り, 行ごとの度合いと評価と成果物
@@ -1018,6 +1105,9 @@ def main() -> None:
         f"(人が 1 回に確かめる件数の上限 {cfg.anomaly.capacity})"
     )
 
+    # 成果物から ML-Inference の推論の一式
+    make_inference(cfg, spec, run_dir, experiment)
+
 
 if __name__ == "__main__":
     main()
@@ -1035,6 +1125,9 @@ data:
   # ML-EDA の異常の検知の表 (task: anomaly. プロジェクトのディレクトリから.
   # 学習用は正常の行だけ)
   dataset: $dataset
+  # 入れた表の写し (プロジェクトのディレクトリから. 推論の一式づくりが
+  # 度合いを実験の度合いと比べる元の表. 入れていなければ null)
+  source: $source
   # 行のバッチの大きさ
   batch_size: 128
 
@@ -1098,10 +1191,13 @@ def anomaly_script(problem: dict, literal: Callable) -> str:
     script: str
         train.py の中身
     """
-    # 頭と学習の流れ
+    # 頭 (元の表の読み方は問題の設定の手元のデータの読み方) と学習の流れ
     names = {item["value"]: item["label"] for item in ANOMALY_SCORES}
+    options = get_value(problem, "data.options")
     head = Template(ANOMALY_HEAD).substitute(
         name=literal(str(problem.get("name", ""))),
+        loader=literal(get_value(problem, "data.loader")),
+        options=literal(options if isinstance(options, dict) else {}),
         predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         method=literal(active_value(problem, f"{PART}.method")),
         score_names=literal(names),
@@ -1119,7 +1215,7 @@ def anomaly_script(problem: dict, literal: Callable) -> str:
 
 def anomaly_config(
     experiment: str, stages: dict, dataset: str, requires: str,
-    spec_exists: bool = False
+    spec_exists: bool = False, source: Optional[str] = None
 ) -> str:
     """
     異常の検知の config の基準を作る関数
@@ -1137,6 +1233,9 @@ def anomaly_config(
     spec_exists: bool = False
         書き出し先に定義 (models/model.yaml) が既にあるか (あれば
         model.placeholder を書かない)
+    source: Optional[str] = None
+        写した表の場所 (プロジェクトのディレクトリから. 入れていなければ
+        None)
 
     Returns
     ----------
@@ -1159,6 +1258,7 @@ def anomaly_config(
         requires=requires, experiment=json.dumps(experiment,
                                                  ensure_ascii=False),
         training=middle, dataset=json.dumps(dataset, ensure_ascii=False),
+        source=json.dumps(source, ensure_ascii=False),
         score=json.dumps(anomaly["score"]), k=json.dumps(anomaly["k"]),
         capacity=json.dumps(anomaly["capacity"]), tail=tail,
     )
@@ -1228,8 +1328,8 @@ def anomaly_readme(
              else "異常の正解は無い (全ての行を正常と見なす)")
     key = (f"`{anomaly['id']}`" if anomaly["id"]
            else "行の位置 (`row_id`)")
-    libraries = ("ML-EDA, ML-Found, ML-ModelControl" if autoencoder
-                 else "ML-EDA, ML-Found")
+    libraries = ("ML-EDA, ML-Found, ML-ModelControl, ML-Inference"
+                 if autoencoder else "ML-EDA, ML-Found, ML-Inference")
     lines += [
         "", "## 次にすること", "",
         f"学習する環境には {libraries} を入れる (config の `requires` の"
@@ -1298,11 +1398,15 @@ def anomaly_readme(
 
     # 4. 推論
     lines += [
-        "4. **推論** (ML-Inference, ML-Provide): ML-Inference の異常の度合い"
-        "の一式が, 実験の度合いの決め方 `anomaly_scorer.json` と前処理の"
-        "レシピの写し `anomaly_recipe.yaml` "
+        "4. **推論** (ML-Inference, ML-Provide): 学習の後に, 実験の度合いの"
+        "決め方 `anomaly_scorer.json` と前処理のレシピの写し "
+        "`anomaly_recipe.yaml` "
         + ("と, 学習した重みと写した定義 " if autoencoder else "")
-        + "を読み, 新しい行にレシピの前処理をかけて度合いを出す. 推論の 1 回"
+        + "から, ML-Inference の異常の度合いの一式を実験の `inference/` に"
+        "作る (config の `data.source` の元の表があれば, 一式の度合いを"
+        "実験の度合いと比べて `train.log` に書く"
+        + (". 仮のモデルでは作らない" if autoencoder else "")
+        + "). 一式は新しい行にレシピの前処理をかけて度合いを出す. 推論の 1 回"
         "で, 度合いの高い順に人が確かめる件数の上限 "
         f"({anomaly['capacity']} 件. config の `anomaly.capacity`) まで人の"
         "確認に回す (受け渡しの推論の意思決定 `{type: triage, capacity}` "
