@@ -5,7 +5,7 @@ from typing import Any, Optional
 from ml_quest.check import (
     check, env_id_of, is_anomaly_part, is_column_part, is_generate_part,
     is_group_part, is_items_part, is_pretrained_part, is_rank_part,
-    is_ready_group_part, sha256_of, split_errors
+    is_ready_group_part, is_uplift_part, sha256_of, split_errors
 )
 from ml_quest.data import EXPORT_FUNCTIONS
 from ml_quest.problem import (
@@ -29,8 +29,9 @@ POLICY_KEYS = ["action_limits", "stop", "fallback", "fallback_action",
 DEFAULT_SAFETY_KEY = "cost"
 
 # 一から学習する受け持ちと正解の種類ごとの, モデルの作成の雛形
-# (ML-ModelControl の同梱の例の名前. 並べるとまとめるは正解の種類を問わない
-# ので None. 異常は度合いの決め方が自己符号化器のときだけ)
+# (ML-ModelControl の同梱の例の名前. 並べる, まとめる, 効果を見積もるは
+# 正解の種類を問わないので None. 異常は度合いの決め方が自己符号化器の
+# ときだけ. 効果を見積もるは方策でない効果の見積もりのときだけ)
 MODEL_EXAMPLES = {
     ("predict", "mask"): "unet_segmentation",
     ("predict", "anomaly"): "tabular_autoencoder",
@@ -38,6 +39,7 @@ MODEL_EXAMPLES = {
     ("generate", "table"): "diffusion_denoiser",
     ("rank", None): "two_tower_retrieval",
     ("group", None): "contrastive_encoder",
+    ("effect", None): "tabular_uplift",
 }
 
 # 選んで書く意思決定の項目 (値を名前にして文にする)
@@ -105,10 +107,13 @@ def model_example(problem: dict) -> Optional[str]:
            active_value(problem, f"{PART}.target.kind"))
     example = MODEL_EXAMPLES.get(key)
 
-    # 異常の検知の距離に基づく度合いはモデルを使わない
+    # 異常の検知の距離に基づく度合い (モデル無し) と, 方策の頭 (入力と出力
+    # が 1 つずつの約束が同梱の例と別の形) の雛形無し
     if is_anomaly_part(problem) and (
         active_value(problem, f"{PART}.anomaly.score") != "autoencoder"
     ):
+        example = None
+    if key[0] == "effect" and not is_uplift_part(problem):
         example = None
 
     return example
@@ -213,7 +218,8 @@ def handoff(problem: dict) -> dict:
         並べるで学習しなければ None), group (群を作る列, 群の数, 安定性の
         数え方. まとめるで学習しなければ None), anomaly (異常の検知の度合いの
         決め方, 列, 人が確かめる件数の上限. 異常の検知でなければ None),
-        project (書き出したプロジェクトの
+        uplift (効果の見積もりの処置, 結果, 列と上位の割合. 効果の見積もり
+        でなければ None), project (書き出したプロジェクトの
         path. データセットとモデルの定義の場所は data の project_dataset
         と model の project_model_spec. 記録が無ければ None)
 
@@ -343,8 +349,12 @@ def build_stages(problem: dict) -> dict:
     project = project_of(problem)
     if not is_column_part(problem):
         # 異常の検知の自己符号化器は入力と同じ幅を出す (ML-EDA の
-        # model_inputs の outputs と同じく学習に使う列の数)
+        # model_inputs の outputs と同じく学習に使う列の数). 効果の見積もり
+        # は出力の頭ごとに 1
         anomaly = anomaly_of(problem)
+        uplift = uplift_of(problem)
+        outputs = (len(anomaly["columns"]) if anomaly
+                   else 1 if uplift else None)
         stages = {
             "part": part,
             "data": {**column_data(problem, None),
@@ -353,16 +363,16 @@ def build_stages(problem: dict) -> dict:
                      **rank_data(problem),
                      **group_data(problem),
                      **anomaly_data(problem),
+                     **uplift_data(problem),
                      "project_dataset": project["dataset"]},
-            "model": {"task": None,
-                      "outputs": (len(anomaly["columns"]) if anomaly
-                                  else None),
+            "model": {"task": None, "outputs": outputs,
                       "role": part["role"],
                       "target_kind": part["target_kind"],
                       "example": model_example(problem),
                       "project_model_spec": project["model_spec"]},
             "training": training,
-            "inference": {"decision": anomaly_decision(problem),
+            "inference": {"decision": (anomaly_decision(problem)
+                                       or treat_decision(problem)),
                           "conclusion": {},
                           "horizon": None, "guard": None,
                           "ready": ready_of(problem)},
@@ -371,6 +381,7 @@ def build_stages(problem: dict) -> dict:
             "rank": rank_of(problem),
             "group": group_of(problem),
             "anomaly": anomaly,
+            "uplift": uplift,
             "project": {"path": project["path"]},
         }
         return stages
@@ -396,6 +407,7 @@ def build_stages(problem: dict) -> dict:
         "rank": None,
         "group": None,
         "anomaly": None,
+        "uplift": None,
         "project": {"path": project["path"]},
     }
 
@@ -772,6 +784,99 @@ def anomaly_decision(problem: dict) -> Optional[dict]:
     if anomaly is None:
         return None
     decision = {"type": "triage", "capacity": anomaly["capacity"]}
+
+    return decision
+
+
+def uplift_of(problem: dict) -> Optional[dict]:
+    """
+    効果の見積もりの処置, 結果, 列と, 評価の上位の割合をまとめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    uplift: Optional[dict]
+        treatment (処置の列), outcome (結果の列), outcome_kind (binary か
+        amount), id (行の id の列. 無ければ None), columns (見積もりに使う
+        列), k (上位 K 割の K) (効果の見積もりでなければ None)
+    """
+    # 効果の見積もりのときだけ (要らなくなった問いの古い答えは除外)
+    if not is_uplift_part(problem):
+        return None
+    uplift: dict[str, Any] = {
+        "treatment": active_value(problem, f"{PART}.uplift.treatment"),
+        "outcome": active_value(problem, f"{PART}.uplift.outcome"),
+        "outcome_kind": active_value(problem, f"{PART}.uplift.outcome_kind"),
+        "id": active_value(problem, f"{PART}.uplift.id"),
+        "columns": list(active_value(problem, f"{PART}.uplift.columns")
+                        or []),
+        "k": active_value(problem, f"{PART}.uplift.k"),
+    }
+
+    return uplift
+
+
+def uplift_data(problem: dict) -> dict:
+    """
+    効果の見積もりの, データの分析の段階に渡す値を作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    data: dict
+        target (結果の列), task (uplift), split (stratified), known
+        (見積もりに使う列), drop (他の使えるデータの列), id, treatment,
+        outcome_kind, unlabeled (drop) (効果の見積もりでなければ空)
+    """
+    # ML-EDA の介入の記録の表のレシピの値
+    data: dict = {}
+    uplift = uplift_of(problem)
+    if uplift is None:
+        return data
+    kept = [*uplift["columns"], uplift["treatment"], uplift["outcome"],
+            uplift["id"]]
+    columns = active_value(problem, "information.columns") or []
+    data = {
+        "target": uplift["outcome"], "task": "uplift",
+        "split": "stratified", "known": list(uplift["columns"]),
+        "drop": [name for name in columns if name not in kept],
+        "id": uplift["id"], "treatment": uplift["treatment"],
+        "outcome_kind": uplift["outcome_kind"], "unlabeled": "drop",
+    }
+
+    return data
+
+
+def treat_decision(problem: dict) -> Optional[dict]:
+    """
+    効果の見積もりの, 推論の段階の配る判断を作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    decision: Optional[dict]
+        type (treat) と budget (配る数の上限. 整数) だけの配る判断 (効果の
+        見積もりでないか, 配る判断でなければ None)
+    """
+    # 効果の上位から上限まで配る判断 (損得の値と当たりのクラスは無し)
+    raw = active_value(problem, "action.decision")
+    if not is_uplift_part(problem) or not isinstance(raw, dict) or (
+        raw.get("type") != "treat"
+    ):
+        return None
+    decision = {"type": "treat", "budget": whole(raw.get("budget"))}
 
     return decision
 
@@ -1331,6 +1436,8 @@ def decision_text(decision: dict) -> str:
     names = dict(FIELD_NAMES)
     if decision.get("effect_kind") == "uplift":
         names["effect"] = "確率の差"
+    if decision.get("type") == "treat":
+        names["budget"] = "配る数の上限"
     items: list[Any] = [
         f"{names.get(key, key)} " + number_text(
             OPTION_NAMES.get(value, value)

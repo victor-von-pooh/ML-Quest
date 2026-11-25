@@ -969,11 +969,18 @@ def test_decision_choices() -> None:
     ----------
     None
     """
-    # 欄は型ごとの損得の項目と選んで書く項目のちょうど全て
+    # 欄は型ごとの損得の項目と選んで書く項目のちょうど全て (列の予測は
+    # 配る判断の他, 効果の見積もりは配る判断だけ)
     problem = example_problem("解約の引き止め")
     item = next(q for q in questions(problem) if q["id"] == "action.decision")
     kinds = {choice["value"]: choice for choice in item["choices"]}
-    assert set(kinds) == set(DECISION_FIELDS)
+    assert set(kinds) == set(DECISION_FIELDS) - {"treat"}
+    effect = [("role", "effect"), ("collect", "log")]
+    for key, value in effect:
+        problem = answer(problem, f"ml.parts.0.{key}", value)
+    item = next(q for q in questions(problem) if q["id"] == "action.decision")
+    kinds |= {choice["value"]: choice for choice in item["choices"]}
+    assert [choice["value"] for choice in item["choices"]] == ["treat"]
     for kind, required in DECISION_FIELDS.items():
         fields = {field["key"]: field for field in kinds[kind]["fields"]}
         options = DECISION_OPTIONS.get(kind, {})

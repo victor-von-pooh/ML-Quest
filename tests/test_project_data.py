@@ -459,6 +459,9 @@ BLOCKING_IDS = {
     "ml.parts.0.group.stability", "ml.parts.0.anomaly.label",
     "ml.parts.0.anomaly.id", "ml.parts.0.anomaly.columns",
     "ml.parts.0.anomaly.score", "ml.parts.0.anomaly.capacity",
+    "ml.parts.0.uplift.treatment", "ml.parts.0.uplift.outcome",
+    "ml.parts.0.uplift.outcome_kind", "ml.parts.0.uplift.id",
+    "ml.parts.0.uplift.columns", "ml.parts.0.uplift.k",
 }
 
 

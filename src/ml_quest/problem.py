@@ -42,6 +42,7 @@ DECISION_FIELDS = {
     "triage": {"miss_cost": True, "false_alarm_cost": True,
                "capacity": False},
     "none": {},
+    "treat": {"budget": True},
 }
 
 # 意思決定の型ごとの, 選んで書く項目と選択肢 (ML-Inference の形). 対象を
@@ -79,6 +80,7 @@ FIELD_NAMES = {
 DECISION_NAMES = {
     "quantity": "量を決める", "select": "対象を選ぶ",
     "triage": "振り分ける", "none": "意思決定しない",
+    "treat": "効果の上位から配る",
 }
 
 
@@ -327,11 +329,15 @@ def applies(problem: dict, question: dict) -> bool:
         要るか (when の条件が無いか, 満たすか)
     """
     # 条件の並びの全てで, 項目の値が等しいか, 並びに入るか, 答えたか.
-    # any はその中のどれかを満たすか, none はどれも満たさないか
+    # any はその中のどれかを満たすか, none はどれも満たさないか, all は
+    # その中の全てを満たすか
     when = question.get("when") or []
     conditions = when if isinstance(when, list) else [when]
     needed = True
     for condition in conditions:
+        if "all" in condition:
+            needed = needed and applies(problem, {"when": condition["all"]})
+            continue
         if "any" in condition or "none" in condition:
             hit = any(applies(problem, {"when": [item]})
                       for item in condition.get("any", condition.get("none")))
