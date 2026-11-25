@@ -8,7 +8,7 @@ from ml_quest.questions import ANOMALY_ASSIGNED, ANOMALY_SCORES, PART
 
 # 学習のスクリプトが読み込むライブラリの, ML-Found の登録簿の機能の名前
 # (データセットは ML-EDA で読む. 自己符号化器は config の model.spec の
-# 定義を置くと ML-ModelControl を読む. 推論の一式は ML-Inference で作る)
+# 定義を置くと ML-ModelControl の読み込み. 推論の一式は ML-Inference)
 ANOMALY_LIBRARIES = {"autoencoder": ["eda", "modelcontrol", "inference"],
                      "distance": ["eda", "inference"]}
 
@@ -933,7 +933,7 @@ def make_inference(
     ----------
     None
     """
-    # 仮のモデルは ML-ModelControl の定義が無いので一式にできない
+    # 定義が無い仮のモデルの一式の省略
     autoencoder = cfg.anomaly.score == "autoencoder"
     if autoencoder and spec is None:
         experiment.logger.info(
@@ -943,7 +943,7 @@ def make_inference(
         )
         return
 
-    # 一式は実験に写した定義を読むので, 写せなかった実験は一式にしない
+    # 定義を写せなかった実験の一式の省略 (一式は実験に写した定義を読む)
     if autoencoder and experiment.model_spec_path is None:
         experiment.logger.info(
             "モデルの定義を実験に写せなかったので, 推論の一式を作りません "
@@ -951,8 +951,8 @@ def make_inference(
         )
         return
 
-    # 元の表 (config の data.source) があれば, 一式の度合いを実験の度合い
-    # と比べる
+    # 元の表 (config の data.source) との度合いの比べ (元の表が無ければ
+    # 省略)
     data = None
     if cfg.data.source:
         path = PROJECT_DIR / str(cfg.data.source)
@@ -963,8 +963,8 @@ def make_inference(
             " 推論の一式の度合いを実験の度合いと比べません"
         )
 
-    # 成果物か定義が約束に合わないときは, ML-Inference の誤りの文をその
-    # まま残し, 学習の結果は残す
+    # 約束に合わない場合の ML-Inference の誤りの文の警告と, 学習の結果の
+    # 保存
     from ml_inference import make_anomaly_bundle
     options = {**OPTIONS, **({"loader": LOADER} if LOADER else {})}
     try:
@@ -1126,7 +1126,7 @@ data:
   # 学習用は正常の行だけ)
   dataset: $dataset
   # 入れた表の写し (プロジェクトのディレクトリから. 推論の一式づくりが
-  # 度合いを実験の度合いと比べる元の表. 無ければ null で比べない)
+  # 度合いを実験の度合いと比べる元の表. 入れていなければ null)
   source: $source
   # 行のバッチの大きさ
   batch_size: 128
@@ -1328,8 +1328,8 @@ def anomaly_readme(
              else "異常の正解は無い (全ての行を正常と見なす)")
     key = (f"`{anomaly['id']}`" if anomaly["id"]
            else "行の位置 (`row_id`)")
-    libraries = ("ML-EDA, ML-Found, ML-ModelControl" if autoencoder
-                 else "ML-EDA, ML-Found")
+    libraries = ("ML-EDA, ML-Found, ML-ModelControl, ML-Inference"
+                 if autoencoder else "ML-EDA, ML-Found, ML-Inference")
     lines += [
         "", "## 次にすること", "",
         f"学習する環境には {libraries} を入れる (config の `requires` の"

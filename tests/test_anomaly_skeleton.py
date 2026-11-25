@@ -570,7 +570,7 @@ def test_anomaly_training(tmp_path: Path) -> None:
     assert len(scorer["distance"]["precision"]) == 3
     assert not (run / "final_model.pt").exists()
 
-    # 実験の中の推論の一式の度合いが, 行ごとの度合いの表と同じ
+    # 実験の中の推論の一式の度合いの確かめ
     check_inference(run, source, NORMAL + ANOMALIES)
 
 
@@ -645,7 +645,7 @@ def test_anomaly_unlabeled(tmp_path: Path) -> None:
     assert "PlaceholderModel" not in log
     assert (run / "model_spec.yaml").is_file()
 
-    # 定義のモデルの自己符号化器は, 学習の後に推論の一式を作る
+    # 定義のモデルの推論の一式の確かめ
     check_inference(run, source, NORMAL + ANOMALIES)
 
 
