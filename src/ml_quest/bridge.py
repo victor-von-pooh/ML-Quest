@@ -1017,8 +1017,9 @@ def apply_group(problem: dict, group: dict) -> dict:
     Raises
     ----------
     ValueError
-        まとめるで学習する受け持ちでない場合, 選び方の形の誤り, 書き戻した
-        後の問題の設定にまとめるの確かめの error がある場合
+        まとめるで学習する受け持ちでない場合, 選び方の形の誤り, 群を作る列,
+        群の数か数え方が空になる場合, 書き戻した後の問題の設定にまとめるの
+        確かめの error がある場合
     """
     # 受け持ちと選び方の形 (版 1 は先に移す)
     updated = copy.deepcopy(upgrade_problem(problem))
@@ -1029,13 +1030,16 @@ def apply_group(problem: dict, group: dict) -> dict:
         )
     chosen = checked_group(group)
 
-    # 書いた鍵ごとに答え直し (同じ値は文にしない)
+    # 書いた鍵ごとに答え直し. 空の文字列と空の要素だけの並びも答えの形に
+    # してから空を断る (行を見分ける列だけ外せる. 同じ値は文にしない)
     changes = []
     for key, value in chosen.items():
         place = f"{PART}.group.{key}"
         before = active_value(updated, place)
         updated = answer(updated, place, value)
         after = active_value(updated, place)
+        if after is None and key != "id":
+            raise ValueError(f"{GROUP_KEYS[key]}を空にはできません")
         if after == before:
             continue
         if after is None:
@@ -1080,7 +1084,7 @@ def checked_group(group: Any) -> dict:
     Raises
     ----------
     ValueError
-        辞書でない, 知らない鍵, 空の群を作る列, None の群の数か数え方
+        辞書でない, 知らない鍵, 真偽値の群の数
     """
     # 辞書で, 知っている鍵だけ
     if not isinstance(group, dict):
@@ -1092,14 +1096,11 @@ def checked_group(group: Any) -> dict:
             f"{', '.join(GROUP_KEYS)} のどれか)"
         )
 
-    # 要る答えは消さない (行を見分ける列だけ外せる)
+    # 群の数は真偽値でない整数 (要る答えの空は答えた後に見る)
     chosen = dict(group)
-    if "columns" in chosen and not chosen["columns"]:
-        raise ValueError("群を作る列を 1 つ以上選んでください")
-    for key in ("k", "stability"):
-        if key in chosen and chosen[key] is None:
-            raise ValueError(f"{GROUP_KEYS[key]}を空にはできません")
     k = chosen.get("k")
+    if isinstance(k, bool):
+        raise ValueError("群の数は 2 以上の整数で答えてください")
     if isinstance(k, float) and k.is_integer():
         chosen["k"] = int(k)
 

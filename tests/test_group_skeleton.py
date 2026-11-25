@@ -431,7 +431,10 @@ def test_apply_group_refuses() -> None:
     problem = group_problem()
     for group, words in (
         (["spend"], "辞書"), ({"size": 3}, "size"),
-        ({"columns": []}, "1 つ以上"), ({"k": None}, "群の数"),
+        ({"columns": []}, "群を作る列"), ({"columns": [""]}, "群を作る列"),
+        ({"columns": ["", None]}, "群を作る列"), ({"k": None}, "群の数"),
+        ({"k": ""}, "群の数"), ({"k": "  "}, "群の数"),
+        ({"k": True}, "2 以上の整数"), ({"stability": ""}, "数え方"),
         ({"stability": None}, "数え方"),
         ({"stability": "bootstrap"}, "stability"),
         ({"columns": ["spend", "price"]}, "price"),
