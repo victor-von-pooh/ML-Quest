@@ -56,10 +56,6 @@ from ml_quest.table_skeleton import (
     TABLE_LIBRARIES, table_config, table_readme, table_script
 )
 from ml_quest.questions import METRICS, OUTPUTS, PART
-from ml_quest.uplift_skeleton import (
-    UPLIFT_DATASET, UPLIFT_LIBRARIES, uplift_config, uplift_name,
-    uplift_readme, uplift_script
-)
 from ml_quest.ready_group_skeleton import (
     READY_GROUP_PHOTOS, ready_group_config, ready_group_message,
     ready_group_readme, ready_group_script
@@ -67,6 +63,10 @@ from ml_quest.ready_group_skeleton import (
 from ml_quest.ready_skeleton import (
     READY_CONFIG, READY_SCRIPT, ready_config, ready_message, ready_readme,
     ready_script
+)
+from ml_quest.uplift_skeleton import (
+    UPLIFT_DATASET, UPLIFT_LIBRARIES, uplift_config, uplift_name,
+    uplift_readme, uplift_script
 )
 
 # 学習のスクリプトの頭 (読み込みと, 問題の設定から決まる既定値). 答えの
@@ -1346,8 +1346,8 @@ def uplift_message(problem: dict) -> Optional[str]:
         誤りの文 (出力の形が行動ごとの差でない, 入れたデータが表でない.
         書き出せるなら None)
     """
-    # 介入の記録の表を読む. 指標は Qini の係数か損失 (方策の報酬は確かめ
-    # の error)
+    # 介入の記録の表 (指標は Qini の係数か損失. 方策の報酬は確かめの
+    # error)
     output = active_value(problem, f"{PART}.output")
     loader = active_value(problem, "data.loader")
     options = get_value(problem, "data.options")

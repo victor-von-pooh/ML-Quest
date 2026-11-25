@@ -389,3 +389,77 @@ def test_uplift_example_spec(tmp_path: Path) -> None:
     assert done.returncode == 1
     assert "定義の出力に control を入れてください" in done.stdout
     assert len(list((project / "outputs").glob("*/*/*/train.log"))) == 1
+
+
+def load_script(project: Path) -> object:
+    """
+    書き出した学習のスクリプトを, 動かさずにモジュールとして読む関数
+
+    Parameters
+    ----------
+    project: Path
+        プロジェクトのディレクトリ
+
+    Returns
+    ----------
+    module: object
+        train.py のモジュール (main は呼ばない)
+    """
+    # 名前を __main__ にしない読み込み
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "uplift_train", project / "train.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    return module
+
+
+def test_uplift_estimate(tmp_path: Path) -> None:
+    """
+    学習のスクリプトの estimate が, 0 と 1 はシグモイドの後の差, 量は
+    標準化を戻した値の差を返すことを数値で確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 決まった値を返すモデル (PyTorch と段階のライブラリが無ければ飛ばす)
+    for name in ("torch", "ml_eda", "ml_found"):
+        pytest.importorskip(name)
+    import math
+    import torch
+    make_project(uplift_problem(), tmp_path / "project")
+    script = load_script(tmp_path / "project")
+    model = script.PlaceholderModel(1, 2)
+    with torch.no_grad():
+        for branch, bias in ((model.treated, 1.0), (model.control, -0.5)):
+            for layer in branch:
+                if isinstance(layer, torch.nn.Linear):
+                    layer.weight.zero_()
+                    layer.bias.fill_(0.0)
+            branch[-1].bias.fill_(bias)
+    x = torch.zeros(3, 1)
+
+    # 0 と 1: ロジット 1 と -0.5 のシグモイドの差
+    found = script.estimate(model, x, {"outcome": "binary", "scale": None},
+                            2)
+    treated = 1 / (1 + math.exp(-1.0))
+    control = 1 / (1 + math.exp(0.5))
+    assert found["treated"] == pytest.approx([treated] * 3)
+    assert found["control"] == pytest.approx([control] * 3)
+    assert found["effect"] == pytest.approx([treated - control] * 3)
+
+    # 量: 予測 × std + mean に戻し, 効果は (1 − (−0.5)) × std
+    scale = {"mean": 10.0, "std": 4.0}
+    found = script.estimate(model, x, {"outcome": "amount", "scale": scale},
+                            2)
+    assert found["treated"] == pytest.approx([14.0] * 3)
+    assert found["control"] == pytest.approx([8.0] * 3)
+    assert found["effect"] == pytest.approx([6.0] * 3)

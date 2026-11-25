@@ -190,7 +190,7 @@ class UpliftTrainer(Trainer):
             処置の群の行は treated, 対照の群の行は control の損失の平均
             (loss)
         """
-        # 学習は学習しているモデル, 検証は評価のモデル (EMA があれば EMA)
+        # 学習のモデルと, 検証の評価のモデル (EMA があれば EMA)
         x, treatment, y = batch
         model = self.model if phase == "train" else self.eval_model()
         treated, control = predict(model, x)
@@ -322,7 +322,7 @@ def read_splits(dataset: Dataset) -> dict:
     ValueError
         数でない学習に使う列か, 欠けた値がある場合
     """
-    # 学習に使う列は数だけ (種類の列はデータの分析の段階で one_hot に)
+    # 学習に使う列 (数だけ. 種類の列の one_hot はデータの分析の段階)
     key = dataset.info["uplift"]["id"]
     splits = {}
     for split in dataset.frames:
