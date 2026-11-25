@@ -24,14 +24,40 @@ PART = "ml.parts.0"
 # 作り方が既製のモデルをそのまま (学習しない) か
 PRETRAINED = {"id": f"{PART}.method", "equals": "pretrained"}
 
-# 学習する場合だけの問い (最良を選ぶ指標)
-TRAINED = [USES_ML, {"none": [PRETRAINED]}]
+# 異常の検知の, 度合いの決め方が距離 (学習しない) か
+DISTANCE = [{"id": f"{PART}.role", "equals": "predict"},
+            {"id": f"{PART}.target.kind", "equals": "anomaly"},
+            {"id": f"{PART}.anomaly.score", "equals": "distance"}]
+
+# 学習する場合だけの問い (最良を選ぶ指標). 既製のモデルをそのまま使う場合
+# と, 異常の検知の距離に基づく度合いは学習しない
+TRAINED = [USES_ML, {"none": [PRETRAINED]},
+           {"any": [{"none": [item]} for item in DISTANCE]}]
 
 # 予測するで, 正解の種類が表の列 (列の予測) の場合だけの問い. 既製のモデル
 # をそのまま使う場合は学習もデータの分析もしないので含めない
 COLUMN_TARGET = [USES_ML, {"id": f"{PART}.role", "equals": "predict"},
                  {"id": f"{PART}.target.kind", "equals": "column"},
                  {"none": [PRETRAINED]}]
+
+# 異常の検知 (予測するで, 正解の種類が異常) の場合だけの問い. 既製の
+# モデルをそのまま使う場合は骨組みが無いので含めない
+ANOMALY = [USES_ML, {"id": f"{PART}.role", "equals": "predict"},
+           {"id": f"{PART}.target.kind", "equals": "anomaly"},
+           {"none": [PRETRAINED]}]
+
+# 異常の検知の度合いの決め方
+ANOMALY_SCORES = [
+    {"value": "autoencoder", "label": "正常の行だけで学ぶ自己符号化器の再構成"
+     "の誤差 (行ごとの二乗誤差の平均)"},
+    {"value": "distance", "label": "学習用の正常の行の中心からの距離 "
+     "(Mahalanobis 距離. 学習しない)"},
+]
+
+# 異常の検知の行の id の列にできない名前 (行ごとの度合いの表と, 上位の
+# 行の要約の他の列)
+ANOMALY_ASSIGNED = ("split", "score", "anomaly", "rank", "column",
+                    "column_share")
 
 # 予測するかまとめるで, 既製のモデルをそのまま使う場合だけの問い (一式
 # づくりに渡す値. まとめるは既製のモデルの埋め込みで群を作る)
@@ -196,6 +222,8 @@ TARGET_KINDS = [
     {"value": "text", "label": "文", "roles": ["predict", "generate"]},
     {"value": "image", "label": "画像", "roles": ["generate"]},
     {"value": "table", "label": "表 (合成のデータ)", "roles": ["generate"]},
+    {"value": "anomaly", "label": "異常か正常か (正常の行が多い表. 正解は"
+     "無いか少しだけ)", "roles": ["predict"]},
 ]
 
 # 作り方
@@ -232,12 +260,13 @@ GROUP = [USES_ML, {"id": f"{PART}.role", "equals": "group"},
 # の群分けも群の中心を作り直して数える)
 GROUP_ANY = [USES_ML, {"id": f"{PART}.role", "equals": "group"}]
 
-# 使えるデータの列を問う場合 (列の予測と, 並べるかまとめるで学習する場合)
+# 使えるデータの列を問う場合 (列の予測と異常の検知と, 並べるかまとめるで
+# 学習する場合)
 COLUMNS_ASKED = [USES_ML, {"none": [PRETRAINED]},
                  {"id": f"{PART}.role", "in": ["predict", "rank", "group"]},
                  {"any": [{"id": f"{PART}.role", "in": ["rank", "group"]},
                           {"id": f"{PART}.target.kind",
-                           "equals": "column"}]}]
+                           "in": ["column", "anomaly"]}]}]
 
 # 群の安定性の数え方 (作り直し方)
 GROUP_STABILITIES = [
@@ -342,8 +371,8 @@ TASKS = [
      "label": "時系列の予測 (時刻の順に, 過去の値から先の値)"},
 ]
 
-# 最良のモデルを選ぶ指標. fits は合う受け持ち, 正解の種類, タスクの組の
-# 並び (kinds と tasks が無ければ問わない). better は大きいほど良いか小さい
+# 最良のモデルを選ぶ指標. fits は合う受け持ち, 正解の種類, タスク, 正解の
+# 出どころの組の並び (kinds, tasks, sources が無ければ問わない). better は大きいほど良いか小さい
 # ほど良いか. tasks は版 1 の形 (列の予測のタスク). policy は続けて行動を
 # 選ぶ方策 (方策かの答え) だけに合う目印. loss は 3 つ (分類の交差
 # エントロピーと, 他の受け持ちの損失と, 評価のエピソードの報酬の和の平均の符号を反転した値.
@@ -373,7 +402,8 @@ METRICS = [
      "fits": [{"role": "effect", "policy": True}]},
     {"value": "loss", "label": "検証用の分割での損失 (小さいほど良い)",
      "better": "lower",
-     "fits": [{"role": "predict", "kinds": ["mask", "point_cloud", "text"]},
+     "fits": [{"role": "predict",
+               "kinds": ["mask", "point_cloud", "text", "anomaly"]},
               {"role": "generate"}, {"role": "rank"}, {"role": "group"},
               {"role": "effect", "policy": False}]},
     {"value": "loss", "label": "評価のエピソードの報酬の和の平均の符号を"
@@ -394,6 +424,13 @@ METRICS = [
      "の近さ (数の列は KS 統計量, 種類の列は全変動距離の列の平均. 小さい"
      "ほど良い)", "better": "lower",
      "fits": [{"role": "generate", "kinds": ["table"]}]},
+    {"value": "average_precision", "label": "度合いの順の異常の当たり (PR-AUC"
+     ". 大きいほど良い)", "better": "higher",
+     "fits": [{"role": "predict", "kinds": ["anomaly"], "sources": ["few"]}]},
+    {"value": "precision_at_k", "label": "度合いの上位 K 件 (人が確かめる"
+     "件数の上限) のうち異常の割合 (上位 K 件の適合率. 大きいほど良い)",
+     "better": "higher",
+     "fits": [{"role": "predict", "kinds": ["anomaly"], "sources": ["few"]}]},
     {"value": "recall_at_k", "label": "上位 K 件に正解が入る割合 (Recall@K"
      ". 大きいほど良い)", "better": "higher", "fits": [{"role": "rank"}]},
     {"value": "ndcg", "label": "順位の良さ (NDCG. 大きいほど良い)",
@@ -705,6 +742,32 @@ QUESTIONS: list[dict[str, Any]] = [
      "help": "作り直した群と元の群の一致 (調整ランド指数. 1 は同じ群, 0 は"
              "偶然と同じ) を数える. 作り直すと変わる群は, 人が解釈しても"
              "当てにならない"},
+    {"id": f"{PART}.anomaly.label", "section": 5, "kind": "column",
+     "required": True,
+     "when": [*ANOMALY, {"id": f"{PART}.target.source", "equals": "few"}],
+     "title": "異常の正解の列は",
+     "help": "異常の行は 1 か真, 正常の行は 0 か偽の列. 正解の無い行は空の"
+             "まま (正常と見なす). 異常の行にだけ印を付けた表でもよい. 例: "
+             "is_anomaly"},
+    {"id": f"{PART}.anomaly.id", "section": 5, "kind": "column",
+     "required": False, "when": ANOMALY,
+     "title": "行の id の列は (あれば)",
+     "help": "人が確かめた結果の記録が 1 行を指すための列. 欠けも同じ値も"
+             "無い列. 度合いには使わない. split, score, anomaly, rank, "
+             "column, column_share の名前の列は使えない. 無ければ空のまま "
+             "(行の位置で指す). 例: reading_id"},
+    {"id": f"{PART}.anomaly.columns", "section": 5, "kind": "columns",
+     "required": True, "when": ANOMALY,
+     "title": "異常の度合いを出すのに使う列は",
+     "help": "正常の行の値の組み合わせから外れたかを見る列 (センサの値, 取引"
+             "の額など). 正解の列と行の id の列は入れない"},
+    {"id": f"{PART}.anomaly.score", "section": 5, "kind": "choice",
+     "required": True, "when": ANOMALY, "choices": ANOMALY_SCORES,
+     "title": "異常の度合いを, どう出しますか",
+     "help": "自己符号化器は正常の行だけで行を縮めて戻すことを学び, うまく"
+             "戻せない行ほど異常とする (列の組み合わせの複雑な外れも見る). "
+             "距離は学習用の正常の行の中心と散らばりから, 遠い行ほど異常と"
+             "する (学習しないので速く, 列の少ない表で始めやすい)"},
     {"id": f"{PART}.task", "section": 5, "kind": "choice", "required": True,
      "when": COLUMN_TARGET, "choices": TASKS, "title": "どの種類の問題ですか",
      "help": "目的の値がクラスなら分類, 値なら回帰. 時刻の順に過去から先を"
@@ -809,6 +872,12 @@ QUESTIONS: list[dict[str, Any]] = [
              "当たり 1 件の価値, 行動 1 件の費用, 行動で防げる割合 (仮定), "
              "件数か費用の上限. 振り分ける: 見逃しの損と空振りの損, 回せる件数"
              ". 人が予測を見て決めるなら「意思決定しない」"},
+    {"id": f"{PART}.anomaly.capacity", "section": 7, "kind": "number",
+     "required": True, "when": ANOMALY,
+     "title": "人が 1 回に確かめられる件数の上限は (守る指標)",
+     "help": "推論の 1 回 (1 日分の記録など) で, 度合いの高い順に人の確認に"
+             "回す件数の上限 (1 以上の整数). これを超えて回すと確かめきれ"
+             "ない. 評価の上位 K 件の適合率もこの K で数える. 例: 20"},
     {"id": "action.current", "section": 7, "kind": "baseline",
      "required": False,
      "when": [*COLUMN_TARGET, {"id": "action.decision.type",

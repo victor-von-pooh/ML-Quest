@@ -390,8 +390,8 @@ def choices_of(problem: dict, question: dict) -> list[dict]:
 
 def choice_fits(problem: dict, choice: dict) -> bool:
     """
-    選択肢が今の答え (受け持ち, 正解の種類, タスク, 方策か) に合うかを
-    返す関数
+    選択肢が今の答え (受け持ち, 正解の種類, タスク, 正解の出どころ, 方策
+    か) に合うかを返す関数
 
     Parameters
     ----------
@@ -408,7 +408,8 @@ def choice_fits(problem: dict, choice: dict) -> bool:
     # 答えた項目だけでの比較
     answers = {"role": get_value(problem, f"{PART}.role"),
                "kinds": get_value(problem, f"{PART}.target.kind"),
-               "tasks": get_value(problem, f"{PART}.task")}
+               "tasks": get_value(problem, f"{PART}.task"),
+               "sources": get_value(problem, f"{PART}.target.source")}
     autonomous = get_value(problem, f"{PART}.autonomous")
     if "roles" in choice:
         fits = answers["role"] is None or answers["role"] in choice["roles"]
@@ -417,7 +418,8 @@ def choice_fits(problem: dict, choice: dict) -> bool:
         (answers["role"] is None or item.get("role") in (None,
                                                          answers["role"]))
         and all(answers[name] is None or name not in item
-                or answers[name] in item[name] for name in ("kinds", "tasks"))
+                or answers[name] in item[name]
+                for name in ("kinds", "tasks", "sources"))
         and ("policy" not in item or not isinstance(autonomous, bool)
              or autonomous is item["policy"])
         for item in choice["fits"]

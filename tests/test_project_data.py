@@ -456,7 +456,9 @@ BLOCKING_IDS = {
     "ml.parts.0.rank.user", "ml.parts.0.rank.item", "ml.parts.0.rank.time",
     "ml.parts.0.rank.reaction", "ml.parts.0.rank.k",
     "ml.parts.0.group.columns", "ml.parts.0.group.id", "ml.parts.0.group.k",
-    "ml.parts.0.group.stability",
+    "ml.parts.0.group.stability", "ml.parts.0.anomaly.label",
+    "ml.parts.0.anomaly.id", "ml.parts.0.anomaly.columns",
+    "ml.parts.0.anomaly.score", "ml.parts.0.anomaly.capacity",
 }
 
 

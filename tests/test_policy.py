@@ -115,7 +115,7 @@ def test_effect_without_new_answers() -> None:
     assert sample["requires"] == [] and sample["policy"] is None
     assert set(sample) == {"part", "data", "model", "training",
                            "inference", "requires", "policy", "rank",
-                           "group", "project"}
+                           "group", "anomaly", "project"}
 
 
 def test_policy_guards_handoff() -> None:
