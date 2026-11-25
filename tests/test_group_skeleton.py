@@ -11,8 +11,9 @@ import pytest
 import yaml
 
 from ml_quest import (
-    GROUP_TAKEN, answer, attach_data, check, describe, example_problem,
-    handoff, make_project, project_error, questions, record_project
+    GROUP_TAKEN, answer, apply_group, apply_recipe, attach_data, check,
+    describe, example_problem, handoff, make_project, project_error,
+    questions, record_project
 )
 
 # 受け持ちの場所
@@ -354,6 +355,118 @@ def test_group_errors(tmp_path: Path) -> None:
             make_project(problem, tmp_path / "project")
         assert str(raised.value) == message
     assert not (tmp_path / "project").exists()
+
+
+def test_apply_group(tmp_path: Path) -> None:
+    """
+    群の選び方を書き戻すと, 答え, 確かめ, 受け渡しと骨組みの config が
+    選んだ値と同じになり, 変えた点の文が残ることを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 全ての鍵を書き戻す (元は変えない. 群の数の 5.0 は 5)
+    problem = group_problem()
+    chosen = {"columns": ["visits", "region"], "id": "spend", "k": 5.0,
+              "stability": "sample"}
+    result = apply_group(problem, chosen)
+    assert problem["ml"]["parts"][0]["group"]["k"] == GROUPS
+    assert (result["conflicts"], result["choices"]) == ([], [])
+    updated = result["problem"]
+    assert updated["ml"]["parts"][0]["group"] == {
+        "columns": ["visits", "region"], "id": "spend", "k": 5,
+        "stability": "sample",
+    }
+    assert result["changes"] == [
+        "群を作る列を visits, region に書き戻した",
+        "行を見分ける列を spend に書き戻した", "群の数を 5 に書き戻した",
+        "群の安定性の数え方を sample に書き戻した",
+    ]
+    assert [item for item in check(updated) if item["level"] == "error"] == []
+    expected = {"columns": ["visits", "region"], "id": "spend", "k": 5,
+                "stability": "sample"}
+    assert handoff(updated)["group"] == expected
+    make_project(updated, tmp_path / "project")
+    config = yaml.safe_load(
+        (tmp_path / "project" / "configs" / "default" / "train.yaml")
+        .read_text(encoding="utf-8")
+    )
+    assert {key: config["group"][key] for key in expected} == expected
+
+    # 書いた鍵だけ. 同じ値は文にしない. id の None は外す
+    same = apply_group(problem, {"k": GROUPS, "id": None})
+    assert same["changes"] == ["行を見分ける列を外した"]
+    assert same["problem"]["ml"]["parts"][0]["group"]["k"] == GROUPS
+    assert handoff(same["problem"])["group"]["id"] is None
+    assert apply_group(problem, {})["changes"] == []
+
+    # 書き出したプロジェクトの記録があれば, 書き出し直しの案内を添える
+    recorded = record_project(problem, tmp_path / "project")
+    moved = apply_group(recorded, {"k": 4})
+    assert moved["changes"][0] == "群の数を 4 に書き戻した"
+    assert "書き出し直して" in moved["changes"][-1]
+    assert apply_group(recorded, {"k": GROUPS})["changes"] == []
+
+
+def test_apply_group_refuses() -> None:
+    """
+    群の選び方の形の誤りと, まとめるの確かめを通らない値と, まとめるで
+    学習しない受け持ちを断ることを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    # 形の誤り
+    problem = group_problem()
+    for group, words in (
+        (["spend"], "辞書"), ({"size": 3}, "size"),
+        ({"columns": []}, "1 つ以上"), ({"k": None}, "群の数"),
+        ({"stability": None}, "数え方"),
+        ({"stability": "bootstrap"}, "stability"),
+        ({"columns": ["spend", "price"]}, "price"),
+    ):
+        with pytest.raises(ValueError, match=words):
+            apply_group(problem, group)
+
+    # まとめるの確かめ (決まった名前, 重なり, 群の数) を通らない値
+    named = answer(problem, "information.columns", [*COLUMNS, *GROUP_TAKEN])
+    for group, words in (
+        ({"columns": ["spend", "share"]}, "群の要約"),
+        ({"id": "split"}, "割り当ての表"),
+        ({"id": "spend"}, "群を作るのに使う列にも"),
+        ({"k": 1}, "2 以上の整数"), ({"k": 2.5}, "2 以上の整数"),
+    ):
+        with pytest.raises(ValueError, match=words):
+            apply_group(named, group)
+
+    # 前から残る古い列の名前も, 選び方で直さなければ断る
+    stale = group_problem()
+    stale["information"]["columns"] = ["customer", "spend", "visits"]
+    with pytest.raises(ValueError, match="region"):
+        apply_group(stale, {"k": 4})
+    fixed = apply_group(stale, {"columns": ["spend", "visits"]})
+    assert fixed["problem"]["ml"]["parts"][0]["group"]["columns"] == [
+        "spend", "visits"
+    ]
+
+    # まとめるで学習しない受け持ちと, レシピの書き戻しの誤り
+    ready = answer(problem, f"{PART}.method", "pretrained")
+    for other in (ready, example_problem("総菜の作る量")):
+        with pytest.raises(ValueError, match="まとめるで学習する"):
+            apply_group(other, {"k": 4})
+    with pytest.raises(ValueError):
+        apply_recipe(problem, {"target": "spend"})
 
 
 def test_group_project(tmp_path: Path) -> None:

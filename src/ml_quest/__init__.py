@@ -1,4 +1,6 @@
-from ml_quest.bridge import apply_recipe, recipe_from, resolve_choice
+from ml_quest.bridge import (
+    apply_group, apply_recipe, recipe_from, resolve_choice
+)
 from ml_quest.check import check, is_column_part, is_items_part, is_ready
 from ml_quest.data import (
     COPY_NAME, attach_data, inspect_data, inspect_key, prune_copies
@@ -32,7 +34,7 @@ __all__ = [
     "METHODS", "METRICS", "MODEL_EXAMPLES", "OUTPUTS", "PART", "QUESTIONS",
     "ROLES", "SECTIONS", "SENSITIVITY_FIELDS", "SPLITS",
     "TARGET_KINDS", "TARGET_SOURCES", "TASKS", "UNITS", "active_value",
-    "answer", "apply_recipe", "attach_data", "check",
+    "answer", "apply_group", "apply_recipe", "attach_data", "check",
     "decision_sensitivity", "decision_text", "describe", "example_problem",
     "get_value", "handoff", "inspect_data", "inspect_key", "is_column_part",
     "is_items_part", "is_ready", "load_problem", "make_project",

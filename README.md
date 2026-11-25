@@ -17,7 +17,7 @@
 | 相手 | 使うもの |
 | --- | --- |
 | [ML-Pathfinder](https://github.com/victor-von-pooh/ML-Pathfinder) (問題の設定) | 問い (`questions`, `answer`), 確かめ (`check`), 要約 (`describe`), データの候補 (`attach_data`, `inspect_data`), 損得の値の幅 (`decision_sensitivity`), 骨組みの書き出し (`make_project`, `record_project`), 見本 (`example_problem`) |
-| ML-Fathom (データの分析) | データの分析の受け渡しの値 (`handoff`), レシピの下書きと書き戻し (`recipe_from`, `apply_recipe`) |
+| ML-Fathom (データの分析) | データの分析の受け渡しの値 (`handoff`), レシピの下書きと書き戻し (`recipe_from`, `apply_recipe`), 群の選び方の書き戻し (`apply_group`) |
 | ML-CreateArchitecture (モデルの作成) | モデルの作成の受け渡しの値 (出力の大きさ, 受け持ちに合う雛形 `example`. `model_example` でも求まる), プロジェクトのモデルの定義の置き場 |
 | ML-Dashboard (学習・評価) | 学習・評価の受け渡しの値 (骨組みの外の学習でも使う監視する指標と向き), 要る機能, 書き出した骨組みのプロジェクト |
 | ML-Provide (推論) | 損得と制約 (文は `decision_text`), 今のやり方, 元の問題の設定の場所 (`problem_origin`), 書き出したプロジェクトの記録 (`project_of`), 要る問いの答え (`active_value`) |
@@ -99,6 +99,16 @@ result = apply_recipe(problem, recipe)   # 目的の列とタスクを書き戻�
 ```
 
 予測するで正解の種類が画像の領域か点群の受け持ちでは, `recipe_from` は ML-EDA のファイルの組の書き出し (`export_image_masks`, `export_capture_clouds`) の設定の下書き (入力と正解のディレクトリ, 分割, グループ, 正解の出どころ, 他の引数) を `export` で返し, `apply_recipe` はその設定を受け取って問題の設定に書き戻す. 他の引数 (`options`) には中身の手順 (`item_steps`. `{"image": [{"op": "resize", "width": 64, "height": 64}]}` など) も持てる. 手順を渡すと ML-EDA はデータセットを版 3 で書くので, 書き戻した設定から同じデータセットを作り直せる.
+
+まとめるで学習する受け持ちでは, 群分けのタブで変えた選び方を `apply_group` で書き戻す:
+
+```python
+from ml_quest import apply_group
+
+result = apply_group(problem, {"columns": ["spend", "visits"], "k": 5})   # 書いた鍵だけを ml.parts.<n>.group に書き戻し, 変えた点の文を返す
+```
+
+鍵は `columns`, `id`, `k`, `stability` (受け渡しの `group` と同じ形). 書き戻した後の問題の設定がまとめるの確かめ (使えるデータの列, 列の名前の決まり `GROUP_TAKEN` と `GROUP_ASSIGNED`, 群の数) を通らなければ, 書き戻さずに誤り (`ValueError`) にする.
 
 要る機能 (強化学習, MuJoCo, ROS2, CUDA) は答えの途中でも出せる. 名前は ML-Found の登録簿 (`describe_requirements`) と同じなので, 画面は入れ方のカードを早めに出せる.
 
