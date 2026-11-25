@@ -424,9 +424,11 @@ def test_anomaly_project(tmp_path: Path) -> None:
     assert all(len(line) <= 79 for line in script.splitlines())
     config = yaml.safe_load((project / "configs" / "default" / "train.yaml")
                             .read_text(encoding="utf-8"))
-    assert config["requires"] == ["eda", "modelcontrol"]
+    assert config["requires"] == ["eda", "modelcontrol", "inference"]
     assert config["trainer"]["monitor"] == "valid/average_precision"
     assert config["data"]["dataset"] == "outputs/dataset"
+    assert config["data"]["source"] is None
+    assert "LOADER = None" in script and "OPTIONS = {}" in script
     assert config["anomaly"] == {"score": "autoencoder", "k": 5,
                                  "capacity": 5}
     assert config["model"]["placeholder"] is True
@@ -445,7 +447,7 @@ def test_anomaly_project(tmp_path: Path) -> None:
     make_project(anomaly_problem("none", "distance"), other)
     config = yaml.safe_load((other / "configs" / "default" / "train.yaml")
                             .read_text(encoding="utf-8"))
-    assert config["requires"] == ["eda"]
+    assert config["requires"] == ["eda", "inference"]
     assert "trainer" not in config and "model" not in config
     assert config["anomaly"]["ridge"] == 0.001
     readme = (other / "README.md").read_text(encoding="utf-8")
@@ -494,6 +496,11 @@ def test_anomaly_training(tmp_path: Path) -> None:
     run = only_run(project)
     log = (run / "train.log").read_text(encoding="utf-8")
     assert "仮のモデル (PlaceholderModel) で学習します" in log
+    assert "推論の一式を作りません" in log
+    assert not (run / "inference").exists()
+    config = yaml.safe_load((project / "configs" / "default" / "train.yaml")
+                            .read_text(encoding="utf-8"))
+    assert config["data"]["source"] == "data/readings.csv"
     assert "異常の度合い: 機械の異常の度合い" in log
     assert "学習に使う列: 3" in log
 
@@ -562,6 +569,9 @@ def test_anomaly_training(tmp_path: Path) -> None:
     assert len(scorer["distance"]["center"]) == 3
     assert len(scorer["distance"]["precision"]) == 3
     assert not (run / "final_model.pt").exists()
+
+    # 実験の中の推論の一式の度合いが, 行ごとの度合いの表と同じ
+    check_inference(run, source, NORMAL + ANOMALIES)
 
 
 def test_anomaly_unlabeled(tmp_path: Path) -> None:
@@ -634,6 +644,46 @@ def test_anomaly_unlabeled(tmp_path: Path) -> None:
     log = (run / "train.log").read_text(encoding="utf-8")
     assert "PlaceholderModel" not in log
     assert (run / "model_spec.yaml").is_file()
+
+    # 定義のモデルの自己符号化器は, 学習の後に推論の一式を作る
+    check_inference(run, source, NORMAL + ANOMALIES)
+
+
+def check_inference(run: Path, source: Path, rows: int) -> None:
+    """
+    推論の一式の度合いが実験の度合いと同じかを確かめる関数
+
+    Parameters
+    ----------
+    run: Path
+        実験のディレクトリ
+    source: Path
+        元の表の CSV
+    rows: int
+        元の表の行の数
+
+    Returns
+    ----------
+    None
+    """
+    # 一式づくりの比べと, 元の表を一式で推論した度合い
+    inference = pytest.importorskip("ml_inference")
+    log = (run / "train.log").read_text(encoding="utf-8")
+    assert "推論の一式 (異常の度合い): inference/ (度合いの一致 100.0 %" in log
+    bundle = inference.load_bundle(run / "inference")
+    assert bundle.info["format_version"] == 11
+    assert bundle.info["decision"] == {"type": "triage", "capacity": 5}
+    assert bundle.info["anomaly"]["check"]["rows"] == rows
+    pd = pytest.importorskip("pandas")
+    frame = inference.predict(bundle, source)
+    scores = pd.read_csv(run / "anomaly_scores.csv",
+                         dtype={"reading_id": str})
+    found = frame.set_index("reading_id")["score"]
+    recorded = scores.set_index("reading_id")["score"]
+    gap = (found.loc[recorded.index] - recorded).abs()
+    assert float(gap.max()) <= 1e-6 + 1e-4 * float(recorded.abs().max())
+    result = inference.infer(bundle, source)
+    assert int(result["frame"]["action"].sum()) == 5
 
 
 def load_script(project: Path) -> dict:

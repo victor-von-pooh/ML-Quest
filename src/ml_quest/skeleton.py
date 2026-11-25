@@ -1632,7 +1632,8 @@ def project_files(
             ),
             "configs/default/train.yaml": anomaly_config(
                 experiment_name(problem, name), stages, ANOMALY_DATASET,
-                requires_text(ANOMALY_LIBRARIES[score], stages), spec_exists
+                requires_text(ANOMALY_LIBRARIES[score], stages), spec_exists,
+                data_file.as_posix() if data_file else None
             ),
             "train.py": anomaly_script(problem, literal),
         }
