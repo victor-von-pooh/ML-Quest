@@ -21,7 +21,8 @@ from ml_quest.baseline_skeleton import (
 from ml_quest.check import (
     choice_label, is_anomaly_part, is_column_part, is_generate_part,
     is_group_part,
-    is_policy_part, is_rank_part, is_ready_group_part, split_errors
+    is_policy_part, is_rank_part, is_ready_group_part, is_uplift_part,
+    split_errors
 )
 from ml_quest.data import (
     ITEMS_KINDS, TABLE_LOADERS, content_kind, copy_data, dataset_info,
@@ -55,6 +56,10 @@ from ml_quest.table_skeleton import (
     TABLE_LIBRARIES, table_config, table_readme, table_script
 )
 from ml_quest.questions import METRICS, OUTPUTS, PART
+from ml_quest.uplift_skeleton import (
+    UPLIFT_DATASET, UPLIFT_LIBRARIES, uplift_config, uplift_name,
+    uplift_readme, uplift_script
+)
 from ml_quest.ready_group_skeleton import (
     READY_GROUP_PHOTOS, ready_group_config, ready_group_message,
     ready_group_readme, ready_group_script
@@ -821,6 +826,7 @@ def experiment_name(problem: dict, name: Optional[str]) -> str:
                else rank_name(problem) if is_rank_part(problem)
                else group_name(problem) if is_group_part(problem)
                else anomaly_name(problem) if is_anomaly_part(problem)
+               else uplift_name(problem) if is_uplift_part(problem)
                else items_name(problem))
     raw = name or default
     text = re.sub(r"[^\w-]+", "_", raw).strip("_") or "problem"
@@ -1094,29 +1100,33 @@ def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
                    else ready_message(upgraded))
         return message, exportable
 
-    # 列の予測と, 予測するの画像の領域と点群と, 作るの画像と表と, 並べる
-    # と, まとめると, 効果を見積もるの方策だけ
+    # 列の予測と, 予測するの画像の領域と点群と異常と, 作るの画像と表と,
+    # 並べると, まとめると, 効果を見積もるの方策と今ある記録からの効果の
+    # 見積もりだけ
     generate = is_generate_part(upgraded)
     policy = is_policy_part(upgraded)
     rank = is_rank_part(upgraded)
     group = is_group_part(upgraded)
     anomaly = is_anomaly_part(upgraded)
+    uplift = is_uplift_part(upgraded)
     if not is_column_part(upgraded) and skeleton_kind(upgraded) is None and (
         not generate and not policy and not rank and not group
-        and not anomaly
+        and not anomaly and not uplift
     ):
         message = ("骨組みを書き出せるのは, 予測するで正解の種類が表の列, "
                    "画像の領域, 点群, 異常の場合と, 作るで正解の種類が画像か表の場合"
                    "と, 並べるとまとめるの場合と, 効果を見積もるで続けて行動を"
-                   "選ぶ方策の場合と, 予測するで既製のモデルをそのまま使う画像"
-                   "の分類の場合だけです (方策でない効果の見積もりと, 他の正解"
-                   "の種類はまだ扱えません)")
+                   "選ぶ方策か今ある記録から効果を見積もる場合と, 予測するで"
+                   "既製のモデルをそのまま使う画像の分類の場合だけです (方策で"
+                   "なく試して集める効果の見積もりと, 他の正解の種類はまだ扱え"
+                   "ません)")
         return message, exportable
-    if generate or policy or rank or group or anomaly:
+    if generate or policy or rank or group or anomaly or uplift:
         message = (policy_message(upgraded) if policy
                    else rank_message(upgraded) if rank
                    else group_message(upgraded) if group
                    else anomaly_message(upgraded) if anomaly
+                   else uplift_message(upgraded) if uplift
                    else table_message(upgraded)
                    if active_value(upgraded, f"{PART}.target.kind") == "table"
                    else generate_message(upgraded))
@@ -1317,6 +1327,42 @@ def anomaly_message(problem: dict) -> Optional[str]:
                    f"(入れたデータ {Path(str(source)).name} は表として読んで"
                    "いません). 度合いに使う列を持つ表のファイル (CSV, Parquet "
                    "など) を入れてください")
+
+    return message
+
+
+def uplift_message(problem: dict) -> Optional[str]:
+    """
+    効果の見積もりの骨組みを書き出せない理由を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 効果の見積もり)
+
+    Returns
+    ----------
+    message: Optional[str]
+        誤りの文 (出力の形が行動ごとの差でない, 入れたデータが表でない.
+        書き出せるなら None)
+    """
+    # 介入の記録の表を読む. 指標は Qini の係数か損失 (方策の報酬は確かめ
+    # の error)
+    output = active_value(problem, f"{PART}.output")
+    loader = active_value(problem, "data.loader")
+    options = get_value(problem, "data.options")
+    source = get_value(problem, "data.source")
+    text = isinstance(options, dict) and options.get("text_column")
+    message = None
+    if output != "effect":
+        message = ("効果の見積もりの骨組みは, 出力の形が「行動ごとの差」の"
+                   "場合だけです (今は"
+                   f"{choice_label(OUTPUTS, output, problem)})")
+    elif source and (loader not in TABLE_LOADERS or text):
+        message = ("効果の見積もりの骨組みは, 過去に行動した記録の表で効果を"
+                   f"見積もります (入れたデータ {Path(str(source)).name} は表"
+                   "として読んでいません). 処置の列と結果の列を持つ表のファイル"
+                   " (CSV, Parquet など) を入れてください")
 
     return message
 
@@ -1636,6 +1682,23 @@ def project_files(
                 data_file.as_posix() if data_file else None
             ),
             "train.py": anomaly_script(problem, literal),
+        }
+        return files
+
+    # 効果の見積もり (入れた表は data に写し, 介入の記録の表はデータの分析の
+    # 段階が outputs/dataset に書き出す)
+    if is_uplift_part(problem):
+        files = {
+            "README.md": uplift_readme(
+                problem, stages, UPLIFT_DATASET,
+                data_file.as_posix() if data_file else None
+            ),
+            "configs/default/train.yaml": uplift_config(
+                experiment_name(problem, name), stages, UPLIFT_DATASET,
+                requires_text(UPLIFT_LIBRARIES, stages), spec_exists,
+                data_file.as_posix() if data_file else None
+            ),
+            "train.py": uplift_script(problem, literal),
         }
         return files
 
