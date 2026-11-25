@@ -870,7 +870,7 @@ def treat_decision(problem: dict) -> Optional[dict]:
         type (treat) と budget (配る数の上限. 整数) だけの配る判断 (効果の
         見積もりでないか, 配る判断でなければ None)
     """
-    # 効果の上位から上限まで配る (損得の値と当たりのクラスは持たない)
+    # 効果の上位から上限まで配る判断 (損得の値と当たりのクラスは無し)
     raw = active_value(problem, "action.decision")
     if not is_uplift_part(problem) or not isinstance(raw, dict) or (
         raw.get("type") != "treat"

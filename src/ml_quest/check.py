@@ -1665,7 +1665,7 @@ def check_uplift(problem: dict) -> list[dict]:
     # 配る判断の型と, 配る数の上限 (1 以上の整数)
     found += treat_findings(problem)
 
-    # 方策の報酬は環境の評価のエピソードの値で, 記録からは数えない
+    # 方策の報酬は環境の評価のエピソードの値で, 記録からは数えない値
     if active_value(problem, f"{PART}.evaluation.metric") == "reward":
         found.append(finding(
             "error", f"{PART}.evaluation.metric",

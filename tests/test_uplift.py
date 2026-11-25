@@ -105,7 +105,7 @@ def test_uplift_questions() -> None:
     assert not items["action.basis"]["applies"]
     assert not items["action.current"]["applies"]
 
-    # 方策, 試して集める, 既製のモデルでは問わない
+    # 方策, 試して集める, 既製のモデルで問わないことの確認
     for key, value in (("autonomous", True), ("collect", "online"),
                        ("method", "pretrained")):
         other = answer(problem, f"{PART}.{key}", value)
@@ -113,7 +113,7 @@ def test_uplift_questions() -> None:
         assert not items[f"{PART}.uplift.treatment"]["applies"]
         assert not items["action.decision"]["applies"]
 
-    # 列の予測の選択肢には配る判断が無い
+    # 列の予測の選択肢の配る判断の無いこと
     column = example_problem("解約の引き止め")
     items = {item["id"]: item for item in questions(column)}
     assert "treat" not in [c["value"]
@@ -133,7 +133,7 @@ def test_uplift_check() -> None:
     ----------
     None
     """
-    # 0 と 1 も額も通る
+    # 0 と 1 も額も通ることの確認
     assert errors_of(uplift_problem()) == []
     assert errors_of(uplift_problem("amount")) == []
 
@@ -179,7 +179,7 @@ def test_uplift_check() -> None:
     problem["action"]["decision"]["capacity"] = 3
     assert "action.decision" in errors_of(problem)
 
-    # 列の予測に配る判断は書けない
+    # 列の予測の配る判断の誤り
     column = answer(example_problem("解約の引き止め"), "action.decision",
                     {"type": "treat", "budget": 10})
     assert "action.decision" in errors_of(column)
@@ -239,7 +239,7 @@ def test_uplift_handoff() -> None:
         uplift_problem()
     )
 
-    # 方策と一から学習しない場合は雛形を返さない
+    # 方策と一から学習しない場合の雛形無し
     policy = answer(uplift_problem(), f"{PART}.autonomous", True)
     assert model_example(policy) is None
     tuned = answer(uplift_problem(), f"{PART}.method", "finetune")
