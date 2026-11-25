@@ -3,10 +3,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ml_quest.check import (
-    finding, is_column_part, is_generate_part, is_items_part, is_policy_part
+    check_group, finding, is_column_part, is_generate_part, is_group_part,
+    is_items_part, is_policy_part
 )
 from ml_quest.data import EXPORT_FUNCTIONS, ITEMS_LOADER, PAIR_NAMES
-from ml_quest.handoff import export_split, export_stages
+from ml_quest.handoff import export_split, export_stages, project_of
 from ml_quest.problem import (
     active_value, answer, data_location, get_value, set_value,
     upgrade_problem
@@ -48,6 +49,10 @@ STEP_ENTRIES = {
     "export_image_masks": ("image",),
     "export_capture_clouds": ("capture", "cloud"),
 }
+
+# 群の選び方の鍵と, 変えた点の文に使う名前 (受け渡しの group と同じ鍵)
+GROUP_KEYS = {"columns": "群を作る列", "id": "行を見分ける列",
+              "k": "群の数", "stability": "群の安定性の数え方"}
 
 
 def require_column_part(problem: dict, purpose: str) -> None:
@@ -986,3 +991,117 @@ def without_column(steps: list, column: str) -> list:
         kept.append(step)
 
     return kept
+
+
+def apply_group(problem: dict, group: dict) -> dict:
+    """
+    データの分析の段階で変えた群の選び方を問題の設定に書き戻す関数
+
+    書いた鍵だけを ml.parts.<n>.group の答えに書き戻す. 書き戻した後の
+    問題の設定がまとめるの確かめを通らなければ断る
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (まとめるで学習する受け持ち)
+    group: dict
+        選び方 (columns, id, k, stability のうち変えるもの. 受け渡しの
+        group と同じ形. id の None は行を見分ける列を外す)
+
+    Returns
+    ----------
+    result: dict
+        problem (書き戻した問題の設定 (版 2)), changes (変えた点の文),
+        conflicts と choices (いつも空)
+
+    Raises
+    ----------
+    ValueError
+        まとめるで学習する受け持ちでない場合, 選び方の形の誤り, 群を作る列,
+        群の数か数え方が空になる場合, 書き戻した後の問題の設定にまとめるの
+        確かめの error がある場合
+    """
+    # 受け持ちと選び方の形 (版 1 は先に移す)
+    updated = copy.deepcopy(upgrade_problem(problem))
+    if not is_group_part(updated):
+        raise ValueError(
+            "群の選び方の書き戻しは, まとめるで学習する受け持ち (作り方が既"
+            "製のモデルをそのままでない) の場合だけです"
+        )
+    chosen = checked_group(group)
+
+    # 書いた鍵ごとに答え直し. 空の文字列と空の要素だけの並びも答えの形に
+    # してから空を断る (行を見分ける列だけ外せる. 同じ値は文にしない)
+    changes = []
+    for key, value in chosen.items():
+        place = f"{PART}.group.{key}"
+        before = active_value(updated, place)
+        updated = answer(updated, place, value)
+        after = active_value(updated, place)
+        if after is None and key != "id":
+            raise ValueError(f"{GROUP_KEYS[key]}を空にはできません")
+        if after == before:
+            continue
+        if after is None:
+            changes.append(f"{GROUP_KEYS[key]}を外した")
+        else:
+            shown = ", ".join(after) if key == "columns" else after
+            changes.append(f"{GROUP_KEYS[key]}を {shown} に書き戻した")
+
+    # まとめるの確かめを通らなければ断る (元の問題の設定は変えない)
+    errors = [item["message"] for item in check_group(updated)
+              if item["level"] == "error"]
+    if errors:
+        raise ValueError("群の選び方を書き戻せません: " + " ".join(
+            message if message.endswith(".") else f"{message}."
+            for message in errors
+        ))
+
+    # 書き出したプロジェクトの config は変わらないので書き出し直しの案内
+    if changes and project_of(updated)["path"]:
+        changes.append("書き出したプロジェクトの config の group は変わらない"
+                       "ので, 骨組みを書き出し直してください")
+    result = {"problem": updated, "changes": changes, "conflicts": [],
+              "choices": []}
+
+    return result
+
+
+def checked_group(group: Any) -> dict:
+    """
+    群の選び方の形を確かめる関数
+
+    Parameters
+    ----------
+    group: Any
+        選び方
+
+    Returns
+    ----------
+    chosen: dict
+        書いた鍵の値 (群の数の整数の値の小数は整数に)
+
+    Raises
+    ----------
+    ValueError
+        辞書でない, 知らない鍵, 真偽値の群の数
+    """
+    # 辞書で, 知っている鍵だけ
+    if not isinstance(group, dict):
+        raise ValueError("群の選び方は辞書で渡してください")
+    unknown = [str(key) for key in group if key not in GROUP_KEYS]
+    if unknown:
+        raise ValueError(
+            f"群の選び方の {', '.join(unknown)} という鍵はありません ("
+            f"{', '.join(GROUP_KEYS)} のどれか)"
+        )
+
+    # 群の数は真偽値でない整数 (要る答えの空は答えた後に見る)
+    chosen = dict(group)
+    k = chosen.get("k")
+    if isinstance(k, bool):
+        raise ValueError("群の数は 2 以上の整数で答えてください")
+    if isinstance(k, float) and k.is_integer():
+        chosen["k"] = int(k)
+
+    return chosen
