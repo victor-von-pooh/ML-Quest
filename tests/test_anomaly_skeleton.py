@@ -616,6 +616,7 @@ def test_anomaly_unlabeled(tmp_path: Path) -> None:
         assert all(item["column"] in ("temp", "vibration", "current")
                    for item in top)
         assert all(item["reading_id"].startswith("r") for item in top)
+        assert all(0 <= item["column_share"] <= 1 for item in top)
     with open(run / "anomaly_scores.csv", encoding="utf-8",
               newline="") as file:
         assert all(row["anomaly"] == "" for row in csv.DictReader(file))
@@ -752,7 +753,30 @@ def test_anomaly_functions(tmp_path: Path) -> None:
         fitted = names["fit_distance"](table, 0.001)
         parts = names["distance_parts"](table, fitted)
         assert np.isfinite(parts).all()
-        assert (parts.sum(axis=1) >= -1e-6).all()
+        assert (parts >= 0).all()
+
+    # 負の非対角成分のある精度行列で, 要素ごとの積なら列の分が負になる行
+    precision = np.array([[2.0, -1.5, 0.3], [-1.5, 2.0, -0.4],
+                          [0.3, -0.4, 1.0]])
+    skewed = {"center": np.array([0.5, -0.5, 0.0]), "precision": precision}
+    rows = np.array([[3.0, 1.0, 0.2], [-2.0, 4.0, 1.0], [1.0, 1.0, -3.0]],
+                    dtype=np.float32)
+    diff = rows.astype(np.float64) - skewed["center"]
+    assert (diff * (diff @ precision) < 0).any()
+
+    # 列の分は 0 以上, 行の和は二乗の距離のままで, 割合は 0 から 1 で和が 1
+    parts = names["distance_parts"](rows, skewed)
+    assert (parts >= 0).all()
+    assert np.allclose(parts.sum(axis=1),
+                       np.einsum("ij,jk,ik->i", diff, precision, diff),
+                       rtol=1e-12, atol=1e-12)
+    shares = parts / parts.sum(axis=1, keepdims=True)
+    assert ((shares >= 0) & (shares <= 1)).all()
+    assert np.allclose(shares.sum(axis=1), 1.0)
+    top = names["top_rows"]({"ids": np.array(["a", "b", "c"])},
+                            parts.mean(axis=1), parts, "reading_id",
+                            ["temp", "vibration", "current"], 3)
+    assert all(0 <= row["column_share"] <= 1 for row in top)
 
     # 上位の行の要約は度合いの高い順で, 列の名前が重ならない
     part = {"ids": np.array(["a", "b", "c"])}
