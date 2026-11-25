@@ -325,6 +325,28 @@ def fit_distance(x: np.ndarray, ridge: float) -> dict:
     return distance
 
 
+def precision_root(precision: np.ndarray) -> np.ndarray:
+    """
+    精度行列の対称な平方根を求める関数
+
+    Parameters
+    ----------
+    precision: np.ndarray
+        (学習に使う列の数, 学習に使う列の数) の float64 の精度行列
+
+    Returns
+    ----------
+    root: np.ndarray
+        (学習に使う列の数, 学習に使う列の数) の float64 の対称な行列 (二乗
+        が精度行列. 負の固有値は 0)
+    """
+    # 対称にした精度行列の固有値の平方根での組み直し
+    values, vectors = np.linalg.eigh((precision + precision.T) / 2)
+    root = (vectors * np.sqrt(np.clip(values, 0.0, None))) @ vectors.T
+
+    return root
+
+
 def distance_parts(x: np.ndarray, distance: dict) -> np.ndarray:
     """
     行ごと, 列ごとの, 二乗の Mahalanobis 距離の分を求める関数
@@ -339,12 +361,14 @@ def distance_parts(x: np.ndarray, distance: dict) -> np.ndarray:
     Returns
     ----------
     parts: np.ndarray
-        (件数, 学習に使う列の数) の float64 (行の平均が度合い. 行の和が
-        二乗の Mahalanobis 距離)
+        (件数, 学習に使う列の数) の float64 の 0 以上の値 (行の平均が度合
+        い. 行の和が二乗の Mahalanobis 距離)
     """
-    # 差と, 精度行列をかけた差の要素ごとの積
-    diff = x.astype(np.float64) - distance["center"]
-    parts = diff * (diff @ distance["precision"])
+    # 精度行列の対称な平方根で白色化した差の二乗
+    center = np.asarray(distance["center"], dtype=np.float64)
+    precision = np.asarray(distance["precision"], dtype=np.float64)
+    diff = x.astype(np.float64) - center
+    parts = (diff @ precision_root(precision)) ** 2
 
     return parts
 
