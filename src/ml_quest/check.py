@@ -8,8 +8,8 @@ from ml_quest.problem import (
     upgrade_problem, version_message
 )
 from ml_quest.questions import (
-    COLLECTS, CONSUMERS, FALLBACKS, GROUP_ASSIGNED, GROUP_STABILITIES,
-    GROUP_TAKEN, GUARD_COUNTS,
+    ANOMALY_ASSIGNED, ANOMALY_SCORES, COLLECTS, CONSUMERS, FALLBACKS,
+    GROUP_ASSIGNED, GROUP_STABILITIES, GROUP_TAKEN, GUARD_COUNTS,
     METHODS, METRICS, NOT_COUNTED, OUTPUTS, PART, QUESTIONS,
     READY_LIBRARIES, ROLES, SIMULATORS, TARGET_KINDS, TARGET_SOURCES, UNITS,
     V1_METRICS
@@ -53,7 +53,7 @@ GENERATE_KINDS = ("image", "table")
 # 受け持ちの中の, 辞書で書く項目
 PART_DICTS = [f"{PART}.target", f"{PART}.target.process",
               f"{PART}.evaluation", f"{PART}.policy", f"{PART}.ready",
-              f"{PART}.rank", f"{PART}.group"]
+              f"{PART}.rank", f"{PART}.group", f"{PART}.anomaly"]
 
 # 受け持ちの, 選んで書く項目と選択肢 (手で書いたファイルの確かめ)
 PART_CHOICES = {
@@ -64,6 +64,7 @@ PART_CHOICES = {
     f"{PART}.policy.fallback": FALLBACKS,
     f"{PART}.ready.library": READY_LIBRARIES,
     f"{PART}.group.stability": GROUP_STABILITIES,
+    f"{PART}.anomaly.score": ANOMALY_SCORES,
 }
 
 # 方策の守りの, 文で書く項目
@@ -102,7 +103,8 @@ TASK_NAMES = {"classification": "分類", "regression": "回帰",
 # 列の名前の並びの問い
 COLUMN_LISTS = ["information.columns", f"{PART}.series_by",
                 "information.known", "information.unknown",
-                "information.forbidden", f"{PART}.group.columns"]
+                "information.forbidden", f"{PART}.group.columns",
+                f"{PART}.anomaly.columns"]
 
 
 def finding(level: str, key: str, message: str) -> dict:
@@ -207,7 +209,8 @@ def check_shape(problem: dict) -> list[dict]:
                 f"{PART}.evaluation.name",
                 f"{PART}.target.process.name", *PART_CHOICES,
                 *POLICY_TEXTS, *READY_TEXTS, *RANK_COLUMNS,
-                f"{PART}.group.id"):
+                f"{PART}.group.id", f"{PART}.anomaly.label",
+                f"{PART}.anomaly.id"):
         value = get_value(problem, key)
         if value is not None and not isinstance(value, str):
             found.append(finding("error", key,
@@ -974,6 +977,8 @@ def check(problem: dict) -> list[dict]:
             found += check_group(problem)
         if is_ready_group_part(problem):
             found += check_group_k(problem)
+        if is_anomaly_part(problem):
+            found += check_anomaly(problem)
         found += check_part(problem)
         found += check_evaluation(problem)
         found += check_consumer(problem)
@@ -1455,6 +1460,121 @@ def check_group_k(problem: dict) -> list[dict]:
     ):
         found.append(finding("error", f"{PART}.group.k",
                              "群の数は 2 以上の整数にしてください"))
+
+    return found
+
+
+def is_anomaly_part(problem: dict) -> bool:
+    """
+    受け持ちが異常の検知 (予測するで, 正解の種類が異常. 作り方が既製の
+    モデルをそのままでない) かを返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    anomaly: bool
+        異常の検知の骨組みを書き出す受け持ちか (出力の形は問わない. 確かめ
+        と骨組みの書き出しが度合いかを確かめる)
+    """
+    # 受け持ち, 正解の種類と作り方の答え (要らない問いの古い答えは除外)
+    anomaly = active_value(problem, f"{PART}.role") == "predict" and (
+        active_value(problem, f"{PART}.target.kind") == "anomaly"
+        and active_value(problem, f"{PART}.method") != "pretrained"
+    )
+
+    return anomaly
+
+
+def check_anomaly(problem: dict) -> list[dict]:
+    """
+    異常の検知の正解の出どころ, 出力の形, 列と件数の上限を確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 異常の検知)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (下の決まりに当たるものは全て error)
+    """
+    # 正解は無いか少しだけ, 出力の形は値 (行ごとの度合い)
+    found: list[dict] = []
+    source = active_value(problem, f"{PART}.target.source")
+    if source not in (None, "none", "few"):
+        found.append(finding(
+            "error", f"{PART}.target.source",
+            "正解の種類が異常なので, 正解の出どころは"
+            f"{choice_label(TARGET_SOURCES, 'none')}か"
+            f"{choice_label(TARGET_SOURCES, 'few')}にしてください (正解が多く"
+            "あるなら, 正解の種類を表の列にして分類で学びます)"
+        ))
+    output = active_value(problem, f"{PART}.output")
+    if output not in (None, "value"):
+        found.append(finding(
+            "error", f"{PART}.output",
+            "正解の種類が異常なので, 出力の形は"
+            f"{choice_label(OUTPUTS, 'value')} (行ごとの異常の度合い) にして"
+            "ください (今は"
+            f"{choice_label(OUTPUTS, output)})"
+        ))
+
+    # 列を答え直した後の古い名前 (使えるデータの列の一覧が無ければ見ない)
+    columns = active_value(problem, "information.columns") or []
+    used = active_value(problem, f"{PART}.anomaly.columns") or []
+    label = active_value(problem, f"{PART}.anomaly.label")
+    key = active_value(problem, f"{PART}.anomaly.id")
+    missing = [name for name in used if columns and name not in columns]
+    if missing:
+        found.append(finding(
+            "error", f"{PART}.anomaly.columns",
+            f"{', '.join(missing)} は使えるデータの列にありません"
+        ))
+    for item, name in ((f"{PART}.anomaly.label", label),
+                       (f"{PART}.anomaly.id", key)):
+        if name and columns and name not in columns:
+            found.append(finding("error", item,
+                                 f"{name} は使えるデータの列にありません"))
+        elif name and name in used:
+            found.append(finding(
+                "error", item,
+                f"{name} は度合いに使う列にもあります. 正解の列と行の id の"
+                "列は度合いに使いません"
+            ))
+    if label and key and label == key:
+        found.append(finding("error", f"{PART}.anomaly.id",
+                             f"{key} は異常の正解の列と同じです. 行の id の"
+                             "列は別の列にしてください"))
+    if key and key in ANOMALY_ASSIGNED:
+        found.append(finding(
+            "error", f"{PART}.anomaly.id",
+            f"行の id の列 {key} は行ごとの度合いの表の列 ("
+            f"{', '.join(ANOMALY_ASSIGNED)}) と同じ名前です. 名前を変えた"
+            "列を作ってから選んでください"
+        ))
+    if not key and "row_id" in columns:
+        found.append(finding(
+            "error", f"{PART}.anomaly.id",
+            "使えるデータの列に row_id があります. データの分析の段階は行の"
+            "位置を row_id の列にするので, 行の id の列を答えてください"
+        ))
+
+    # 人が確かめる件数の上限は 1 以上の整数
+    capacity = active_value(problem, f"{PART}.anomaly.capacity")
+    if capacity is not None and (
+        isinstance(capacity, bool) or not isinstance(capacity, (int, float))
+        or not math.isfinite(capacity) or not float(capacity).is_integer()
+        or capacity < 1
+    ):
+        found.append(finding(
+            "error", f"{PART}.anomaly.capacity",
+            "人が確かめる件数の上限は 1 以上の整数にしてください"
+        ))
 
     return found
 

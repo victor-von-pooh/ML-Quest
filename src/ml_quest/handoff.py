@@ -3,9 +3,9 @@ from pathlib import PurePath
 from typing import Any, Optional
 
 from ml_quest.check import (
-    check, env_id_of, is_column_part, is_generate_part, is_group_part,
-    is_items_part, is_pretrained_part, is_rank_part, is_ready_group_part,
-    sha256_of, split_errors
+    check, env_id_of, is_anomaly_part, is_column_part, is_generate_part,
+    is_group_part, is_items_part, is_pretrained_part, is_rank_part,
+    is_ready_group_part, sha256_of, split_errors
 )
 from ml_quest.data import EXPORT_FUNCTIONS
 from ml_quest.problem import (
@@ -30,9 +30,10 @@ DEFAULT_SAFETY_KEY = "cost"
 
 # 一から学習する受け持ちと正解の種類ごとの, モデルの作成の雛形
 # (ML-ModelControl の同梱の例の名前. 並べるとまとめるは正解の種類を問わない
-# ので None)
+# ので None. 異常は度合いの決め方が自己符号化器のときだけ)
 MODEL_EXAMPLES = {
     ("predict", "mask"): "unet_segmentation",
+    ("predict", "anomaly"): "tabular_autoencoder",
     ("predict", "point_cloud"): "point_cloud_predictor",
     ("generate", "table"): "diffusion_denoiser",
     ("rank", None): "two_tower_retrieval",
@@ -103,6 +104,12 @@ def model_example(problem: dict) -> Optional[str]:
     key = (active_value(problem, f"{PART}.role"),
            active_value(problem, f"{PART}.target.kind"))
     example = MODEL_EXAMPLES.get(key)
+
+    # 異常の検知の距離に基づく度合いはモデルを使わない
+    if is_anomaly_part(problem) and (
+        active_value(problem, f"{PART}.anomaly.score") != "autoencoder"
+    ):
+        example = None
 
     return example
 
@@ -204,7 +211,9 @@ def handoff(problem: dict) -> dict:
         part (受け持ちの答え), requires (要る機能の名前), policy (方策の
         守り. 方策でなければ None), rank (並べるの反応の表の列と件数.
         並べるで学習しなければ None), group (群を作る列, 群の数, 安定性の
-        数え方. まとめるで学習しなければ None), project (書き出したプロジェクトの
+        数え方. まとめるで学習しなければ None), anomaly (異常の検知の度合いの
+        決め方, 列, 人が確かめる件数の上限. 異常の検知でなければ None),
+        project (書き出したプロジェクトの
         path. データセットとモデルの定義の場所は data の project_dataset
         と model の project_model_spec. 記録が無ければ None)
 
@@ -340,19 +349,22 @@ def build_stages(problem: dict) -> dict:
                      **generate_data(problem),
                      **rank_data(problem),
                      **group_data(problem),
+                     **anomaly_data(problem),
                      "project_dataset": project["dataset"]},
             "model": {"task": None, "outputs": None, "role": part["role"],
                       "target_kind": part["target_kind"],
                       "example": model_example(problem),
                       "project_model_spec": project["model_spec"]},
             "training": training,
-            "inference": {"decision": None, "conclusion": {},
+            "inference": {"decision": anomaly_decision(problem),
+                          "conclusion": {},
                           "horizon": None, "guard": None,
                           "ready": ready_of(problem)},
             "requires": required_features(problem),
             "policy": policy_of(problem),
             "rank": rank_of(problem),
             "group": group_of(problem),
+            "anomaly": anomaly_of(problem),
             "project": {"path": project["path"]},
         }
         return stages
@@ -377,6 +389,7 @@ def build_stages(problem: dict) -> dict:
         "policy": policy_of(problem),
         "rank": None,
         "group": None,
+        "anomaly": None,
         "project": {"path": project["path"]},
     }
 
@@ -643,6 +656,120 @@ def group_data(problem: dict) -> dict:
     return data
 
 
+def anomaly_of(problem: dict) -> Optional[dict]:
+    """
+    異常の検知の度合いの決め方, 列と, 人が確かめる件数の上限をまとめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    anomaly: Optional[dict]
+        score (autoencoder か distance), label (異常の正解の列. 無ければ
+        None), id (行の id の列. 無ければ None), columns (度合いに使う列),
+        capacity (件数の上限. 整数), k (評価の K. capacity と同じ) (異常の
+        検知でなければ None)
+    """
+    # 異常の検知のときだけ (要らなくなった問いの古い答えは除外)
+    if not is_anomaly_part(problem):
+        return None
+    capacity = whole(active_value(problem, f"{PART}.anomaly.capacity"))
+    anomaly: dict[str, Any] = {
+        "score": active_value(problem, f"{PART}.anomaly.score"),
+        "label": active_value(problem, f"{PART}.anomaly.label"),
+        "id": active_value(problem, f"{PART}.anomaly.id"),
+        "columns": list(active_value(problem, f"{PART}.anomaly.columns")
+                        or []),
+        "capacity": capacity,
+        "k": capacity,
+    }
+
+    return anomaly
+
+
+def whole(value: Any) -> Any:
+    """
+    整数の値の小数を整数にする関数
+
+    Parameters
+    ----------
+    value: Any
+        答えの値
+
+    Returns
+    ----------
+    number: Any
+        整数の値なら int, 他はそのまま
+    """
+    # 4.0 は 4 に (真偽値は数にしない)
+    number = (int(value) if isinstance(value, (int, float))
+              and not isinstance(value, bool) and math.isfinite(value)
+              and float(value).is_integer() else value)
+
+    return number
+
+
+def anomaly_data(problem: dict) -> dict:
+    """
+    異常の検知の, データの分析の段階に渡す値を作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    data: dict
+        target, task (anomaly), split (random), known (度合いに使う列),
+        drop (他の使えるデータの列), id, unlabeled (正解の列があれば
+        normal) (異常の検知でなければ空)
+    """
+    # ML-EDA の異常の検知の表のレシピの値
+    data: dict = {}
+    anomaly = anomaly_of(problem)
+    if anomaly is None:
+        return data
+    kept = [*anomaly["columns"], anomaly["label"], anomaly["id"]]
+    columns = active_value(problem, "information.columns") or []
+    data = {
+        "target": anomaly["label"], "task": "anomaly", "split": "random",
+        "known": list(anomaly["columns"]),
+        "drop": [name for name in columns if name not in kept],
+        "id": anomaly["id"],
+        "unlabeled": "normal" if anomaly["label"] else None,
+    }
+
+    return data
+
+
+def anomaly_decision(problem: dict) -> Optional[dict]:
+    """
+    異常の検知の, 推論の段階の振り分けを作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    decision: Optional[dict]
+        type (triage) と capacity (人が確かめる件数の上限) だけの振り分け
+        (異常の検知でなければ None)
+    """
+    # 度合いの上位から上限まで回す (損得の値と当たりのクラスは持たない)
+    anomaly = anomaly_of(problem)
+    if anomaly is None:
+        return None
+    decision = {"type": "triage", "capacity": anomaly["capacity"]}
+
+    return decision
+
+
 def training_of(problem: dict) -> dict:
     """
     学習・評価の段階に渡す, 最良を選ぶ指標と監視する指標を作る関数
@@ -658,9 +785,13 @@ def training_of(problem: dict) -> dict:
         metric (その他は書いた名前), monitor (valid/<指標>), mode (min か
         max). 既製のモデルをそのまま使う (学習しない) 場合は全て None
     """
-    # 学習しない場合は指標を問わない
+    # 学習しない場合 (既製のモデルと, 異常の検知の距離に基づく度合い) は
+    # 指標を問わない
     metric = active_value(problem, f"{PART}.evaluation.metric")
-    if active_value(problem, f"{PART}.method") == "pretrained":
+    distance = is_anomaly_part(problem) and (
+        active_value(problem, f"{PART}.anomaly.score") == "distance"
+    )
+    if active_value(problem, f"{PART}.method") == "pretrained" or distance:
         training: dict[str, Any] = {"metric": None, "monitor": None,
                                     "mode": None}
         return training

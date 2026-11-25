@@ -9,13 +9,18 @@ from typing import Any, Optional, Union
 
 import yaml
 
+from ml_quest.anomaly_skeleton import (
+    ANOMALY_DATASET, ANOMALY_LIBRARIES, anomaly_config, anomaly_name,
+    anomaly_readme, anomaly_script
+)
 from ml_quest.baseline_skeleton import (
     EVALUATION_PREFIX, baseline_code, baseline_note, baseline_reason,
     predict_log, reported_code, reported_hint, reported_sentence,
     reported_value
 )
 from ml_quest.check import (
-    choice_label, is_column_part, is_generate_part, is_group_part,
+    choice_label, is_anomaly_part, is_column_part, is_generate_part,
+    is_group_part,
     is_policy_part, is_rank_part, is_ready_group_part, split_errors
 )
 from ml_quest.data import (
@@ -815,6 +820,7 @@ def experiment_name(problem: dict, name: Optional[str]) -> str:
                else policy_name(problem) if is_policy_part(problem)
                else rank_name(problem) if is_rank_part(problem)
                else group_name(problem) if is_group_part(problem)
+               else anomaly_name(problem) if is_anomaly_part(problem)
                else items_name(problem))
     raw = name or default
     text = re.sub(r"[^\w-]+", "_", raw).strip("_") or "problem"
@@ -1094,20 +1100,23 @@ def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
     policy = is_policy_part(upgraded)
     rank = is_rank_part(upgraded)
     group = is_group_part(upgraded)
+    anomaly = is_anomaly_part(upgraded)
     if not is_column_part(upgraded) and skeleton_kind(upgraded) is None and (
         not generate and not policy and not rank and not group
+        and not anomaly
     ):
         message = ("骨組みを書き出せるのは, 予測するで正解の種類が表の列, "
-                   "画像の領域, 点群の場合と, 作るで正解の種類が画像か表の場合"
+                   "画像の領域, 点群, 異常の場合と, 作るで正解の種類が画像か表の場合"
                    "と, 並べるとまとめるの場合と, 効果を見積もるで続けて行動を"
                    "選ぶ方策の場合と, 予測するで既製のモデルをそのまま使う画像"
                    "の分類の場合だけです (方策でない効果の見積もりと, 他の正解"
                    "の種類はまだ扱えません)")
         return message, exportable
-    if generate or policy or rank or group:
+    if generate or policy or rank or group or anomaly:
         message = (policy_message(upgraded) if policy
                    else rank_message(upgraded) if rank
                    else group_message(upgraded) if group
+                   else anomaly_message(upgraded) if anomaly
                    else table_message(upgraded)
                    if active_value(upgraded, f"{PART}.target.kind") == "table"
                    else generate_message(upgraded))
@@ -1272,6 +1281,41 @@ def group_message(problem: dict) -> Optional[str]:
         message = ("まとめるの骨組みは, 1 行が 1 つの対象の表で群を作ります "
                    f"(入れたデータ {Path(str(source)).name} は表として読んで"
                    "いません). 群を作る列を持つ表のファイル (CSV, Parquet "
+                   "など) を入れてください")
+
+    return message
+
+
+def anomaly_message(problem: dict) -> Optional[str]:
+    """
+    異常の検知の骨組みを書き出せない理由を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 異常の検知)
+
+    Returns
+    ----------
+    message: Optional[str]
+        誤りの文 (出力の形が値でない, 入れたデータが表でない. 書き出せる
+        なら None)
+    """
+    # 異常の検知の表を読む. 指標は受け持ちの候補が全て書ける
+    output = active_value(problem, f"{PART}.output")
+    loader = active_value(problem, "data.loader")
+    options = get_value(problem, "data.options")
+    source = get_value(problem, "data.source")
+    text = isinstance(options, dict) and options.get("text_column")
+    message = None
+    if output != "value":
+        message = ("異常の検知の骨組みは, 出力の形が「値」(行ごとの異常の"
+                   "度合い) の場合だけです (今は"
+                   f"{choice_label(OUTPUTS, output, problem)})")
+    elif source and (loader not in TABLE_LOADERS or text):
+        message = ("異常の検知の骨組みは, 正常の行が多い表で度合いを作ります "
+                   f"(入れたデータ {Path(str(source)).name} は表として読んで"
+                   "いません). 度合いに使う列を持つ表のファイル (CSV, Parquet "
                    "など) を入れてください")
 
     return message
@@ -1574,6 +1618,23 @@ def project_files(
                 requires_text(GROUP_LIBRARIES, stages), spec_exists
             ),
             "train.py": group_script(problem, literal),
+        }
+        return files
+
+    # 異常の検知 (入れた表は data に写し, 異常の検知の表はデータの分析の
+    # 段階が outputs/dataset に書き出す)
+    if is_anomaly_part(problem):
+        score = stages["anomaly"]["score"]
+        files = {
+            "README.md": anomaly_readme(
+                problem, stages, ANOMALY_DATASET,
+                data_file.as_posix() if data_file else None
+            ),
+            "configs/default/train.yaml": anomaly_config(
+                experiment_name(problem, name), stages, ANOMALY_DATASET,
+                requires_text(ANOMALY_LIBRARIES[score], stages), spec_exists
+            ),
+            "train.py": anomaly_script(problem, literal),
         }
         return files
 
