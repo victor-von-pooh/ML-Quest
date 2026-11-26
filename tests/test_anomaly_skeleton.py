@@ -580,6 +580,47 @@ def test_anomaly_training(tmp_path: Path) -> None:
     check_inference(run, source, NORMAL + ANOMALIES)
 
 
+
+def test_anomaly_distance_without_valid(tmp_path: Path) -> None:
+    """
+    検証用の割合を 0 にした表では, 距離に基づく度合いも出力先を作る前に
+    検証用の正常の行が無いことを案内して止まることを確かめる関数 (PyTorch
+    と段階のライブラリが無ければ飛ばす)
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # レシピの雛形の検証用の割合を 0 にして書き出し
+    for name in ("torch", "ml_eda", "ml_found"):
+        pytest.importorskip(name)
+    eda = pytest.importorskip("ml_eda")
+    source = write_rows(tmp_path / "raw")
+    problem = attach_data(anomaly_problem(score="distance"), str(source),
+                          copy_to=str(tmp_path / "copies"))
+    project = tmp_path / "project"
+    make_project(problem, project)
+    start = recipe_from(problem)
+    recipe = {**start["recipe"],
+              "split": {**start["recipe"]["split"], "valid": 0.0,
+                        "test": 0.2}}
+    load = start["load"]
+    data = eda.load_data(load["path"], loader=load["loader"],
+                         **(load["options"] or {}))
+    place = Path(record_project(problem, project)["project"]["dataset"])
+    eda.export_dataset(data, recipe, place)
+
+    # 検証の損失を数えられないので, 実験のディレクトリを作らずに停止
+    done = run_script(project)
+    assert done.returncode == 1
+    assert "検証用の正常の行がありません" in done.stdout
+    assert not (project / "outputs" / "anomaly_distance").exists()
+
 def check_distance_run(run: Path, project: Path, scorer: dict) -> None:
     """
     距離に基づく度合いの実験が他の実験と同じ形で残り, 度合いと評価が

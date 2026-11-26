@@ -858,8 +858,8 @@ def validate_distance(
     ----------
     None
     """
-    # パラメータの無いモデルは Optimizer を作らず, 学習のフェーズを回さずに
-    # 検証だけを数える (更新は 0 回. バッファは distance と同じ値のまま)
+    # パラメータの無いモデルの, Optimizer と学習のフェーズの無い検証だけの
+    # 計算 (更新は 0 回. バッファは distance と同じ値のまま)
     train_loader, valid_loader, valid = anomaly_loaders(splits, cfg)
     model = DistanceModel(distance)
     trainer = DistanceTrainer(model, experiment, valid, cfg)
@@ -1360,8 +1360,8 @@ ANOMALY_DEVICE = """  # 中心と精度行列を float64 のバッファに持�
 # モデルの扱い. 学習しないので Optimizer の設定は書かない)
 ANOMALY_CHECKING = """
 trainer:
-  # 中心と精度行列は学習しないので, 検証 (検証用の正常の行の度合いの平均)
-  # を 1 回だけ数える
+  # 中心と精度行列は学習しないので, 検証用の正常の行の度合いの平均の
+  # 1 回だけの検証
   epochs: 1
   monitor: valid/loss
   mode: min
