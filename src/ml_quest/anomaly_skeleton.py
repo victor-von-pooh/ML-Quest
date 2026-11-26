@@ -229,15 +229,114 @@ class AnomalyTrainer(Trainer):
         # 検証用の全ての行 (正常と異常) の度合い
         if phase != "valid" or not self.valid_y.any():
             return {}
-        parts = autoencoder_parts(self.eval_model(), self.valid_x,
-                                  self.batch_size)
-        scores = parts.mean(axis=1)
+        scores = self.valid_parts().mean(axis=1)
         metrics = {
             "precision_at_k": precision_at_k(scores, self.valid_y, self.k),
             "average_precision": average_precision(scores, self.valid_y),
         }
 
         return metrics
+
+    def valid_parts(self) -> np.ndarray:
+        """
+        検証用の全ての行の, 行ごと, 列ごとの再構成の二乗誤差を求める関数
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        ----------
+        parts: np.ndarray
+            (検証用の行の数, 学習に使う列の数) の float64 (行の平均が度合い)
+        """
+        # 評価のモデル (EMA があれば EMA) の再構成
+        parts = autoencoder_parts(self.eval_model(), self.valid_x,
+                                  self.batch_size)
+
+        return parts
+
+
+class DistanceModel(nn.Module):
+    def __init__(self, distance: dict):
+        # 親クラスのコンストラクタを呼び出す
+        super(DistanceModel, self).__init__()
+
+        # 学習用の正常の行の中心と精度行列を, 学習しないバッファに保存
+        # (final_model.pt に入る. float64 のまま)
+        self.register_buffer("center", torch.tensor(distance["center"]))
+        self.register_buffer("precision",
+                             torch.tensor(distance["precision"]))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        行ごと, 列ごとの, 二乗の Mahalanobis 距離の分を求める関数
+
+        Parameters
+        ----------
+        x: torch.Tensor
+            (件数, 学習に使う列の数) の行の特徴
+
+        Returns
+        ----------
+        parts: torch.Tensor
+            (件数, 学習に使う列の数) の float64 の 0 以上の値 (行の平均が
+            度合い. distance_parts と同じ式)
+        """
+        # 対称にした精度行列の固有値の平方根での組み直しと, 白色化した差の
+        # 二乗
+        values, vectors = torch.linalg.eigh(
+            (self.precision + self.precision.T) / 2
+        )
+        root = (vectors * values.clamp(min=0.0).sqrt()) @ vectors.T
+        parts = ((x.double() - self.center) @ root) ** 2
+
+        return parts
+
+
+class DistanceTrainer(AnomalyTrainer):
+    def step(self, batch: tuple, phase: str) -> dict:
+        """
+        1 バッチ分の, 距離に基づく度合いの平均を求める関数
+
+        Parameters
+        ----------
+        batch: tuple
+            (行の特徴,)
+        phase: str
+            valid か train_eval (パラメータが無いので train は回らない)
+
+        Returns
+        ----------
+        outputs: dict
+            度合いの平均 (loss)
+        """
+        # 行ごとの度合い (列ごとの分の平均) の平均
+        (x,) = batch
+        outputs = {"loss": self.eval_model()(x).mean()}
+
+        return outputs
+
+    def valid_parts(self) -> np.ndarray:
+        """
+        検証用の全ての行の, 行ごと, 列ごとの距離の分を求める関数
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        ----------
+        parts: np.ndarray
+            (検証用の行の数, 学習に使う列の数) の float64 (行の平均が度合い)
+        """
+        # バッファのあるデバイスでの順伝播
+        model = self.eval_model()
+        with torch.no_grad():
+            parts = model(self.valid_x.to(model.center.device))
+        parts = parts.cpu().numpy()
+
+        return parts
 
 
 def reconstruct(model: nn.Module, x: torch.Tensor) -> torch.Tensor:
@@ -480,7 +579,7 @@ def check_splits(splits: dict, cfg: Any) -> Optional[str]:
     message: Optional[str]
         誤りの文 (無ければ None)
     """
-    # 学習用の正常の行の数と, 自己符号化器の検証用の正常の行と, 正解の
+    # 学習用の正常の行の数と, 検証の損失を数える検証用の正常の行と, 正解の
     # 要る指標の検証用の異常の行の確かめ
     message = None
     train = splits.get("train")
@@ -489,14 +588,11 @@ def check_splits(splits: dict, cfg: Any) -> Optional[str]:
                    "足すか, 検証用とテスト用の割合を見直して書き出し直して"
                    "ください")
         return message
-    if cfg.anomaly.score != "autoencoder":
-        return message
     valid = splits.get("valid")
     metric = str(cfg.trainer.monitor).split("/", 1)[-1]
     if valid is None or not (valid["y"] == 0).any():
-        message = ("検証用の正常の行がありません. 最も良いモデルを選ぶ"
-                   "ために, 検証用の割合を 0 より大きくして書き出し直して"
-                   "ください")
+        message = ("検証用の正常の行がありません. 検証の損失を数えるために, "
+                   "検証用の割合を 0 より大きくして書き出し直してください")
     elif metric in LABEL_METRICS and not valid["anomalies"]:
         message = (f"検証用に異常の行が無いので, {cfg.trainer.monitor} を"
                    "数えられません. 最良を選ぶ指標を損失 (valid/loss) に"
@@ -649,6 +745,42 @@ def make_model(
     return model
 
 
+def anomaly_loaders(
+    splits: dict, cfg: Any
+) -> tuple[DataLoader, DataLoader, tuple[torch.Tensor, np.ndarray]]:
+    """
+    学習用の行と, 検証の損失を数える検証用の正常の行の DataLoader を作る
+    関数
+
+    Parameters
+    ----------
+    splits: dict
+        read_splits の結果
+    cfg: Any
+        config (まとまりの大きさ)
+
+    Returns
+    ----------
+    train_loader: DataLoader
+        学習用の行 (正常の行だけ. 混ぜる)
+    valid_loader: DataLoader
+        検証用の正常の行 (正解が 0 の行)
+    valid: tuple[torch.Tensor, np.ndarray]
+        検証用の全ての行の特徴と正解 (上位 K 件の適合率と PR-AUC)
+    """
+    # 学習用 (正常の行だけ) と, 検証の損失を数える検証用の正常の行
+    train_x = torch.tensor(splits["train"]["x"])
+    part = splits["valid"]
+    normal = torch.tensor(part["x"][part["y"] == 0])
+    train_loader = DataLoader(TensorDataset(train_x),
+                              batch_size=cfg.data.batch_size, shuffle=True)
+    valid_loader = DataLoader(TensorDataset(normal),
+                              batch_size=cfg.data.batch_size)
+    valid = (torch.tensor(part["x"]), part["y"])
+
+    return train_loader, valid_loader, valid
+
+
 def train_autoencoder(
     splits: dict, cfg: Any, spec: Optional[Path], experiment: Experiment
 ) -> tuple[nn.Module, str, Any]:
@@ -675,15 +807,8 @@ def train_autoencoder(
     epoch: Any
         評価する重みのエポック
     """
-    # 学習用 (正常の行だけ) と, 検証の損失を数える検証用の正常の行
-    train_x = torch.tensor(splits["train"]["x"])
-    valid = splits["valid"]
-    valid_x = torch.tensor(valid["x"])
-    normal = torch.tensor(valid["x"][valid["y"] == 0])
-    train_loader = DataLoader(TensorDataset(train_x),
-                              batch_size=cfg.data.batch_size, shuffle=True)
-    valid_loader = DataLoader(TensorDataset(normal),
-                              batch_size=cfg.data.batch_size)
+    # 学習用と検証用の行
+    train_loader, valid_loader, valid = anomaly_loaders(splits, cfg)
 
     # モデルの組み立てと学習 (定義がまだ無ければ仮のモデル)
     spec, base_dir = spec_file(spec, experiment)
@@ -693,8 +818,8 @@ def train_autoencoder(
             "仮のモデル (PlaceholderModel) で学習します. ML-CreateArchitecture"
             " で組んだ定義をその場所に置くと, 定義のモデルで学習します"
         )
-    model = make_model(train_x.shape[1], cfg, spec, base_dir)
-    trainer = AnomalyTrainer(model, experiment, (valid_x, valid["y"]), cfg)
+    model = make_model(valid[0].shape[1], cfg, spec, base_dir)
+    trainer = AnomalyTrainer(model, experiment, valid, cfg)
     trainer.fit(train_loader, valid_loader)
 
     # 学習した後の重みは, 最良のモデルに戻した場合だけ最良のエポック
@@ -709,6 +834,37 @@ def train_autoencoder(
     model = trainer.model.cpu().eval()
 
     return model, weights, epoch
+
+
+def validate_distance(
+    splits: dict, distance: dict, cfg: Any, experiment: Experiment
+) -> None:
+    """
+    中心と精度行列をバッファに持つモデルを Trainer で検証し, 他の実験と
+    同じ run.json, history.csv, final_model.pt を残す関数
+
+    Parameters
+    ----------
+    splits: dict
+        read_splits の結果
+    distance: dict
+        fit_distance の結果
+    cfg: Any
+        config
+    experiment: Experiment
+        実験
+
+    Returns
+    ----------
+    None
+    """
+    # パラメータの無いモデルは Optimizer を作らず, 学習のフェーズを回さずに
+    # 検証だけを数える (更新は 0 回. バッファは distance と同じ値のまま)
+    train_loader, valid_loader, valid = anomaly_loaders(splits, cfg)
+    model = DistanceModel(distance)
+    trainer = DistanceTrainer(model, experiment, valid, cfg)
+    trainer.fit(train_loader, valid_loader)
+    print(f"ベストの {cfg.trainer.monitor}: {trainer.checkpoint.best_value}")
 
 
 def normal_summary(scores: np.ndarray) -> dict:
@@ -1093,8 +1249,8 @@ def main() -> None:
         f"{width}. K: {cfg.anomaly.k}"
     )
 
-    # 度合いの決め方 (自己符号化器は学習, 距離は中心と精度行列) と, 全ての
-    # 分割の行ごと, 列ごとの度合いの分
+    # 度合いの決め方 (自己符号化器は学習, 距離は中心と精度行列をバッファに
+    # 持つモデルの検証) と, 全ての分割の行ごと, 列ごとの度合いの分
     distance = None
     if autoencoder:
         model, weights, epoch = train_autoencoder(splits, cfg, spec,
@@ -1106,6 +1262,7 @@ def main() -> None:
             found[split] = {"parts": parts, "scores": parts.mean(axis=1)}
     else:
         distance = fit_distance(splits["train"]["x"], cfg.anomaly.ridge)
+        validate_distance(splits, distance, cfg, experiment)
         weights, epoch = "学習用の正常の行の中心と精度行列", None
         found = {}
         for split, part in splits.items():
@@ -1144,7 +1301,7 @@ $requires
 experiment:
   name: $experiment
   seed: 0
-$training
+$device$training
 # プロジェクト固有の設定
 data:
   # ML-EDA の異常の検知の表 (task: anomaly. プロジェクトのディレクトリから.
@@ -1193,6 +1350,22 @@ model:
 $placeholder  # 仮のモデルの縮めた幅
   width: 8
 ''')
+
+# 距離に基づく度合いのデバイス (中心と精度行列を float64 のバッファに持つ)
+ANOMALY_DEVICE = """  # 中心と精度行列を float64 のバッファに持つので CPU
+  device: cpu
+"""
+
+# 距離に基づく度合いの検証の設定 (ML-Found の学習するパラメータの無い
+# モデルの扱い. 学習しないので Optimizer の設定は書かない)
+ANOMALY_CHECKING = """
+trainer:
+  # 中心と精度行列は学習しないので, 検証 (検証用の正常の行の度合いの平均)
+  # を 1 回だけ数える
+  epochs: 1
+  monitor: valid/loss
+  mode: min
+"""
 
 # 距離に基づく度合いの設定
 ANOMALY_DISTANCE = Template('''  # 共分散の対角に足す値 (散らばりの無い列でも精度行列を作れるように)
@@ -1269,9 +1442,10 @@ def anomaly_config(
     text: str
         configs/default/train.yaml の中身
     """
-    # 自己符号化器は学習とモデル, 距離は対角に足す値
+    # 自己符号化器は学習とモデル, 距離はデバイス, 検証と対角に足す値
     anomaly = stages["anomaly"]
     training = stages["training"]
+    device = ""
     if anomaly["score"] == "autoencoder":
         middle = ANOMALY_TRAINING.substitute(monitor=training["monitor"],
                                              mode=training["mode"])
@@ -1279,12 +1453,14 @@ def anomaly_config(
             placeholder="" if spec_exists else ANOMALY_PLACEHOLDER
         )
     else:
-        middle = ""
+        device = ANOMALY_DEVICE
+        middle = ANOMALY_CHECKING
         tail = ANOMALY_DISTANCE.substitute(ridge=ANOMALY_RIDGE)
     text = ANOMALY_CONFIG.substitute(
         requires=requires, experiment=json.dumps(experiment,
                                                  ensure_ascii=False),
-        training=middle, dataset=json.dumps(dataset, ensure_ascii=False),
+        device=device, training=middle,
+        dataset=json.dumps(dataset, ensure_ascii=False),
         source=json.dumps(source, ensure_ascii=False),
         score=json.dumps(anomaly["score"]), k=json.dumps(anomaly["k"]),
         capacity=json.dumps(anomaly["capacity"]), tail=tail,
@@ -1406,7 +1582,10 @@ def anomaly_readme(
         if autoencoder else
         "`python train.py`. 学習用の正常の行の平均 (中心) と, 共分散の"
         "対角に config の `anomaly.ridge` を足した行列の逆 (精度行列) を"
-        "数える (学習の繰り返しは無い)"
+        "数え, それをバッファに持つ学習するパラメータの無いモデルで, "
+        "検証用の正常の行の度合いの平均 (`valid/loss`) と, 検証用に異常の"
+        "行があれば度合いの上位 K 件の適合率と PR-AUC を 1 回数える (学習"
+        "の繰り返しは無い)"
     )
     lines.append(
         f"3. **学習と評価** (ML-Found, ML-Dashboard): {how}. 度合いは "
@@ -1417,8 +1596,9 @@ def anomaly_readme(
         "度合いの分布 (`evaluations/anomaly_scores_<分割>.json`) と上位 K "
         "行の要約 (`evaluations/anomaly_top_<分割>.json`. 行の id, 度合い,"
         " 最も外れた列) を書く. 結果は `outputs/<実験の名前>/<日付>/<時刻>/` "
-        "に残る (`task.yaml`, "
-        + ("学習した重み `final_model.pt`, " if autoencoder else "")
+        "に残る (`task.yaml`, 状態 `run.json`, 指標 `history.csv`, "
+        + ("学習した重み `final_model.pt`, " if autoencoder
+           else "中心と精度行列を持つ `final_model.pt`, ")
         + "行ごとの度合い `anomaly_scores.csv`, 度合いの決め方 "
         "`anomaly_scorer.json` と前処理のレシピの写し `anomaly_recipe.yaml`)"
     )
