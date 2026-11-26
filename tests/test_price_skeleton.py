@@ -120,7 +120,7 @@ def run_script(
     done: subprocess.CompletedProcess
         終わったプロセス (表示と終わりの番号)
     """
-    # config の差分だけを渡す
+    # config の差分の引数
     done = subprocess.run([sys.executable, "train.py", *extra],
                           cwd=project, capture_output=True, text=True,
                           timeout=600)
@@ -237,7 +237,7 @@ def test_price_project(tmp_path: Path) -> None:
     wrong = answer(problem, f"{PART}.output", "value")
     assert project_error(wrong) is not None
 
-    # データセットが無ければ, 書き出しを案内して止まる
+    # データセットが無いときの, 書き出しの案内と停止
     for name in ("torch", "ml_eda", "ml_found"):
         pytest.importorskip(name)
     done = run_script(project, tuple(SHORT))

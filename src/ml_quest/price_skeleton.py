@@ -67,7 +67,7 @@ OUTPUT = "effect"
 METHOD = $method
 
 # モデルの入力と出力の名前 (ML-ModelControl の同梱の例 tabular_price と
-# 同じ) と, 出力の戻し方 (出力 × scale が売れた数)
+# 同じ) と, 出力の決まり (出力がそのまま売れた数. 最後に softplus)
 FEATURE_INPUT = "x"
 UNITS_OUTPUT = "units"
 LINK = "softplus"
@@ -95,7 +95,8 @@ EVALUATION_TEXT = (
     "予測の誤差 (mae, rmse. 小さいほど良い) と, 商品ごとの今の値段 ({current}"
     ") で 1 % 上げたときに予測した数が何 % 変わるかの平均 (elasticity), "
     "値段の候補 {candidates} の中で変える幅の上限 {max_change} を超えない, "
-    "見込みの利益が最も大きい値段を選んだときの見込みの利益の和 (profit) と, "
+    "見込みの利益が最も大きい値段を選んだときの見込みの利益 (商品ごとの 1 行"
+    "あたりの売れた数の予測から数えた, 1 行あたりの利益) の和 (profit) と, "
     "今の値段での和 (current_profit), その差 (profit_gain) と比 "
     "(profit_ratio. 大きいほど良い. 今の利益の和が 0 以下なら空). changed "
     "は値段を変える商品の数 ({weights})"
@@ -111,19 +112,28 @@ SPLIT_NAMES = {"valid": "検証用", "test": "テスト用"}
 PRICE_MAIN = '''
 
 class PlaceholderModel(nn.Module):
-    def __init__(self, features: int, width: int):
+    def __init__(self, features: int, width: int, scale: float):
         # 親クラスのコンストラクタを呼び出す
         super(PlaceholderModel, self).__init__()
 
-        # 学習に使う列の数 (値段の列を含む) と, 隠れ層の幅を保存
+        # 学習に使う列の数 (値段の列を含む), 隠れ層の幅と, 売れた数の目安
+        # を保存
         self.features = features
         self.width = width
+        self.scale = scale
 
         # TODO: 課題に合うモデルに置き換える. 今は動くことを確かめるための,
         # 全結合の層と, 負にならない売れた数の softplus
         self.units = nn.Sequential(nn.Linear(self.features, self.width),
                                    nn.ReLU(), nn.Linear(self.width, 1),
                                    nn.Softplus())
+
+        # 初めの出力を学習用の行の売れた数の平均に (softplus の逆の値の
+        # 最後の層の偏り)
+        with torch.no_grad():
+            self.units[2].bias.fill_(
+                self.scale + math.log(-math.expm1(-self.scale))
+            )
 
     def forward(self, x: torch.Tensor) -> dict:
         """
@@ -137,7 +147,7 @@ class PlaceholderModel(nn.Module):
         Returns
         ----------
         outputs: dict
-            units ((件数, 1) の売れた数の予測. 売れた数 / scale)
+            units ((件数, 1) の売れた数の予測)
         """
         # 売れた数の予測
         outputs = {UNITS_OUTPUT: self.units(x)}
@@ -154,12 +164,12 @@ class PriceTrainer(Trainer):
         # 親クラスのコンストラクタを呼び出す
         super(PriceTrainer, self).__init__(model, experiment, None)
 
-        # 検証用の全ての行と, 売れた数の戻し方を保存
+        # 検証用の全ての行と, 損失で売れた数を割る値を保存
         self.valid = valid
         self.scale = scale
         self.batch_size = cfg.data.batch_size
 
-        # 売れた数 / scale の二乗誤差
+        # 売れた数と予測を scale で割った値の二乗誤差
         self.criterion = nn.MSELoss()
 
     def step(self, batch: tuple, phase: str) -> dict:
@@ -169,19 +179,20 @@ class PriceTrainer(Trainer):
         Parameters
         ----------
         batch: tuple
-            (行, 売れた数 / scale)
+            (行, 売れた数)
         phase: str
             train, valid, train_eval のどれか
 
         Returns
         ----------
         outputs: dict
-            売れた数 / scale の二乗誤差の平均 (loss)
+            売れた数と予測を scale で割った値の二乗誤差の平均 (loss)
         """
         # 学習のモデルと, 検証の評価のモデル (EMA があれば EMA)
         x, y = batch
         model = self.model if phase == "train" else self.eval_model()
-        outputs = {"loss": self.criterion(predict(model, x), y)}
+        outputs = {"loss": self.criterion(predict(model, x) / self.scale,
+                                          y / self.scale)}
 
         return outputs
 
@@ -203,7 +214,7 @@ class PriceTrainer(Trainer):
         # 検証用の全ての行の, 記録の値段での売れた数の予測
         if phase != "valid":
             return {}
-        found = units_of(self.eval_model(), self.valid["x"], self.scale,
+        found = units_of(self.eval_model(), self.valid["x"],
                          self.batch_size)
         metrics = {"mae": float(np.abs(found - self.valid["y"]).mean())}
 
@@ -224,9 +235,9 @@ def predict(model: nn.Module, x: torch.Tensor) -> torch.Tensor:
     Returns
     ----------
     units: torch.Tensor
-        (件数,) の売れた数 / scale の予測
+        (件数,) の売れた数の予測
     """
-    # 仮のモデルは辞書, 出力が 1 つの定義はテンソルのまま
+    # 仮のモデルの辞書と, 出力が 1 つの定義のテンソル
     outputs = model(**{FEATURE_INPUT: x})
     if isinstance(outputs, dict):
         outputs = outputs[UNITS_OUTPUT]
@@ -235,11 +246,9 @@ def predict(model: nn.Module, x: torch.Tensor) -> torch.Tensor:
     return units
 
 
-def units_of(
-    model: nn.Module, x: Any, scale: float, batch_size: int
-) -> np.ndarray:
+def units_of(model: nn.Module, x: Any, batch_size: int) -> np.ndarray:
     """
-    行ごとの売れた数の予測を, まとまりごとに求めて売れた数の単位に戻す関数
+    行ごとの売れた数の予測を, まとまりごとに求める関数
 
     Parameters
     ----------
@@ -247,8 +256,6 @@ def units_of(
         売れ行きのモデル
     x: Any
         (件数, 学習に使う列の数) の行 (テンソルか配列)
-    scale: float
-        売れた数の戻し方 (学習用の行の売れた数の平均)
     batch_size: int
         1 回に渡す行の数
 
@@ -266,7 +273,7 @@ def units_of(
         for start in range(0, len(x), batch_size):
             chunk = x[start:start + batch_size].to(device)
             found.append(predict(model, chunk).cpu())
-    units = torch.cat(found).double().numpy() * scale
+    units = torch.cat(found).double().numpy()
     units = np.clip(units, 0.0, None)
 
     return units
@@ -539,7 +546,8 @@ def spec_file(
 
 
 def make_model(
-    width: int, cfg: Any, spec: Optional[Path], base_dir: Optional[Path]
+    width: int, cfg: Any, spec: Optional[Path], base_dir: Optional[Path],
+    scale: float
 ) -> nn.Module:
     """
     モデルを作る関数
@@ -554,6 +562,8 @@ def make_model(
         ML-ModelControl の定義のファイル (無ければ None)
     base_dir: Optional[Path]
         定義の中の相対の参照の起点 (None なら定義のディレクトリ)
+    scale: float
+        学習用の行の売れた数の平均 (仮のモデルの初めの出力)
 
     Returns
     ----------
@@ -567,14 +577,14 @@ def make_model(
                             base_dir=base_dir)
         return model
     torch.manual_seed(cfg.experiment.seed)
-    model = PlaceholderModel(width, cfg.model.width)
+    model = PlaceholderModel(width, cfg.model.width, scale)
 
     return model
 
 
 def units_scale(splits: dict) -> float:
     """
-    売れた数を学習用の行の平均で割る値を求める関数
+    損失で売れた数と予測を割る値を求める関数
 
     Parameters
     ----------
@@ -586,24 +596,21 @@ def units_scale(splits: dict) -> float:
     scale: float
         学習用の行の売れた数の平均 (0 なら 1)
     """
-    # 数の大きさで学習率を変えずに済むように (割っても負にならない)
+    # 売れた数の大きさで学習率を変えずに済むように
     mean = float(splits["train"]["y"].mean())
     scale = mean if mean > 0 else 1.0
 
     return scale
 
 
-def loader_of(part: dict, scale: float, batch_size: int,
-              shuffle: bool) -> DataLoader:
+def loader_of(part: dict, batch_size: int, shuffle: bool) -> DataLoader:
     """
-    分割の行と, 売れた数 / scale のまとまりを作る関数
+    分割の行と, 売れた数のまとまりを作る関数
 
     Parameters
     ----------
     part: dict
         分割の x, y
-    scale: float
-        売れた数の戻し方
     batch_size: int
         まとまりの大きさ
     shuffle: bool
@@ -612,12 +619,12 @@ def loader_of(part: dict, scale: float, batch_size: int,
     Returns
     ----------
     loader: DataLoader
-        (行, 売れた数 / scale) のまとまり
+        (行, 売れた数) のまとまり
     """
-    # 売れた数 / scale の学習
+    # 売れた数のままの正解 (scale で割るのは損失の中だけ)
     tensors = TensorDataset(
         torch.tensor(part["x"]),
-        torch.tensor(part["y"] / scale, dtype=torch.float32)
+        torch.tensor(part["y"], dtype=torch.float32)
     )
     loader = DataLoader(tensors, batch_size=batch_size, shuffle=shuffle)
 
@@ -654,10 +661,8 @@ def train_units(
         評価する重みのエポック
     """
     # 学習用と検証用のまとまり (検証の誤差は検証用の全ての行で)
-    train_loader = loader_of(splits["train"], scale, cfg.data.batch_size,
-                             True)
-    valid_loader = loader_of(splits["valid"], scale, cfg.data.batch_size,
-                             False)
+    train_loader = loader_of(splits["train"], cfg.data.batch_size, True)
+    valid_loader = loader_of(splits["valid"], cfg.data.batch_size, False)
     valid = {"x": splits["valid"]["x"], "y": splits["valid"]["y"]}
 
     # モデルの組み立てと学習 (定義がまだ無ければ仮のモデル)
@@ -668,7 +673,8 @@ def train_units(
             "仮のモデル (PlaceholderModel) で学習します. ML-CreateArchitecture"
             " で組んだ定義をその場所に置くと, 定義のモデルで学習します"
         )
-    model = make_model(splits["train"]["x"].shape[1], cfg, spec, base_dir)
+    model = make_model(splits["train"]["x"].shape[1], cfg, spec, base_dir,
+                       scale)
     trainer = PriceTrainer(model, experiment, valid, scale, cfg)
     trainer.fit(train_loader, valid_loader)
 
@@ -729,7 +735,7 @@ def product_means(products: np.ndarray, values: np.ndarray) -> tuple:
 
 def choose_prices(
     model: nn.Module, dataset: Dataset, split: str, part: dict,
-    current: np.ndarray, cfg: Any, scale: float
+    current: np.ndarray, cfg: Any
 ) -> dict:
     """
     分割の商品ごとに, 候補の値段での売れた数を予測し, 弾力性と選んだ値段を
@@ -749,8 +755,6 @@ def choose_prices(
         行ごとの今の値段
     cfg: Any
         config (値段の候補, 上限, バッチの大きさ)
-    scale: float
-        売れた数の戻し方
 
     Returns
     ----------
@@ -764,12 +768,12 @@ def choose_prices(
     batch = cfg.data.batch_size
     units = np.stack([
         units_of(model, dataset.price_inputs(split, current * (1 + change)),
-                 scale, batch)
+                 batch)
         for change in candidates
     ], axis=1)
     raised = units_of(
         model, dataset.price_inputs(split, current * (1 + ELASTICITY_STEP)),
-        scale, batch
+        batch
     )
 
     # 商品ごとの平均 (1 行あたりの売れた数) と, 今の値段と原価
@@ -811,7 +815,7 @@ def finite(value: float) -> Optional[float]:
 
 def evaluate_splits(
     experiment: Experiment, splits: dict, chosen: dict, model: nn.Module,
-    info: dict, cfg: Any, scale: float
+    info: dict, cfg: Any
 ) -> None:
     """
     検証用とテスト用の分割ごとに, 予測の誤差と値段の選び方の評価を
@@ -831,8 +835,6 @@ def evaluate_splits(
         weights, epoch, current (今の値段の決め方の文)
     cfg: Any
         config (値段の候補と上限)
-    scale: float
-        売れた数の戻し方
 
     Returns
     ----------
@@ -843,7 +845,7 @@ def evaluate_splits(
         if split not in splits:
             continue
         part = splits[split]
-        found = units_of(model, part["x"], scale, cfg.data.batch_size)
+        found = units_of(model, part["x"], cfg.data.batch_size)
         errors = found - part["y"]
         lift = chosen[split]["lift"]
         elasticity = chosen[split]["elasticity"]
@@ -898,7 +900,7 @@ def write_results(
     cfg: Any
         config (値段の候補と上限)
     scale: float
-        売れた数の戻し方
+        損失で売れた数と予測を割った値 (学習用の行の売れた数の平均)
 
     Returns
     ----------
@@ -1035,7 +1037,7 @@ def main() -> None:
     model, weights, epoch = train_units(splits, scale, cfg, spec,
                                         experiment)
     chosen = {split: choose_prices(model, dataset, split, part,
-                                   current[split], cfg, scale)
+                                   current[split], cfg)
               for split, part in splits.items()}
 
     # 実験だけで見直すための問題の設定の写し (元の問題の設定の場所
@@ -1055,15 +1057,15 @@ def main() -> None:
             "text": ("商品ごとの記録の値段の中央値" if by_product
                      else "行の記録の値段")}
     evaluate_splits(experiment, splits, chosen, model,
-                    {**info, "current": info["text"]}, cfg, scale)
+                    {**info, "current": info["text"]}, cfg)
     write_results(run_dir, path, chosen, info, cfg, scale)
     experiment.logger.info(
         f"商品ごとの選んだ値段: {CHOICES_FILE}. 値段の決め方: "
         f"{ESTIMATOR_FILE} (変える幅の上限 {cfg.price.max_change})"
     )
 
-    # TODO: ML-Inference の値段の一式づくりができたら, 成果物から推論の
-    # 一式を実験の inference/ に作る
+    # TODO: ML-Inference の値段の一式づくりを使う, 成果物からの実験の
+    # inference/ への推論の一式の作成
     experiment.logger.info(
         "推論の一式はまだ作りません (ML-Inference の値段の一式づくりが"
         "できたら, 成果物から作ります)"
@@ -1091,7 +1093,8 @@ trainer:
   grad_clip_norm: 1.0
   # 問題の設定の「最良を選ぶ指標」(valid/mae は検証用の行の, 記録の値段での
   # 売れた数の平均絶対誤差 (売れた数の単位). valid/loss は検証用の行の,
-  # 売れた数を学習用の行の平均で割った値の二乗誤差. どちらも小さいほど良い)
+  # 売れた数と予測を学習用の行の売れた数の平均で割った値の二乗誤差. どちらも
+  # 小さいほど良い)
   monitor: $monitor
   mode: $mode
 
@@ -1287,8 +1290,8 @@ def price_readme(
         "ML-CreateArchitecture で組んだ定義を, config の `model.spec` の"
         "場所 (`models/model.yaml`) に保存する. 入力は行 `x` ((件数, 学習に"
         "使う列の数) の float32. 最後の列が前処理をかけた値段) の 1 つ, "
-        "出力に売れた数の予測 `units` ((件数, 1). 学習用の行の売れた数の"
-        "平均で割った値. 負にならないよう最後に softplus をかける). 学習に"
+        "出力に売れた数の予測 `units` ((件数, 1). 売れた数のまま. 負に"
+        "ならないよう最後に softplus をかける). 学習に"
         "使う列の数は `train.log` の初めの行に出る. ML-ModelControl の同梱"
         "の例 `tabular_price` の入力の幅を列の数に合わせて使える. 定義が無い"
         "うちは, `train.py` の `PlaceholderModel` (印 TODO. 動くことを確か"
@@ -1300,7 +1303,8 @@ def price_readme(
     monitor = stages["training"]["monitor"]
     lines.append(
         "3. **学習と評価** (ML-Found, ML-Dashboard): `python train.py`. "
-        "売れた数を学習用の行の平均で割った値の二乗誤差を損失にして学び, "
+        "売れた数と予測を, 学習用の行の売れた数の平均で割った値の二乗誤差を"
+        "損失にして学び, "
         "検証のたびに検証用の行の売れた数の平均絶対誤差を `valid/mae` に"
         f"記録する. 検証用の `{monitor}` が最も良いモデルを選ぶ. 学習の後に"
         ", 商品ごとの今の値段 ("

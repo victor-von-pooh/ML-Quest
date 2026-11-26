@@ -9,7 +9,7 @@
 - 何を: 値段を変える判断の骨組み (docs/DESIGN.md の「値段を変える判断の骨組み」) の `train.py` が, 成果物 (`price_estimator.json`, `price_recipe.yaml`, `price_choices.csv`) を書いた後に, ML-Inference の値段の一式づくりで実験の中の `inference/` に値段の一式を作る. 元の表があれば, 一式の選んだ値段を `price_choices.csv` と比べて `train.log` に書く. 仮のモデルと定義を写せなかった実験は作らない (効果の見積もりの骨組みと同じ)
 - なぜ: 今の骨組みは成果物までで, ML-Inference の値段の一式づくりがまだ無いので推論の一式を作らず, 推論の段階 (ML-Provide) に渡せないため
 - 終わりの条件: 列の数に合わせた `tabular_price` の定義で学んだ実験の中に値段の一式ができ, 一式の既定の判断が `{type: price, candidates, max_change}` で, 一式の選んだ値段が `price_choices.csv` と合うことをテストで確かめる. docs/DESIGN.md の 2 節と「値段を変える判断の骨組み」の「推論」に書く
-- つながり: ML-Inference の「値段を変える判断」(一式づくりの関数の名前と, `price_estimator.json` を読む約束), docs/DESIGN.md の「効果の見積もりの骨組み」の「推論」
+- つながり: ML-Inference の「値段を変える判断」(一式の形と成果物を読む約束は ML-Inference の側で決める), docs/DESIGN.md の「効果の見積もりの骨組み」の「推論」
 
 ## 優先度 中
 
