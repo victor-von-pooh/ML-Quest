@@ -9,8 +9,8 @@ import pytest
 import yaml
 
 from ml_quest import (
-    answer, check, describe, example_problem, handoff, make_project,
-    project_error, questions, record_project
+    answer, apply_group, check, describe, example_problem, handoff,
+    make_project, project_error, questions, record_project
 )
 
 # 受け持ちの場所
@@ -272,6 +272,51 @@ def test_ready_group_handoff() -> None:
                for sentence in sentences)
     assert ("まとめ方: 写真を既製のモデルの埋め込みで 4 つの群に分ける "
             "(群の安定性は種を変えて作り直すときの一致で数える)") in sentences
+
+
+def test_ready_group_apply(tmp_path: Path) -> None:
+    """
+    既製の埋め込みの群分けに群の数と数え方を書き戻すと, 答え, 確かめと
+    骨組みの config が選んだ値になり, 列の選び方と誤った値を断ることを
+    確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 群の数と数え方の書き戻し (元は変えない. 受け渡しの group は空のまま)
+    problem = example_problem(EXAMPLE)
+    result = apply_group(problem, {"k": 6.0, "stability": "sample"})
+    assert problem["ml"]["parts"][0]["group"]["k"] == 4
+    assert result["changes"] == ["群の数を 6 に書き戻した",
+                                 "群の安定性の数え方を sample に書き戻した"]
+    updated = result["problem"]
+    assert [item for item in check(updated) if item["level"] == "error"] == []
+    assert handoff(updated)["group"] is None
+    make_project(updated, tmp_path / "project")
+    config = yaml.safe_load(
+        (tmp_path / "project" / "configs/default/bundle.yaml")
+        .read_text(encoding="utf-8")
+    )
+    assert (config["group"]["k"], config["group"]["stability"]) == (
+        6, "sample"
+    )
+    assert apply_group(problem, {"k": 4})["changes"] == []
+
+    # 列の選び方は無く, 群の数と数え方の誤りは断る
+    for group, words in (
+        ({"columns": ["a"]}, "群を作る列がありません"),
+        ({"id": None, "k": 3}, "行を見分ける列がありません"),
+        ({"k": 1}, "2 以上の整数"), ({"k": None}, "群の数"),
+        ({"stability": "bootstrap"}, "stability"),
+    ):
+        with pytest.raises(ValueError, match=words):
+            apply_group(problem, group)
 
 
 def test_ready_group_errors(tmp_path: Path) -> None:
