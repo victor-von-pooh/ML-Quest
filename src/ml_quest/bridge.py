@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ml_quest.check import (
-    check_group, finding, is_anomaly_part, is_column_part,
+    check_group, finding, is_anomaly_part, is_column_part, is_demand_part,
     is_generate_part, is_group_part, is_items_part, is_policy_part,
     is_price_part, is_uplift_part
 )
@@ -13,15 +13,15 @@ from ml_quest.problem import (
     active_value, answer, data_location, get_value, set_value,
     upgrade_problem
 )
-from ml_quest.questions import PART, SPLITS
+from ml_quest.questions import DEMAND_HORIZON, PART, SPLITS
 
 # レシピの分割の割合の既定値 (データの分析の段階で変えられる)
 VALID_RATIO = 0.15
 TEST_RATIO = 0.15
 
-# 効果の見積もりと値段を変える判断のレシピの分割の割合の既定値 (2 つの群の
-# 差で数える Qini と, 商品ごとの利益の比べの揺れを抑えるため, 他より多く
-# 検証用とテスト用に置く)
+# 効果の見積もり, 値段を変える判断と時間をまたぐ量の判断のレシピの分割の
+# 割合の既定値 (2 つの群の差で数える Qini と, 商品ごとの利益と発注の損の
+# 比べの揺れを抑えるため, 他より多く検証用とテスト用に置く)
 UPLIFT_VALID_RATIO = 0.2
 UPLIFT_TEST_RATIO = 0.2
 
@@ -65,7 +65,7 @@ GROUP_KEYS = {"columns": "群を作る列", "id": "行を見分ける列",
 def require_column_part(problem: dict, purpose: str) -> None:
     """
     列の予測, ファイルの組, 画像か表の生成, 異常の検知, 効果の見積もり,
-    値段を変える判断の受け持ちでなければ止める関数
+    値段を変える判断, 時間をまたぐ量の判断の受け持ちでなければ止める関数
 
     Parameters
     ----------
@@ -83,7 +83,8 @@ def require_column_part(problem: dict, purpose: str) -> None:
     ValueError
         方策の受け持ち (データの分析の段階を通らない) の場合と, 列の予測
         でも, ファイルの組でも, 画像か表の生成でも, 異常の検知でも, 効果の
-        見積もりでも, 値段を変える判断でもない場合
+        見積もりでも, 値段を変える判断でも, 時間をまたぐ量の判断でもない
+        場合
     """
     # 方策は環境とのやり取りで集めるので, データの分析の段階が無い. 他の
     # 受け持ちのデータの約束は, データの分析の段階の版の上げの後
@@ -95,10 +96,11 @@ def require_column_part(problem: dict, purpose: str) -> None:
     if not is_column_part(problem) and not is_items_part(problem) and (
         not is_generate_part(problem) and not is_anomaly_part(problem)
         and not is_uplift_part(problem) and not is_price_part(problem)
+        and not is_demand_part(problem)
     ):
         raise ValueError(
             f"{purpose}は, 予測するで正解の種類が表の列, 画像の領域, 点群, "
-            "異常の場合と, 作るで正解の種類が画像か表の場合と, 効果を見積もる"
+            "異常, 先の期間の需要の場合と, 作るで正解の種類が画像か表の場合と, 効果を見積もる"
             "で今ある記録から効果を見積もるか値段を選ぶ場合だけです (他の受け"
             "持ちと正解の種類はまだ扱えません)"
         )
@@ -155,7 +157,8 @@ def recipe_from(problem: dict) -> dict:
             and not is_generate_part(problem)
             and not is_anomaly_part(problem)
             and not is_uplift_part(problem)
-            and not is_price_part(problem)]
+            and not is_price_part(problem)
+            and not is_demand_part(problem)]
     elif is_generate_part(problem):
         recipe = generate_recipe(
             active_value(problem, f"{PART}.target.kind"), notes
@@ -166,6 +169,8 @@ def recipe_from(problem: dict) -> dict:
         recipe = uplift_recipe(data, notes)
     elif is_price_part(problem):
         recipe = price_recipe(data, notes)
+    elif is_demand_part(problem):
+        recipe = demand_recipe(data, notes)
     else:
         recipe = skeleton_recipe(problem, data, notes)
 
@@ -546,6 +551,60 @@ def price_recipe(data: dict, notes: list) -> dict:
     return recipe
 
 
+def demand_recipe(data: dict, notes: list) -> dict:
+    """
+    時間をまたぐ量の判断のレシピの雛形を作る関数
+
+    Parameters
+    ----------
+    data: dict
+        受け渡しのデータの分析の値 (時間をまたぐ量の判断)
+    notes: list
+        知らせの文の並び (書き足す)
+
+    Returns
+    ----------
+    recipe: dict
+        ML-EDA の需要の記録の表のレシピ (task: demand. 日ごとの売れた数,
+        商品の id, 日付の列と先の期間の日数. 在庫の数と行の id の列は答えた
+        ときだけ. 分割は発注を決める日の順の time)
+    """
+    # 予測に使わない列の削除と, 過去の売れた数 (1 日前, 先の期間と同じ
+    # 日数前と, その日数の平均. どれも発注を決める日の前の期間の中), 曜日
+    # と, 数の列の標準化 (欠けた値と種類の列の扱いはデータの分析の段階)
+    horizon = data["horizon"]
+    steps: list[dict] = []
+    if data["drop"]:
+        steps.append({"op": "drop_columns", "columns": list(data["drop"])})
+    steps += [
+        {"op": "lag", "columns": [data["target"]],
+         "lags": sorted({1, horizon}), "windows": [horizon],
+         "by": [data["product"]], "time": data["date"], "freq": "1D"},
+        {"op": "datetime_parts", "columns": [data["date"]],
+         "parts": ["weekday"]},
+        {"op": "standardize", "columns": "auto"},
+    ]
+    notes.append("骨組みは数の列だけを読み, 欠けた値を読めません. 欠けた値"
+                 "は impute か drop_missing で無くし, 種類の列は one_hot で"
+                 "数の列にしてください. 売れた後に決まる列 (捨てた数など) は"
+                 " drop_columns で落としてください")
+    recipe: dict[str, Any] = {
+        "format_version": 1, "task": "demand", "target": data["target"],
+        "product": data["product"], "date": data["date"],
+    }
+    if data["stock"]:
+        recipe["stock"] = data["stock"]
+    recipe["horizon"] = horizon
+    if data["id"]:
+        recipe["id"] = data["id"]
+    recipe.update(steps=steps, split={
+        "method": "time", "valid": UPLIFT_VALID_RATIO,
+        "test": UPLIFT_TEST_RATIO, "unlabeled": data["unlabeled"],
+    })
+
+    return recipe
+
+
 def recipe_columns(recipe: dict) -> tuple[set[str], int]:
     """
     レシピで落とす列と, 過去の値の最も小さいずらし幅を集める関数
@@ -619,6 +678,9 @@ def apply_recipe(problem: dict, recipe: dict) -> dict:
         return result
     if is_price_part(updated):
         result = apply_price(updated, recipe)
+        return result
+    if is_demand_part(updated):
+        result = apply_demand(updated, recipe)
         return result
     changes = []
     old_target = get_value(updated, f"{PART}.target.column")
@@ -866,6 +928,77 @@ def apply_price(problem: dict, recipe: dict) -> dict:
             "error", "data.recipe",
             "値段を変える判断の分割は stratified にしてください (値段の高い"
             "行と低い行を全ての分割に置くため)"
+        ))
+    if split.get("valid", SPLIT_DEFAULTS["valid"]) == 0:
+        conflicts.append(finding(
+            "warning", "data.recipe",
+            "検証用の分割がありません. 骨組みは最も良いモデルを選べず止まる"
+            "ので, 検証用の割合を 0 より大きくしてください"
+        ))
+    set_value(problem, "data.recipe", copy.deepcopy(recipe))
+    result = {"problem": problem, "changes": [], "conflicts": conflicts,
+              "choices": []}
+
+    return result
+
+
+def apply_demand(problem: dict, recipe: dict) -> dict:
+    """
+    時間をまたぐ量の判断のレシピを問題の設定に書き戻す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 時間をまたぐ量の判断. 写したもの)
+    recipe: dict
+        ML-EDA のレシピ
+
+    Returns
+    ----------
+    result: dict
+        apply_recipe と同じ形 (他の答えは変えず, 選ぶ問いは無い)
+    """
+    # タスクと, 売れた数, 商品の id, 日付, 在庫の数, 行の id の列と先の
+    # 期間の日数は答えのまま (推論の段階が同じ列と期間で発注の数を決める
+    # ため). 分割は ML-EDA の需要の予測の time だけ
+    conflicts = []
+    if recipe.get("task") != "demand":
+        conflicts.append(finding(
+            "error", "data.recipe",
+            "時間をまたぐ量の判断のレシピのタスクは demand にしてください (今"
+            f"は {recipe.get('task')})"
+        ))
+    for key, name, title in (
+        ("target", f"{PART}.demand.units", "日ごとの売れた数の列"),
+        ("product", f"{PART}.demand.product", "商品の id の列"),
+        ("date", f"{PART}.demand.date", "日付の列"),
+        ("stock", f"{PART}.demand.stock", "在庫の数の列"),
+        ("id", f"{PART}.demand.id", "行の id の列"),
+    ):
+        answered = active_value(problem, name)
+        if recipe.get(key) != answered:
+            conflicts.append(finding(
+                "error", "data.recipe",
+                f"レシピの {key} ({recipe.get(key)}) が答えた{title} ("
+                f"{answered}) と違います. 問題の設定の答えに合わせるか, 答え"
+                "を直してください"
+            ))
+    answered = active_value(problem, f"{PART}.demand.horizon")
+    answered = DEMAND_HORIZON if answered is None else answered
+    if recipe.get("horizon", DEMAND_HORIZON) != answered:
+        conflicts.append(finding(
+            "error", "data.recipe",
+            f"レシピの horizon ({recipe.get('horizon', DEMAND_HORIZON)}) が"
+            f"答えた先の期間の日数 ({answered}) と違います. 問題の設定の答え"
+            "に合わせるか, 答えを直してください"
+        ))
+    split = recipe.get("split")
+    split = split if isinstance(split, dict) else {}
+    if split.get("method") != "time":
+        conflicts.append(finding(
+            "error", "data.recipe",
+            "時間をまたぐ量の判断の分割は time にしてください (過去の発注を"
+            "決める日で学び, 先の日で測るため)"
         ))
     if split.get("valid", SPLIT_DEFAULTS["valid"]) == 0:
         conflicts.append(finding(

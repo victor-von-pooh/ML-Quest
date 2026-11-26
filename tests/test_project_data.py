@@ -465,6 +465,10 @@ BLOCKING_IDS = {
     "ml.parts.0.varied", "ml.parts.0.price.price", "ml.parts.0.price.units",
     "ml.parts.0.price.cost", "ml.parts.0.price.product",
     "ml.parts.0.price.id", "ml.parts.0.price.columns",
+    "ml.parts.0.demand.product", "ml.parts.0.demand.date",
+    "ml.parts.0.demand.units", "ml.parts.0.demand.stock",
+    "ml.parts.0.demand.id", "ml.parts.0.demand.columns",
+    "ml.parts.0.demand.horizon", "ml.parts.0.demand.levels",
 }
 
 

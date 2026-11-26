@@ -19,8 +19,8 @@ from ml_quest.baseline_skeleton import (
     reported_value
 )
 from ml_quest.check import (
-    choice_label, is_anomaly_part, is_column_part, is_generate_part,
-    is_group_part,
+    choice_label, is_anomaly_part, is_column_part, is_demand_part,
+    is_generate_part, is_group_part,
     is_policy_part, is_price_part, is_rank_part, is_ready_group_part,
     is_uplift_part, split_errors
 )
@@ -44,6 +44,10 @@ from ml_quest.items_skeleton import (
 from ml_quest.policy_skeleton import (
     POLICY_LIBRARIES, POLICY_MODEL, policy_config, policy_env, policy_name,
     policy_readme, policy_script
+)
+from ml_quest.demand_skeleton import (
+    DEMAND_DATASET, DEMAND_LIBRARIES, demand_config, demand_name,
+    demand_readme, demand_script
 )
 from ml_quest.price_skeleton import (
     PRICE_DATASET, PRICE_LIBRARIES, price_config, price_name, price_readme,
@@ -832,6 +836,7 @@ def experiment_name(problem: dict, name: Optional[str]) -> str:
                else anomaly_name(problem) if is_anomaly_part(problem)
                else uplift_name(problem) if is_uplift_part(problem)
                else price_name(problem) if is_price_part(problem)
+               else demand_name(problem) if is_demand_part(problem)
                else items_name(problem))
     raw = name or default
     text = re.sub(r"[^\w-]+", "_", raw).strip("_") or "problem"
@@ -1115,12 +1120,13 @@ def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
     anomaly = is_anomaly_part(upgraded)
     uplift = is_uplift_part(upgraded)
     price = is_price_part(upgraded)
+    demand = is_demand_part(upgraded)
     if not is_column_part(upgraded) and skeleton_kind(upgraded) is None and (
         not generate and not policy and not rank and not group
-        and not anomaly and not uplift and not price
+        and not anomaly and not uplift and not price and not demand
     ):
         message = ("骨組みを書き出せるのは, 予測するで正解の種類が表の列, "
-                   "画像の領域, 点群, 異常の場合と, 作るで正解の種類が画像か表の場合"
+                   "画像の領域, 点群, 異常, 先の期間の需要の場合と, 作るで正解の種類が画像か表の場合"
                    "と, 並べるとまとめるの場合と, 効果を見積もるで続けて行動を"
                    "選ぶ方策か今ある記録から効果を見積もるか値段を選ぶ場合と, "
                    "予測するで"
@@ -1128,13 +1134,16 @@ def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
                    "なく試して集める効果の見積もりと, 他の正解の種類はまだ扱え"
                    "ません)")
         return message, exportable
-    if generate or policy or rank or group or anomaly or uplift or price:
+    if generate or policy or rank or group or anomaly or uplift or price or (
+        demand
+    ):
         message = (policy_message(upgraded) if policy
                    else rank_message(upgraded) if rank
                    else group_message(upgraded) if group
                    else anomaly_message(upgraded) if anomaly
                    else uplift_message(upgraded) if uplift
                    else price_message(upgraded) if price
+                   else demand_message(upgraded) if demand
                    else table_message(upgraded)
                    if active_value(upgraded, f"{PART}.target.kind") == "table"
                    else generate_message(upgraded))
@@ -1407,6 +1416,42 @@ def price_message(problem: dict) -> Optional[str]:
                    f"記録の表で学びます (入れたデータ {Path(str(source)).name}"
                    " は表として読んでいません). 値段の列と売れた数の列を持つ表"
                    "のファイル (CSV, Parquet など) を入れてください")
+
+    return message
+
+
+def demand_message(problem: dict) -> Optional[str]:
+    """
+    時間をまたぐ量の判断の骨組みを書き出せない理由を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 時間をまたぐ量の判断)
+
+    Returns
+    ----------
+    message: Optional[str]
+        誤りの文 (出力の形が分布でない, 入れたデータが表でない. 書き出せる
+        なら None)
+    """
+    # 需要の記録の表 (指標は 0.5 の分位点の誤差か損失)
+    output = active_value(problem, f"{PART}.output")
+    loader = active_value(problem, "data.loader")
+    options = get_value(problem, "data.options")
+    source = get_value(problem, "data.source")
+    text = isinstance(options, dict) and options.get("text_column")
+    message = None
+    if output != "distribution":
+        message = ("時間をまたぐ量の判断の骨組みは, 出力の形が「分布」の場合"
+                   "だけです (今は"
+                   f"{choice_label(OUTPUTS, output, problem)})")
+    elif source and (loader not in TABLE_LOADERS or text):
+        message = ("時間をまたぐ量の判断の骨組みは, 商品ごとの日ごとの売れた"
+                   f"数の記録の表で学びます (入れたデータ "
+                   f"{Path(str(source)).name} は表として読んでいません). "
+                   "商品の id, 日付, 売れた数の列を持つ表のファイル (CSV, "
+                   "Parquet など) を入れてください")
 
     return message
 
@@ -1760,6 +1805,23 @@ def project_files(
                 data_file.as_posix() if data_file else None
             ),
             "train.py": price_script(problem, literal),
+        }
+        return files
+
+    # 時間をまたぐ量の判断 (入れた表は data に写し, 需要の記録の表は
+    # データの分析の段階が outputs/dataset に書き出す)
+    if is_demand_part(problem):
+        files = {
+            "README.md": demand_readme(
+                problem, stages, DEMAND_DATASET,
+                data_file.as_posix() if data_file else None
+            ),
+            "configs/default/train.yaml": demand_config(
+                experiment_name(problem, name), stages, DEMAND_DATASET,
+                requires_text(DEMAND_LIBRARIES, stages), spec_exists,
+                data_file.as_posix() if data_file else None
+            ),
+            "train.py": demand_script(problem, literal),
         }
         return files
 

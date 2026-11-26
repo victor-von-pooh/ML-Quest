@@ -8,8 +8,8 @@ from ml_quest.problem import (
     upgrade_problem, version_message
 )
 from ml_quest.questions import (
-    ANOMALY_ASSIGNED, ANOMALY_SCORES, COLLECTS, CONSUMERS, FALLBACKS,
-    GROUP_ASSIGNED, GROUP_STABILITIES, GROUP_TAKEN, GUARD_COUNTS,
+    ANOMALY_ASSIGNED, ANOMALY_SCORES, COLLECTS, CONSUMERS, DEMAND_ASSIGNED,
+    FALLBACKS, GROUP_ASSIGNED, GROUP_STABILITIES, GROUP_TAKEN, GUARD_COUNTS,
     METHODS, METRICS, NOT_COUNTED, OUTPUTS, PART, PRICE_ASSIGNED, QUESTIONS,
     READY_LIBRARIES, ROLES, SIMULATORS, TARGET_KINDS, TARGET_SOURCES, UNITS,
     UPLIFT_ASSIGNED, UPLIFT_OUTCOMES, V1_METRICS, VARIED
@@ -54,7 +54,7 @@ GENERATE_KINDS = ("image", "table")
 PART_DICTS = [f"{PART}.target", f"{PART}.target.process",
               f"{PART}.evaluation", f"{PART}.policy", f"{PART}.ready",
               f"{PART}.rank", f"{PART}.group", f"{PART}.anomaly",
-              f"{PART}.uplift", f"{PART}.price"]
+              f"{PART}.uplift", f"{PART}.price", f"{PART}.demand"]
 
 # 受け持ちの, 選んで書く項目と選択肢 (手で書いたファイルの確かめ)
 PART_CHOICES = {
@@ -98,6 +98,18 @@ PRICE_COLUMNS = {f"{PART}.price.price": "値段の列",
                  f"{PART}.price.product": "商品の id の列",
                  f"{PART}.price.id": "行の id の列"}
 
+# 時間をまたぐ量の判断の, 列の名前の項目 (商品の id, 日付, 売れた数, 在庫
+# の数, 行の id) と文の中の呼び方
+DEMAND_COLUMNS = {f"{PART}.demand.product": "商品の id の列",
+                  f"{PART}.demand.date": "日付の列",
+                  f"{PART}.demand.units": "日ごとの売れた数の列",
+                  f"{PART}.demand.stock": "在庫の数の列",
+                  f"{PART}.demand.id": "行の id の列"}
+
+# データの分析の段階 (ML-EDA の需要の記録の表) が足す列の名前 (先の期間と
+# 前の期間の売れた数の合計)
+DEMAND_TAKEN = ("demand", "demand_previous")
+
 # 並べるの列の項目の, 文の中の呼び方
 RANK_TITLES = dict(zip(RANK_COLUMNS, ("利用者の列", "品物の列", "時刻の列",
                                       "反応の強さの列")))
@@ -121,7 +133,7 @@ COLUMN_LISTS = ["information.columns", f"{PART}.series_by",
                 "information.known", "information.unknown",
                 "information.forbidden", f"{PART}.group.columns",
                 f"{PART}.anomaly.columns", f"{PART}.uplift.columns",
-                f"{PART}.price.columns"]
+                f"{PART}.price.columns", f"{PART}.demand.columns"]
 
 
 def finding(level: str, key: str, message: str) -> dict:
@@ -227,7 +239,8 @@ def check_shape(problem: dict) -> list[dict]:
                 f"{PART}.target.process.name", *PART_CHOICES,
                 *POLICY_TEXTS, *READY_TEXTS, *RANK_COLUMNS,
                 f"{PART}.group.id", f"{PART}.anomaly.label",
-                f"{PART}.anomaly.id", *UPLIFT_COLUMNS, *PRICE_COLUMNS):
+                f"{PART}.anomaly.id", *UPLIFT_COLUMNS, *PRICE_COLUMNS,
+                *DEMAND_COLUMNS):
         value = get_value(problem, key)
         if value is not None and not isinstance(value, str):
             found.append(finding("error", key,
@@ -575,6 +588,14 @@ def check_decision(problem: dict) -> list[dict]:
     if not decision:
         return found
     kind = decision["type"]
+    if kind == "order":
+        found.append(finding(
+            "error", "action.decision",
+            f"{DECISION_NAMES[kind]}判断は, 予測するで正解の種類が先の期間の"
+            "需要の受け持ちだけです. 列の予測の判断は, 量を決める, 対象を選ぶ"
+            ", 振り分けるのどれかにしてください"
+        ))
+        return found
     if kind in ("treat", "price"):
         found.append(finding(
             "error", "action.decision",
@@ -1008,6 +1029,8 @@ def check(problem: dict) -> list[dict]:
             found += check_uplift(problem)
         if is_price_part(problem):
             found += check_price(problem)
+        if is_demand_part(problem):
+            found += check_demand(problem)
         found += check_part(problem)
         found += check_evaluation(problem)
         found += check_consumer(problem)
@@ -2064,6 +2087,270 @@ def is_finite_number(value: Any) -> bool:
     ) and math.isfinite(value)
 
     return number
+
+
+def is_demand_part(problem: dict) -> bool:
+    """
+    受け持ちが時間をまたぐ量の判断 (予測するで, 正解の種類が先の期間の需要.
+    作り方が既製のモデルをそのままでない) かを返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    demand: bool
+        時間をまたぐ量の判断の骨組みを書き出す受け持ちか (出力の形は問わ
+        ない. 確かめと骨組みの書き出しが分布かを確かめる)
+    """
+    # 受け持ち, 正解の種類と作り方の答え (要らない問いの古い答えは除外)
+    demand = active_value(problem, f"{PART}.role") == "predict" and (
+        active_value(problem, f"{PART}.target.kind") == "demand"
+        and active_value(problem, f"{PART}.method") != "pretrained"
+    )
+
+    return demand
+
+
+def check_demand(problem: dict) -> list[dict]:
+    """
+    時間をまたぐ量の判断の正解の出どころ, 出力の形, 列, 期間, 水準と発注の
+    判断を確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 時間をまたぐ量の判断)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (発注の数の上限が 0 の場合だけ warning, 他は error)
+    """
+    # 正解は記録の売れた数の列, 出力の形は分布 (分位点)
+    found: list[dict] = []
+    source = active_value(problem, f"{PART}.target.source")
+    if source not in (None, "column"):
+        found.append(finding(
+            "error", f"{PART}.target.source",
+            "日ごとの売れた数の記録から先の期間の合計を学ぶので, 正解の出どころ"
+            f"は{choice_label(TARGET_SOURCES, 'column')}にしてください"
+        ))
+    output = active_value(problem, f"{PART}.output")
+    if output not in (None, "distribution"):
+        found.append(finding(
+            "error", f"{PART}.output",
+            "正解の種類が先の期間の需要なので, 出力の形は"
+            f"{choice_label(OUTPUTS, 'distribution')} (水準ごとの分位点) に"
+            f"してください (今は{choice_label(OUTPUTS, output)})"
+        ))
+
+    # 列の答え, 先の期間の日数, 学ぶ水準と, 発注の判断
+    found += demand_columns(problem)
+    found += demand_periods(problem)
+    found += order_findings(problem)
+
+    return found
+
+
+def demand_columns(problem: dict) -> list[dict]:
+    """
+    時間をまたぐ量の判断の列の答えを確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 時間をまたぐ量の判断)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (使えるデータの列に無い, 予測に使う列と重なる, 列どうしが
+        同じ, 商品の id と日付の列の名前の決まり, ML-EDA の足す列の名前.
+        どれも error)
+    """
+    # 使えるデータの列の一覧が無いときの, 列に無いかの確かめの省略
+    found: list[dict] = []
+    columns = active_value(problem, "information.columns") or []
+    used = active_value(problem, f"{PART}.demand.columns") or []
+    missing = [name for name in used if columns and name not in columns]
+    if missing:
+        found.append(finding(
+            "error", f"{PART}.demand.columns",
+            f"{', '.join(missing)} は使えるデータの列にありません"
+        ))
+    named: dict[str, str] = {}
+    for item, title in DEMAND_COLUMNS.items():
+        name = active_value(problem, item)
+        if not name:
+            continue
+        if columns and name not in columns:
+            found.append(finding("error", item,
+                                 f"{name} は使えるデータの列にありません"))
+        elif name in used:
+            found.append(finding(
+                "error", item,
+                f"{name} は需要の予測に使う商品の特徴の列にもあります. {title}"
+                "は予測に使う列に入れません (過去の売れた数はデータの分析の"
+                "段階でずらした列にします)"
+            ))
+        same = [key for key, value in named.items() if value == name]
+        if same:
+            found.append(finding(
+                "error", item,
+                f"{name} は{DEMAND_COLUMNS[same[0]]}と同じです. 別の列にして"
+                "ください"
+            ))
+        named[item] = name
+
+    # 商品の id と日付の列の名前 (発注の数の表の他の列) と, ML-EDA の行の
+    # 位置と先の期間と前の期間の合計の列
+    for item in (f"{PART}.demand.product", f"{PART}.demand.date"):
+        key = active_value(problem, item)
+        if key and key in DEMAND_ASSIGNED:
+            found.append(finding(
+                "error", item,
+                f"{DEMAND_COLUMNS[item]} {key} は発注の数の表の列 ("
+                f"{', '.join(DEMAND_ASSIGNED)}) と同じ名前です. 名前を変えた"
+                "列を作ってから選んでください"
+            ))
+    if not active_value(problem, f"{PART}.demand.id") and "row_id" in columns:
+        found.append(finding(
+            "error", f"{PART}.demand.id",
+            "使えるデータの列に row_id があります. データの分析の段階は行の"
+            "位置を row_id の列にするので, 行の id の列を答えてください"
+        ))
+    taken = [name for name in DEMAND_TAKEN if name in columns]
+    if taken:
+        found.append(finding(
+            "error", "information.columns",
+            f"使えるデータの列に {', '.join(taken)} があります. データの分析"
+            "の段階は先の期間と前の期間の売れた数の合計をこの名前の列に置く"
+            "ので, 名前を変えた列を作ってください"
+        ))
+
+    return found
+
+
+def demand_periods(problem: dict) -> list[dict]:
+    """
+    時間をまたぐ量の判断の先の期間の日数と, 学ぶ分位点の水準を確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 時間をまたぐ量の判断)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (日数が 1 以上の整数でない, 水準が 0 より大きく 1 より小さい
+        数でないか重なる. どれも error)
+    """
+    # 先の期間の日数は 1 以上の整数
+    found: list[dict] = []
+    horizon = active_value(problem, f"{PART}.demand.horizon")
+    if horizon is not None and (
+        not is_finite_number(horizon) or not float(horizon).is_integer()
+        or horizon < 1
+    ):
+        found.append(finding(
+            "error", f"{PART}.demand.horizon",
+            "先の期間の日数は 1 以上の整数にしてください"
+        ))
+
+    # 水準は 0 より大きく 1 より小さい数の, 重ならない並び
+    levels = active_value(problem, f"{PART}.demand.levels")
+    if levels is None:
+        return found
+    if not isinstance(levels, list) or not levels or not all(
+        is_finite_number(level) and 0 < level < 1 for level in levels
+    ):
+        found.append(finding(
+            "error", f"{PART}.demand.levels",
+            "学ぶ分位点の水準は, 0 より大きく 1 より小さい数の並びにして"
+            "ください (9 割の点なら 0.9)"
+        ))
+    elif len(set(levels)) != len(levels):
+        found.append(finding(
+            "error", f"{PART}.demand.levels",
+            "学ぶ分位点の水準に同じ値が重なっています. 1 つにしてください"
+        ))
+
+    return found
+
+
+def order_findings(problem: dict) -> list[dict]:
+    """
+    時間をまたぐ量の判断の, 発注の判断の型, 損と上限を確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 時間をまたぐ量の判断)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (発注の判断でない, 損か上限の形の誤り, 書けない項目は
+        error. 上限が 0 で何も発注しない場合は warning)
+    """
+    # 型 (発注の判断だけ)
+    found: list[dict] = []
+    decision = active_value(problem, "action.decision")
+    if not isinstance(decision, dict):
+        return found
+    name = DECISION_NAMES["order"]
+    if decision.get("type") != "order":
+        found.append(finding(
+            "error", "action.decision",
+            f"時間をまたぐ量の判断の判断は「{name}」(order) にしてください ("
+            "商品ごとに, 損の比から決まる水準の分位点から在庫を引いて, 上限"
+            "の中で発注する)"
+        ))
+        return found
+
+    # 2 つの損は商品 1 つあたりの正の数 (どちらかが 0 だと水準が 0 か 1
+    # になり, 分位点で決まらない)
+    for field, title in (("shortage_cost", "品切れの損"),
+                         ("holding_cost", "売れ残りの損")):
+        value = decision.get(field)
+        if value is None:
+            found.append(finding(
+                "error", "action.decision",
+                f"{name}判断の {field} ({title}) を書いてください"
+            ))
+        elif not is_finite_number(value) or value <= 0:
+            found.append(finding(
+                "error", "action.decision",
+                f"{title} ({field}) は商品 1 つあたりの正の数にしてください "
+                "(列の名前では書けません. 全ての商品で同じ値)"
+            ))
+
+    # 上限は 0 以上の数 (0 なら何も発注しない)
+    limit = decision.get("max_order")
+    if limit is None:
+        found.append(finding(
+            "error", "action.decision",
+            f"{name}判断の max_order (発注の数の上限) を書いてください"
+        ))
+    elif not is_finite_number(limit) or limit < 0:
+        found.append(finding(
+            "error", "action.decision",
+            "発注の数の上限 (max_order) は 0 以上の数にしてください (守る"
+            "指標なので省けません)"
+        ))
+    elif limit < 1:
+        found.append(finding(
+            "warning", "action.decision",
+            "発注の数の上限が 1 より小さいので, どの商品も発注しません. 置き"
+            "場所の上限を書いてください"
+        ))
+    found += option_findings(decision)
+
+    return found
 
 
 def check_v1(problem: dict) -> list[dict]:
