@@ -768,6 +768,8 @@ pip で入らないものを含む外の道具 (ROS2, MuJoCo, CUDA) は, 要る�
 
 `make_project(problem, path)` は ML-Found のプロジェクトの骨組みを書き出す. 骨組みを組めない確かめの `error` があれば誤り. 骨組みを組める `error` (問題の設定の確かめの一部と, 入れたデータの確かめ) は, 「それでも書き出す」と指定すれば (`accept_errors`) 書き出せる (下の「残っている直すところ」). 既にあるファイルは上書きしない (`overwrite=True` で上書き).
 
+`skeleton_type(problem)` は, 書き出す骨組みの型の名前 (`SKELETON_TYPES` のどれか. 機械学習を使わないなら `None`) を返す. 書き出しの組み立てと同じ順で受け持ちを見分ける (`search` 似た写真を探す, `group_ready` 既製の埋め込みの群分け, `ready` 既製のモデルの予測, `policy` 方策, `rank` 並べる, `group` まとめる, `anomaly` 異常の検知, `uplift` 効果の見積もり, `price` 値段を変える判断, `demand` 時間をまたぐ量の判断, `table` 表の生成, `generate` 画像の生成, `items` 画像の領域と点群, 他は `column` 列の予測). 画面 (ML-Pathfinder) は書き出す対話の説明をこの名前だけで出し分け, 受け持ちを見分ける決まりを写して持たない (型を足したときに写しが古くならないように). 書き出せるかは `project_error` が決め, この型は書き出せない問題の設定にも返る
+
 ```
 <プロジェクト>/
 ├── problem.yaml                # 問題の設定の写し (元の場所 origin を持つ)

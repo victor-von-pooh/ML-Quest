@@ -20,9 +20,9 @@ from ml_quest.baseline_skeleton import (
 )
 from ml_quest.check import (
     choice_label, is_anomaly_part, is_column_part, is_demand_part,
-    is_generate_part, is_group_part, is_policy_part, is_price_part,
-    is_rank_part, is_ready_group_part, is_search_part, is_uplift_part,
-    split_errors
+    is_generate_part, is_group_part, is_items_part, is_policy_part,
+    is_price_part, is_rank_part, is_ready_group_part, is_search_part,
+    is_uplift_part, split_errors
 )
 from ml_quest.data import (
     ITEMS_KINDS, TABLE_LOADERS, content_kind, copy_data, dataset_info,
@@ -1651,6 +1651,58 @@ def skeleton_kind(problem: dict) -> Optional[str]:
         kind = None
 
     return kind
+
+
+# 書き出す骨組みの型 (画面が書き出す対話の説明を出し分ける名前. 判定の順)
+SKELETON_TYPES = (
+    "search", "group_ready", "ready", "policy", "rank", "group", "anomaly",
+    "uplift", "price", "demand", "table", "generate", "items", "column",
+)
+
+
+def skeleton_type(problem: dict) -> Optional[str]:
+    """
+    問題の設定から書き出す骨組みの型を返す関数
+
+    書き出しの組み立て (project_files) と同じ順で受け持ちを見分けるので,
+    画面はこの名前だけで書き出す対話の説明を出し分けられる (決まりを写して
+    持たずに済む)
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 1 は版 2 に移して見る)
+
+    Returns
+    ----------
+    kind: Optional[str]
+        SKELETON_TYPES のどれか (機械学習を使わないなら None)
+    """
+    # 機械学習を使う受け持ちだけ (要らない問いの古い答えは除外)
+    upgraded = upgrade_problem(problem)
+    if get_value(upgraded, "ml.use") is not True:
+        return None
+    role = active_value(upgraded, f"{PART}.role")
+    pretrained = active_value(upgraded, f"{PART}.method") == "pretrained"
+    kind = active_value(upgraded, f"{PART}.target.kind")
+    checks = (
+        ("search", is_search_part(upgraded)),
+        ("group_ready", is_ready_group_part(upgraded)),
+        ("ready", role == "predict" and pretrained),
+        ("policy", is_policy_part(upgraded)),
+        ("rank", is_rank_part(upgraded)),
+        ("group", is_group_part(upgraded)),
+        ("anomaly", is_anomaly_part(upgraded)),
+        ("uplift", is_uplift_part(upgraded)),
+        ("price", is_price_part(upgraded)),
+        ("demand", is_demand_part(upgraded)),
+        ("table", is_generate_part(upgraded) and kind == "table"),
+        ("generate", is_generate_part(upgraded)),
+        ("items", is_items_part(upgraded)),
+    )
+    found = next((name for name, matched in checks if matched), "column")
+
+    return found
 
 
 def project_files(
