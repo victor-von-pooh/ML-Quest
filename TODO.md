@@ -19,6 +19,12 @@
 - 終わりの条件: 距離に基づく度合いの骨組みの実験に `run.json` と `history.csv` が残り, 評価と成果物が今と同じ値になることをテストで確かめる
 - つながり: ML-Found の docs/DESIGN.md の「11. 更新の手順」(パラメータの無いモデルの扱い)
 
+### 並べるの骨組みの指標を ML-Found の関数で数える
+- 何を: 並べるの骨組みの `train.py` の `rank_metrics` (Recall@K と NDCG を自分で数える関数) を, ML-Found の `recall_at_k` と `ndcg_at_k` (ML-Found の docs/DESIGN.md の 14 節の「推薦の上位 K 件の Recall@K と NDCG」) を呼ぶ形に置き換える. docs/DESIGN.md の 2 節の表に, 異常の検知の指標と同じ形で ML-Found の推薦の指標を呼ぶ約束を足す
+- なぜ: 同じ数え方を骨組みと ML-Found の両方に持つと, 片方だけを直したときに学習の段階と推論の段階の値が食い違うため. 異常の検知の骨組みは ML-Found の関数を呼んでいる
+- 終わりの条件: 書き出した並べるの骨組みが ML-Found の 2 つの関数で数え, 今の骨組みと同じ値 (正解の無い利用者を数えない, 数える利用者がいない場合は 0) になることをテストで確かめる
+- つながり: ML-Found の `recall_at_k` と `ndcg_at_k`, ML-Inference の `rank_metrics` (ML-Found に依存せず, ML-Found の見本で照合する)
+
 ## 優先度 低
 
 無し
