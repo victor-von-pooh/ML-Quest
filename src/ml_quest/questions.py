@@ -121,8 +121,12 @@ UPLIFT_ASSIGNED = ("split", "effect", "treated", "control", "treatment",
 
 # 予測するかまとめるで, 既製のモデルをそのまま使う場合だけの問い (一式
 # づくりに渡す値. まとめるは既製のモデルの埋め込みで群を作る)
-READY = [USES_ML, {"id": f"{PART}.role", "in": ["predict", "group"]},
+READY = [USES_ML, {"id": f"{PART}.role", "in": ["predict", "group", "rank"]},
          PRETRAINED]
+
+# 似た写真を探す (並べるで, 作り方が既製のモデルをそのまま) の場合だけの
+# 問い (検索の判断)
+SEARCH = [USES_ML, {"id": f"{PART}.role", "equals": "rank"}, PRETRAINED]
 
 # 入れたデータが画像, 文か音声 (1 件の中身で学ぶ) の場合と, 骨組みが今の
 # やり方の結果を 1 件ずつ並べられない場合 (画像, 文か音声の列の予測と, 画像
@@ -337,7 +341,7 @@ COLUMNS_ASKED = [{"any": [
 # 意思決定の型と損得を問う場合 (列の予測と, 効果の見積もりと, 値段を変える
 # 判断と, 時間をまたぐ量の判断)
 DECIDED = [{"any": [{"all": COLUMN_TARGET}, {"all": LOGGED},
-                    {"all": DEMAND}]}]
+                    {"all": DEMAND}, {"all": SEARCH}]}]
 
 # 群の安定性の数え方 (作り直し方)
 GROUP_STABILITIES = [
@@ -458,6 +462,16 @@ DECISION_TYPES = [
                    "の単位の正の数)"},
          {"key": "max_order", "required": True,
           "label": "発注の数の上限 (守る指標. 置き場所の上限. 0 以上の数)"},
+     ]},
+    {"value": "search", "label": "近い順に上位 K 件を返す (問いの写真に似た"
+     "写真)",
+     "fits": [{"role": "rank", "methods": ["pretrained"]}], "fields": [
+         {"key": "k", "required": True,
+          "label": "問いごとに返す件数 K (1 以上の整数. Recall@K と NDCG@K "
+                   "もこの K で数える)"},
+         {"key": "max_latency_ms", "required": False,
+          "label": "1 件の問いの待ち時間の上限 (守る指標. ミリ秒の正の数. "
+                   "任意)"},
      ]},
 ]
 
@@ -1088,7 +1102,9 @@ QUESTIONS: list[dict[str, Any]] = [
              "に対する変える割合の並び. 0 を含む) と, 値段を変える幅の上限 "
              "(守る指標. 上限を超える候補は選ばない). 損の比で発注の数を決め"
              "る: 1 つ足りないときの損と 1 つ余ったときの損 (同じお金の単位) "
-             "と, 発注の数の上限 (守る指標. 置き場所の上限)"},
+             "と, 発注の数の上限 (守る指標. 置き場所の上限). 近い順に上位 K "
+             "件を返す: 問いごとに返す件数 K と, 1 件の問いの待ち時間の上限 "
+             "(守る指標. ミリ秒. 任意)"},
     {"id": f"{PART}.anomaly.capacity", "section": 7, "kind": "number",
      "required": True, "when": ANOMALY,
      "title": "人が 1 回に確かめられる件数の上限は (守る指標)",

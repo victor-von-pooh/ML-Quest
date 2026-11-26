@@ -46,6 +46,7 @@ DECISION_FIELDS = {
     "price": {"candidates": True, "max_change": True},
     "order": {"shortage_cost": True, "holding_cost": True,
               "max_order": True},
+    "search": {"k": True, "max_latency_ms": False},
 }
 
 # 意思決定の型ごとの, 数の並びで書く項目 (値段の候補の変える割合)
@@ -82,6 +83,7 @@ FIELD_NAMES = {
     "effect_goal": "向き", "candidates": "値段の候補",
     "max_change": "変える幅の上限", "shortage_cost": "品切れの損",
     "holding_cost": "売れ残りの損", "max_order": "発注の数の上限",
+    "k": "返す件数", "max_latency_ms": "待ち時間の上限 (ms)",
 }
 
 # 意思決定の型の名前
@@ -90,6 +92,7 @@ DECISION_NAMES = {
     "triage": "振り分ける", "none": "意思決定しない",
     "treat": "効果の上位から配る", "price": "利益が最も大きい値段を選ぶ",
     "order": "損の比で発注の数を決める",
+    "search": "近い順に上位 K 件を返す",
 }
 
 
@@ -405,8 +408,8 @@ def choices_of(problem: dict, question: dict) -> list[dict]:
 
 def choice_fits(problem: dict, choice: dict) -> bool:
     """
-    選択肢が今の答え (受け持ち, 正解の種類, タスク, 正解の出どころ, 方策
-    か) に合うかを返す関数
+    選択肢が今の答え (受け持ち, 正解の種類, タスク, 正解の出どころ, 作り
+    方, 方策か) に合うかを返す関数
 
     Parameters
     ----------
@@ -424,7 +427,8 @@ def choice_fits(problem: dict, choice: dict) -> bool:
     answers = {"role": get_value(problem, f"{PART}.role"),
                "kinds": get_value(problem, f"{PART}.target.kind"),
                "tasks": get_value(problem, f"{PART}.task"),
-               "sources": get_value(problem, f"{PART}.target.source")}
+               "sources": get_value(problem, f"{PART}.target.source"),
+               "methods": get_value(problem, f"{PART}.method")}
     autonomous = get_value(problem, f"{PART}.autonomous")
     varied = active_value(problem, f"{PART}.varied") or (
         "treat" if active_value(problem, f"{PART}.collect") == "log"
@@ -438,7 +442,7 @@ def choice_fits(problem: dict, choice: dict) -> bool:
                                                          answers["role"]))
         and all(answers[name] is None or name not in item
                 or answers[name] in item[name]
-                for name in ("kinds", "tasks", "sources"))
+                for name in ("kinds", "tasks", "sources", "methods"))
         and ("policy" not in item or not isinstance(autonomous, bool)
              or autonomous is item["policy"])
         and ("varied" not in item or varied is None

@@ -5,7 +5,7 @@ from ml_quest.questions import PART
 
 # 見本の答え (架空の課題. 問いの順). 量を決める予測, 対象を選ぶ分類,
 # 既製のモデルをそのまま使う画像の分類, 既製の埋め込みの写真の群分け,
-# 機械学習を使わない出口
+# 既製の埋め込みで似た写真を探す, 機械学習を使わない出口
 EXAMPLES: dict[str, list[tuple[str, Any]]] = {
     "総菜の作る量": [
         ("issue.owner", "店長"),
@@ -215,6 +215,54 @@ EXAMPLES: dict[str, list[tuple[str, Any]]] = {
         ("verification.success", "棚を作るのにかかる時間が月 5 時間になる"),
         ("operation.review", "月に 1 回"),
         ("operation.stop", "群を見ても棚に使えないと担当が判断したら止める"),
+    ],
+    "似た商品の写真を探す (既製の埋め込み)": [
+        ("issue.owner", "通販の売り場の担当"),
+        ("issue.pain", "客から届いた商品の写真に似た商品を探すのに時間が"
+                       "かかり, 見つからずに問い合わせが残る"),
+        ("issue.current", "担当が商品の一覧を見比べて, 似た商品を探す"),
+        ("issue.kpi.name", "似た商品を返すまでの時間"),
+        ("issue.kpi.unit", "分 / 件"),
+        ("issue.kpi.better", "lower"),
+        ("issue.kpi.current", 15),
+        ("issue.kpi.target", 3),
+        ("decomposition", [
+            {"cause": "似た見た目の商品を人が一覧から全て見比べる",
+             "lever": "既製のモデルの埋め込みで, 写真に見た目の近い商品の"
+                      "写真を上位から返し, 人は候補から選ぶだけにする",
+             "ml": True},
+            {"cause": "商品の写真の撮り方がそろっていない",
+             "lever": "撮り方の決まりを作る", "ml": False},
+        ]),
+        ("action.what", "客に返す似た商品の候補"),
+        ("action.who", "通販の売り場の担当"),
+        ("action.when", "客から商品の写真が届いたとき"),
+        ("ml.use", True),
+        ("ml.reason", "見た目の似方は決まりで書けない. 画像の分類の既製の"
+                      "モデルの埋め込みで似た写真が近くなるので学習しない"),
+        (f"{PART}.role", "rank"),
+        (f"{PART}.unit", "query"),
+        (f"{PART}.output", "ranking"),
+        (f"{PART}.target.source", "none"),
+        (f"{PART}.method", "pretrained"),
+        (f"{PART}.ready.library", "torchvision"),
+        (f"{PART}.ready.model", "resnet18"),
+        (f"{PART}.ready.weights", "IMAGENET1K_V1"),
+        (f"{PART}.ready.sha256", "8ec1484cdbb88ded96d21c3a5936faf3cdcc665aef"
+                                 "92f331f675d0c63038f0ba"),
+        (f"{PART}.what", "問いの写真に見た目の近い商品の写真"),
+        (f"{PART}.item", "問いの写真 1 枚"),
+        (f"{PART}.baseline", "担当が商品の一覧を見比べて探す"),
+        (f"{PART}.consumer", "human"),
+        ("action.decision", {"type": "search", "k": 5,
+                             "max_latency_ms": 200}),
+        ("verification.method", "trial"),
+        ("verification.trial", "1 か月, 候補を見ながら似た商品を返す"),
+        ("verification.success", "似た商品を返すまでの時間が 1 件 3 分に"
+                                 "なる"),
+        ("operation.review", "月に 1 回"),
+        ("operation.stop", "候補に似た商品が無いと担当が判断した件が半分を"
+                           "超えたら止める"),
     ],
     "問い合わせの振り分け (機械学習を使わない)": [
         ("issue.owner", "サポートの窓口"),

@@ -970,13 +970,14 @@ def test_decision_choices() -> None:
     None
     """
     # 欄は型ごとの損得の項目と選んで書く項目のちょうど全て (列の予測は
-    # 配る判断, 値段の判断と発注の判断の他, 効果の見積もりは配る判断だけ,
-    # 値段を変える判断は値段の判断だけ, 時間をまたぐ量の判断は発注の判断
-    # だけ)
+    # 配る判断, 値段の判断, 発注の判断と検索の判断の他, 効果の見積もりは
+    # 配る判断だけ, 値段を変える判断は値段の判断だけ, 時間をまたぐ量の判断
+    # は発注の判断だけ, 似た写真を探すは検索の判断だけ)
     problem = example_problem("解約の引き止め")
     item = next(q for q in questions(problem) if q["id"] == "action.decision")
     kinds = {choice["value"]: choice for choice in item["choices"]}
-    assert set(kinds) == set(DECISION_FIELDS) - {"treat", "price", "order"}
+    assert set(kinds) == set(DECISION_FIELDS) - {"treat", "price", "order",
+                                                 "search"}
     effect = [("role", "effect"), ("collect", "log")]
     for key, value in effect:
         problem = answer(problem, f"ml.parts.0.{key}", value)
@@ -994,6 +995,10 @@ def test_decision_choices() -> None:
     item = next(q for q in questions(problem) if q["id"] == "action.decision")
     kinds |= {choice["value"]: choice for choice in item["choices"]}
     assert [choice["value"] for choice in item["choices"]] == ["order"]
+    problem = example_problem("似た商品の写真を探す (既製の埋め込み)")
+    item = next(q for q in questions(problem) if q["id"] == "action.decision")
+    kinds |= {choice["value"]: choice for choice in item["choices"]}
+    assert [choice["value"] for choice in item["choices"]] == ["search"]
     for kind, required in DECISION_FIELDS.items():
         fields = {field["key"]: field for field in kinds[kind]["fields"]}
         options = DECISION_OPTIONS.get(kind, {})

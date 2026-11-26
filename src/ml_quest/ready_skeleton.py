@@ -303,9 +303,10 @@ def ready_message(problem: dict) -> Optional[str]:
     output = active_value(problem, f"{PART}.output")
     message = None
     if role != "predict":
-        message = ("既製のモデルをそのまま使う骨組みは, 受け持ちが予測するか"
-                   "まとめるの場合だけです (作り方を学習するものにするか, "
-                   "受け持ちを予測するかまとめるにしてください)")
+        message = ("既製のモデルをそのまま使う骨組みは, 受け持ちが予測する, "
+                   "まとめるか並べるの場合だけです (作り方を学習するものに"
+                   "するか, 受け持ちを予測する, まとめるか並べるにして"
+                   "ください)")
     elif kind not in (None, "column"):
         message = ("既製のモデルをそのまま使う骨組みは, 正解の種類が"
                    f"{label_of(TARGET_KINDS, 'column')}の場合だけです (今は"
