@@ -44,6 +44,8 @@ DECISION_FIELDS = {
     "none": {},
     "treat": {"budget": True},
     "price": {"candidates": True, "max_change": True},
+    "order": {"shortage_cost": True, "holding_cost": True,
+              "max_order": True},
 }
 
 # 意思決定の型ごとの, 数の並びで書く項目 (値段の候補の変える割合)
@@ -78,7 +80,8 @@ FIELD_NAMES = {
     "false_alarm_cost": "空振りの損", "capacity": "回せる件数の上限",
     "positive": "当たりのクラス", "effect_kind": "効果の渡し方",
     "effect_goal": "向き", "candidates": "値段の候補",
-    "max_change": "変える幅の上限",
+    "max_change": "変える幅の上限", "shortage_cost": "品切れの損",
+    "holding_cost": "売れ残りの損", "max_order": "発注の数の上限",
 }
 
 # 意思決定の型の名前
@@ -86,6 +89,7 @@ DECISION_NAMES = {
     "quantity": "量を決める", "select": "対象を選ぶ",
     "triage": "振り分ける", "none": "意思決定しない",
     "treat": "効果の上位から配る", "price": "利益が最も大きい値段を選ぶ",
+    "order": "損の比で発注の数を決める",
 }
 
 
@@ -756,7 +760,8 @@ def clean_decision(value: Any) -> Optional[dict]:
 
 def clean_ratios(value: Any, key: str) -> Optional[list]:
     """
-    数の並びの答え (値段の候補の変える割合) を確かめて返す関数
+    数の並びの答え (値段の候補の変える割合, 分位点の水準) を確かめて返す
+    関数
 
     Parameters
     ----------
@@ -891,6 +896,9 @@ def clean_answer(problem: dict, question: dict, value: Any) -> Any:
         return cleaned
     if kind == "number":
         cleaned = clean_number(value, key)
+        return cleaned
+    if kind == "numbers":
+        cleaned = clean_ratios(value, key)
         return cleaned
     if kind == "boolean":
         if value is not None and not isinstance(value, bool):

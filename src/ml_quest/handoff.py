@@ -1,12 +1,13 @@
+from decimal import Decimal
 import math
 from pathlib import PurePath
 from typing import Any, Optional
 
 from ml_quest.check import (
-    check, env_id_of, is_anomaly_part, is_column_part, is_generate_part,
-    is_group_part, is_items_part, is_pretrained_part, is_price_part,
-    is_rank_part, is_ready_group_part, is_uplift_part, sha256_of,
-    split_errors
+    check, env_id_of, is_anomaly_part, is_column_part, is_demand_part,
+    is_finite_number, is_generate_part, is_group_part, is_items_part,
+    is_pretrained_part, is_price_part, is_rank_part, is_ready_group_part,
+    is_uplift_part, sha256_of, split_errors
 )
 from ml_quest.data import EXPORT_FUNCTIONS
 from ml_quest.problem import (
@@ -14,8 +15,8 @@ from ml_quest.problem import (
     active_value, data_location, get_value, upgrade_problem
 )
 from ml_quest.questions import (
-    CONSUMERS, FALLBACKS, GROUP_STABILITIES, GUARD_COUNTS, METRICS, PART,
-    ROLES, TASKS
+    CONSUMERS, DEMAND_HORIZON, DEMAND_LEVELS, FALLBACKS, GROUP_STABILITIES,
+    GUARD_COUNTS, METRICS, PART, ROLES, TASKS
 )
 from ml_quest.requirements import required_features
 
@@ -43,6 +44,7 @@ MODEL_EXAMPLES = {
     ("group", None): "contrastive_encoder",
     ("effect", None): "tabular_uplift",
     ("effect", "price"): "tabular_price",
+    ("predict", "demand"): "tabular_demand",
 }
 
 # 選んで書く意思決定の項目 (値を名前にして文にする)
@@ -227,7 +229,9 @@ def handoff(problem: dict) -> dict:
         uplift (効果の見積もりの処置, 結果, 列と上位の割合. 効果の見積もり
         でなければ None), price (値段を変える判断の値段, 売れた数, 原価,
         商品の id, 行の id の列と予測に使う列. 値段を変える判断でなければ
-        None), project (書き出したプロジェクトの
+        None), demand (時間をまたぐ量の判断の商品の id, 日付, 売れた数,
+        在庫の数, 行の id の列, 商品の特徴の列, 先の期間の日数と学ぶ水準.
+        時間をまたぐ量の判断でなければ None), project (書き出したプロジェクトの
         path. データセットとモデルの定義の場所は data の project_dataset
         と model の project_model_spec. 記録が無ければ None)
 
@@ -362,8 +366,10 @@ def build_stages(problem: dict) -> dict:
         anomaly = anomaly_of(problem)
         uplift = uplift_of(problem)
         price = price_of(problem)
+        demand = demand_of(problem)
         outputs = (len(anomaly["columns"]) if anomaly
-                   else 1 if uplift or price else None)
+                   else 1 if uplift or price
+                   else len(demand["levels"]) if demand else None)
         stages = {
             "part": part,
             "data": {**column_data(problem, None),
@@ -374,6 +380,7 @@ def build_stages(problem: dict) -> dict:
                      **anomaly_data(problem),
                      **uplift_data(problem),
                      **price_data(problem),
+                     **demand_data(problem),
                      "project_dataset": project["dataset"]},
             "model": {"task": None, "outputs": outputs,
                       "role": part["role"],
@@ -383,7 +390,8 @@ def build_stages(problem: dict) -> dict:
             "training": training,
             "inference": {"decision": (anomaly_decision(problem)
                                        or treat_decision(problem)
-                                       or price_decision(problem)),
+                                       or price_decision(problem)
+                                       or order_decision(problem)),
                           "conclusion": {},
                           "horizon": None, "guard": None,
                           "ready": ready_of(problem)},
@@ -394,6 +402,7 @@ def build_stages(problem: dict) -> dict:
             "anomaly": anomaly,
             "uplift": uplift,
             "price": price,
+            "demand": demand,
             "project": {"path": project["path"]},
         }
         return stages
@@ -421,6 +430,7 @@ def build_stages(problem: dict) -> dict:
         "anomaly": None,
         "uplift": None,
         "price": None,
+        "demand": None,
         "project": {"path": project["path"]},
     }
 
@@ -992,6 +1002,166 @@ def price_decision(problem: dict) -> Optional[dict]:
                        else None),
         "max_change": raw.get("max_change"),
     }
+
+    return decision
+
+
+def demand_of(problem: dict) -> Optional[dict]:
+    """
+    時間をまたぐ量の判断の列, 先の期間の日数と学ぶ分位点の水準をまとめる
+    関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    demand: Optional[dict]
+        product (商品の id の列), date (日付の列), units (日ごとの売れた数の
+        列), stock (在庫の数の列), id (行の id の列. 答えていない列は
+        None), columns (商品の特徴の列), horizon (先の期間の日数. 答えて
+        いなければ 7), levels (学ぶ水準. 小さい順で, 0.5 と水準 τ を含む)
+        (時間をまたぐ量の判断でなければ None)
+    """
+    # 時間をまたぐ量の判断のときだけ (要らなくなった問いの古い答えは除外)
+    if not is_demand_part(problem):
+        return None
+    demand: dict[str, Any] = {
+        name: active_value(problem, f"{PART}.demand.{name}")
+        for name in ("product", "date", "units", "stock", "id")
+    }
+    horizon = active_value(problem, f"{PART}.demand.horizon")
+    demand.update(
+        columns=list(active_value(problem, f"{PART}.demand.columns") or []),
+        horizon=DEMAND_HORIZON if horizon is None else int(horizon),
+        levels=learned_levels(problem),
+    )
+
+    return demand
+
+
+def order_level(decision: Any) -> Optional[float]:
+    """
+    発注の判断の品切れの損と売れ残りの損から, 発注に使う水準 τ を求める
+    関数
+
+    Parameters
+    ----------
+    decision: Any
+        意思決定 (action.decision)
+
+    Returns
+    ----------
+    tau: Optional[float]
+        τ = shortage_cost / (shortage_cost + holding_cost) (10 進の表記
+        どおりに求めた値. 発注の判断でないか, 損が正の数でなければ None)
+    """
+    # 2 つの損が正の数の発注の判断だけ (10 進の表記どおり. ML-Inference の
+    # 水準の求め方と同じ)
+    if not isinstance(decision, dict) or decision.get("type") != "order":
+        return None
+    costs = [decision.get(key) for key in ("shortage_cost", "holding_cost")]
+    if not all(is_finite_number(value) and value > 0 for value in costs):
+        return None
+    shortage, holding = (Decimal(str(value)) for value in costs)
+    tau = float(shortage / (shortage + holding))
+
+    return tau
+
+
+def learned_levels(problem: dict) -> list[float]:
+    """
+    時間をまたぐ量の判断で学ぶ分位点の水準を決める関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 時間をまたぐ量の判断)
+
+    Returns
+    ----------
+    levels: list[float]
+        答えた水準 (答えていなければ DEMAND_LEVELS) に 0.5 と水準 τ (損が
+        書けていれば) を足し, 同じ水準を 1 つにまとめた小さい順の並び
+    """
+    # 品切れの損と売れ残りの損が同じなら τ は 0.5 で, 重ならないよう 1 つ
+    # にまとめる (ML-Found の PinballLoss は重なった水準を誤りにする)
+    answered = active_value(problem, f"{PART}.demand.levels")
+    levels = {float(level) for level in (answered or DEMAND_LEVELS)}
+    levels.add(0.5)
+    tau = order_level(active_value(problem, "action.decision"))
+    if tau is not None:
+        levels.add(tau)
+    levels = sorted(levels)
+
+    return levels
+
+
+def demand_data(problem: dict) -> dict:
+    """
+    時間をまたぐ量の判断の, データの分析の段階に渡す値を作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    data: dict
+        target (日ごとの売れた数の列), task (demand), split (time), known
+        (商品の特徴の列), drop (他の使えるデータの列), id, product, date,
+        stock, horizon, unlabeled (drop) (時間をまたぐ量の判断でなければ
+        空)
+    """
+    # ML-EDA の需要の記録の表のレシピの値 (過去の売れた数のずらしと曜日は
+    # レシピの手順)
+    data: dict = {}
+    demand = demand_of(problem)
+    if demand is None:
+        return data
+    kept = [*demand["columns"], demand["product"], demand["date"],
+            demand["units"], demand["stock"], demand["id"]]
+    columns = active_value(problem, "information.columns") or []
+    data = {
+        "target": demand["units"], "task": "demand", "split": "time",
+        "known": list(demand["columns"]),
+        "drop": [name for name in columns if name not in kept],
+        "id": demand["id"], "product": demand["product"],
+        "date": demand["date"], "stock": demand["stock"],
+        "horizon": demand["horizon"], "unlabeled": "drop",
+    }
+
+    return data
+
+
+def order_decision(problem: dict) -> Optional[dict]:
+    """
+    時間をまたぐ量の判断の, 推論の段階の発注の判断を作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    decision: Optional[dict]
+        type (order), shortage_cost, holding_cost, max_order だけの発注の
+        判断 (時間をまたぐ量の判断でないか, 発注の判断でなければ None)
+    """
+    # 損の比から決まる水準の分位点から在庫を引き, 上限の中で発注する判断
+    raw = active_value(problem, "action.decision")
+    if not is_demand_part(problem) or not isinstance(raw, dict) or (
+        raw.get("type") != "order"
+    ):
+        return None
+    decision = {"type": "order",
+                **{key: raw.get(key) for key in ("shortage_cost",
+                                                 "holding_cost",
+                                                 "max_order")}}
 
     return decision
 

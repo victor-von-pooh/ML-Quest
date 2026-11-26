@@ -92,6 +92,22 @@ PRICE_ASSIGNED = ("split", "rows", "current_price", "cost", "change",
                   "price", "profit", "current_profit", "elasticity",
                   "price_raw")
 
+# 予測するで, 正解の種類が先の期間の需要 (時間をまたぐ量の判断) の場合
+# だけの問い. 既製のモデルをそのまま使う場合は骨組みが無いので含めない
+DEMAND = [USES_ML, {"id": f"{PART}.role", "equals": "predict"},
+          {"id": f"{PART}.target.kind", "equals": "demand"},
+          {"none": [PRETRAINED]}]
+
+# 時間をまたぐ量の判断の商品の id の列と日付の列にできない名前 (発注の数の
+# 表の他の列. ML-Inference の需要の一式が読む demand_orders.csv の列)
+DEMAND_ASSIGNED = ("split", "stock", "quantile", "order", "previous",
+                   "demand")
+
+# 時間をまたぐ量の判断の, 学ぶ分位点の水準の既定 (答えなければこれに 0.5
+# と水準 τ を足す) と, 先の期間の日数の既定 (ML-EDA の horizon の既定)
+DEMAND_LEVELS = [0.1, 0.25, 0.5, 0.75, 0.9]
+DEMAND_HORIZON = 7
+
 # 効果の見積もりの結果の種類 (ML-EDA の介入の記録の表の outcome)
 UPLIFT_OUTCOMES = [
     {"value": "binary", "label": "起きたか (買ったかの 0 と 1. 効果は確率の"
@@ -268,6 +284,9 @@ TARGET_KINDS = [
     {"value": "table", "label": "表 (合成のデータ)", "roles": ["generate"]},
     {"value": "anomaly", "label": "異常か正常か (正常の行が多い表. 正解は"
      "無いか少しだけ)", "roles": ["predict"]},
+    {"value": "demand", "label": "先の期間の需要 (商品ごとの日ごとの売れた"
+     "数の記録から, 先の期間の売れる数の合計を分位点で)",
+     "roles": ["predict"]},
 ]
 
 # 作り方
@@ -311,13 +330,14 @@ COLUMNS_ASKED = [{"any": [
              {"id": f"{PART}.role", "in": ["predict", "rank", "group"]},
              {"any": [{"id": f"{PART}.role", "in": ["rank", "group"]},
                       {"id": f"{PART}.target.kind",
-                       "in": ["column", "anomaly"]}]}]},
+                       "in": ["column", "anomaly", "demand"]}]}]},
     {"all": LOGGED},
 ]}]
 
 # 意思決定の型と損得を問う場合 (列の予測と, 効果の見積もりと, 値段を変える
-# 判断)
-DECIDED = [{"any": [{"all": COLUMN_TARGET}, {"all": LOGGED}]}]
+# 判断と, 時間をまたぐ量の判断)
+DECIDED = [{"any": [{"all": COLUMN_TARGET}, {"all": LOGGED},
+                    {"all": DEMAND}]}]
 
 # 群の安定性の数え方 (作り直し方)
 GROUP_STABILITIES = [
@@ -364,7 +384,7 @@ FALLBACKS = [
 # 見積もりは配る判断だけ))
 DECISION_TYPES = [
     {"value": "quantity", "label": "量を決める (仕入れ, 補充, 人員)",
-     "fits": [{"role": "predict"}], "fields": [
+     "fits": [{"role": "predict", "kinds": ["column"]}], "fields": [
          {"key": "under_cost", "required": True,
           "label": "1 単位足りないときの損 (欠品の粗利など)"},
          {"key": "over_cost", "required": True,
@@ -374,7 +394,7 @@ DECISION_TYPES = [
          {"key": "step", "required": False, "label": "量の刻み (任意)"},
      ]},
     {"value": "select", "label": "対象を選ぶ (引き止め, 営業先)",
-     "fits": [{"role": "predict"}], "fields": [
+     "fits": [{"role": "predict", "kinds": ["column"]}], "fields": [
          {"key": "value", "required": True,
           "label": "当たり 1 件の価値 (行ごとに違えば列の名前)"},
          {"key": "cost", "required": True, "label": "行動 1 件の費用"},
@@ -402,7 +422,7 @@ DECISION_TYPES = [
           "label": "費用の上限 (任意)"},
      ]},
     {"value": "triage", "label": "振り分ける (人が確かめる, 再検査)",
-     "fits": [{"role": "predict"}], "fields": [
+     "fits": [{"role": "predict", "kinds": ["column"]}], "fields": [
          {"key": "miss_cost", "required": True, "label": "当たりを見逃す損"},
          {"key": "false_alarm_cost", "required": True,
           "label": "外れを回す損 (空振り)"},
@@ -410,7 +430,7 @@ DECISION_TYPES = [
           "label": "回せる件数の上限 (任意)"},
      ]},
     {"value": "none", "label": "意思決定しない (人が予測を見て決める)",
-     "fits": [{"role": "predict"}], "fields": []},
+     "fits": [{"role": "predict", "kinds": ["column"]}], "fields": []},
     {"value": "treat", "label": "効果の上位から配る (クーポン, 案内)",
      "fits": [{"role": "effect", "policy": False, "varied": ["treat"]}],
      "fields": [
@@ -426,6 +446,18 @@ DECISION_TYPES = [
          {"key": "max_change", "required": True,
           "label": "値段を変える幅の上限 (守る指標. 変える割合の絶対値. "
                    "1 割までなら 0.1)"},
+     ]},
+    {"value": "order", "label": "損の比で発注の数を決める (商品ごとの先の"
+     "期間の発注)",
+     "fits": [{"role": "predict", "kinds": ["demand"]}], "fields": [
+         {"key": "shortage_cost", "required": True,
+          "label": "1 つ足りないときの損 (売り逃した利益など. 商品 1 つ"
+                   "あたりの正の数)"},
+         {"key": "holding_cost", "required": True,
+          "label": "1 つ余ったときの損 (捨てる原価か持ち越す費用. 同じお金"
+                   "の単位の正の数)"},
+         {"key": "max_order", "required": True,
+          "label": "発注の数の上限 (守る指標. 置き場所の上限. 0 以上の数)"},
      ]},
 ]
 
@@ -460,7 +492,8 @@ METRICS = [
      "良い)", "tasks": ["regression", "forecasting"], "better": "lower",
      "fits": [{"role": "predict", "kinds": ["column"],
                "tasks": ["regression", "forecasting"]},
-              {"role": "effect", "policy": False, "varied": ["price"]}]},
+              {"role": "effect", "policy": False, "varied": ["price"]},
+              {"role": "predict", "kinds": ["demand"]}]},
     {"value": "rmse", "label": "大きな外れを重く見た外れ (二乗平均平方根誤差"
      ". 小さいほど良い)", "tasks": ["regression", "forecasting"],
      "better": "lower",
@@ -472,7 +505,8 @@ METRICS = [
     {"value": "loss", "label": "検証用の分割での損失 (小さいほど良い)",
      "better": "lower",
      "fits": [{"role": "predict",
-               "kinds": ["mask", "point_cloud", "text", "anomaly"]},
+               "kinds": ["mask", "point_cloud", "text", "anomaly",
+                         "demand"]},
               {"role": "generate"}, {"role": "rank"}, {"role": "group"},
               {"role": "effect", "policy": False}]},
     {"value": "loss", "label": "評価のエピソードの報酬の和の平均の符号を"
@@ -901,6 +935,50 @@ QUESTIONS: list[dict[str, Any]] = [
      "help": "値段を決める前に分かっている商品の特徴の列 (種類, 曜日など). "
              "値段の列, 売れた数の列, 原価の列, 商品の id の列, 行の id の列"
              "と, 売れた後に決まる列 (残った数など) は入れない"},
+    {"id": f"{PART}.demand.product", "section": 5, "kind": "column",
+     "required": True, "when": DEMAND, "title": "商品の id の列は",
+     "help": "発注の数を決める単位の商品を指す列. 1 行が (商品, 日) の記録の"
+             "表で, 商品ごとに日ごとの行が並ぶ. 予測の入力には入れない (商品"
+             "の特徴は別の列に書く). split, stock, quantile, order, "
+             "previous, demand の名前の列は使えない. 例: product_id"},
+    {"id": f"{PART}.demand.date", "section": 5, "kind": "column",
+     "required": True, "when": DEMAND, "title": "日付の列は",
+     "help": "記録の日 (日ごと. 時刻は書かない). 同じ商品の同じ日の行は 1 行"
+             "にまとめる. 曜日などはデータの分析の段階で列にする. 例: date"},
+    {"id": f"{PART}.demand.units", "section": 5, "kind": "column",
+     "required": True, "when": DEMAND, "title": "日ごとの売れた数の列は",
+     "help": "その日に売れた数の列 (0 以上の数). 先の期間の合計が予測する値"
+             "で, 過去の売れた数はずらした列にして予測に使う. 売れなかった日"
+             "は 0 の行を書く (記録の無い日は合計を作らない). 例: units"},
+    {"id": f"{PART}.demand.stock", "section": 5, "kind": "column",
+     "required": False, "when": DEMAND, "title": "在庫の数の列は (あれば)",
+     "help": "その日の始めの在庫の数 (0 以上の数). 発注の数は, 先の期間の"
+             "需要の分位点から在庫の数を引いた数にする. 予測の入力には入れ"
+             "ない. 無ければ空のまま (在庫を 0 として発注する). 例: stock"},
+    {"id": f"{PART}.demand.id", "section": 5, "kind": "column",
+     "required": False, "when": DEMAND, "title": "行の id の列は (あれば)",
+     "help": "記録の 1 行を指す列. 欠けも同じ値も無い列. 予測には使わない. "
+             "無ければ空のまま (行の位置で指す). 例: record_id"},
+    {"id": f"{PART}.demand.columns", "section": 5, "kind": "columns",
+     "required": False, "when": DEMAND,
+     "title": "需要の予測に使う商品の特徴の列は (あれば)",
+     "help": "発注を決める前に分かっている商品の特徴の列 (種類, 大きさなど)"
+             ". 過去の売れた数と曜日は, データの分析の段階で列にするので入れ"
+             "ない. 商品の id, 日付, 売れた数, 在庫の数, 行の id の列と, 売れ"
+             "た後に決まる列 (捨てた数など) は入れない. 無ければ空のまま"},
+    {"id": f"{PART}.demand.horizon", "section": 5, "kind": "number",
+     "required": False, "when": DEMAND,
+     "title": "何日先までの需要の合計を予測しますか (先の期間の日数)",
+     "help": "発注してから次の発注で届くまでの日数 (届くまでの日数と発注の"
+             "周期を合わせた日数). 1 以上の整数. 無ければ空のまま (7 日)"},
+    {"id": f"{PART}.demand.levels", "section": 5, "kind": "numbers",
+     "required": False, "when": DEMAND,
+     "title": "学ぶ分位点の水準は",
+     "help": "先の期間の需要の分布のどの点を学ぶか (0 より大きく 1 より小さい"
+             "数の並び. 0.9 は 9 割の日でこれより少ない数). 発注に使う水準 "
+             "τ (品切れの損 / (品切れの損 + 売れ残りの損)) と 0.5 (予測の"
+             "誤差を数える点) は答えに無くても足し, 同じ水準は 1 つにまとめる"
+             ". 無ければ空のまま (0.1, 0.25, 0.5, 0.75, 0.9)"},
     {"id": f"{PART}.task", "section": 5, "kind": "choice", "required": True,
      "when": COLUMN_TARGET, "choices": TASKS, "title": "どの種類の問題ですか",
      "help": "目的の値がクラスなら分類, 値なら回帰. 時刻の順に過去から先を"
@@ -1008,7 +1086,9 @@ QUESTIONS: list[dict[str, Any]] = [
              "配る: 配る数の上限 (守る指標. 1 回に配れる数. 効果の高い順に"
              "上限まで配る). 利益が最も大きい値段を選ぶ: 値段の候補 (今の値段"
              "に対する変える割合の並び. 0 を含む) と, 値段を変える幅の上限 "
-             "(守る指標. 上限を超える候補は選ばない)"},
+             "(守る指標. 上限を超える候補は選ばない). 損の比で発注の数を決め"
+             "る: 1 つ足りないときの損と 1 つ余ったときの損 (同じお金の単位) "
+             "と, 発注の数の上限 (守る指標. 置き場所の上限)"},
     {"id": f"{PART}.anomaly.capacity", "section": 7, "kind": "number",
      "required": True, "when": ANOMALY,
      "title": "人が 1 回に確かめられる件数の上限は (守る指標)",
