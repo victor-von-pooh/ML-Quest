@@ -1014,6 +1014,7 @@ def make_inference(
     # 約束に合わない場合の ML-Inference の誤りの文の警告と, 学習の結果の
     # 保存
     from ml_inference import make_price_bundle
+
     options = {**OPTIONS, **({"loader": LOADER} if LOADER else {})}
     try:
         info = make_price_bundle(
@@ -1026,6 +1027,7 @@ def make_inference(
             f"作れません: {error}"
         )
         return
+
     check = info["price"]["check"]
     compared = ("選んだ値段は比べず" if check is None
                 else f"選んだ値段の一致 {check['agreement'] * 100:.1f} % "
