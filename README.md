@@ -100,7 +100,7 @@ result = apply_recipe(problem, recipe)   # 目的の列とタスクを書き戻�
 
 予測するで正解の種類が画像の領域か点群の受け持ちでは, `recipe_from` は ML-EDA のファイルの組の書き出し (`export_image_masks`, `export_capture_clouds`) の設定の下書き (入力と正解のディレクトリ, 分割, グループ, 正解の出どころ, 他の引数) を `export` で返し, `apply_recipe` はその設定を受け取って問題の設定に書き戻す. 他の引数 (`options`) には中身の手順 (`item_steps`. `{"image": [{"op": "resize", "width": 64, "height": 64}]}` など) も持てる. 手順を渡すと ML-EDA はデータセットを版 3 で書くので, 書き戻した設定から同じデータセットを作り直せる.
 
-まとめるで学習する受け持ちでは, 群分けのタブで変えた選び方を `apply_group` で書き戻す (既製の埋め込みの群分けは群の数と群の安定性の数え方だけ):
+まとめるで学習する受け持ちでは, 群分けのタブで変えた選び方を `apply_group` で書き戻す (既製の埋め込みの群分けにも, 群の数と群の安定性の数え方だけを書き戻せる):
 
 ```python
 from ml_quest import apply_group
