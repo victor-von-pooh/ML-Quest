@@ -39,8 +39,8 @@ import yaml
 
 from ml_eda import load_data
 from ml_found import (
-    Experiment, Trainer, load_project_config, save_evaluation,
-    start_experiment, write_task
+    Experiment, Trainer, load_project_config, ndcg_at_k, recall_at_k,
+    save_evaluation, start_experiment, write_task
 )
 
 # このプロジェクトのディレクトリ (ML-Found のプロジェクト)
@@ -441,22 +441,14 @@ def rank_metrics(top: list[list[int]], target: dict, k: int) -> dict:
     ----------
     metrics: dict
         recall_at_k (上位 K 件に入った正解の数を正解の全数で割った値の,
-        利用者の平均) と ndcg (上位 K 件の NDCG の, 利用者の平均)
+        利用者の平均) と ndcg (上位 K 件の NDCG の, 利用者の平均). 数え方は
+        ML-Found の recall_at_k と ndcg_at_k (正解の無い利用者は数えず,
+        数える利用者がいなければ 0)
     """
-    # 正解が K より多い利用者の Recall@K は 1 に届かない
-    recalls, ndcgs = [], []
-    for items, user in zip(top, target["users"]):
-        relevant = target["relevant"][user]
-        hits = [rank for rank, item in enumerate(items[:k])
-                if item in relevant]
-        recalls.append(len(hits) / len(relevant))
-        dcg = sum(1.0 / math.log2(rank + 2) for rank in hits)
-        ideal = sum(1.0 / math.log2(rank + 2)
-                    for rank in range(min(k, len(relevant))))
-        ndcgs.append(dcg / ideal)
-    count = max(len(recalls), 1)
-    metrics = {"recall_at_k": sum(recalls) / count,
-               "ndcg": sum(ndcgs) / count}
+    # 利用者ごとの正解の品物 (番号の小さい順の並び) と, ML-Found の数え方
+    relevant = [sorted(target["relevant"][user]) for user in target["users"]]
+    metrics = {"recall_at_k": recall_at_k(top, relevant, k),
+               "ndcg": ndcg_at_k(top, relevant, k)}
 
     return metrics
 
