@@ -534,3 +534,49 @@ def test_search_run(tmp_path: Path) -> None:
                 for q in queries]
     assert recall_at_k(top, relevant, 3) == pytest.approx(row["recall_at_k"])
     assert ndcg_at_k(top, relevant, 3) == pytest.approx(row["ndcg_at_k"])
+
+
+@pytest.mark.skipif(
+    any(find_spec(name) is None for name in (
+        "torch", "PIL", "ml_eda", "ml_modelcontrol", "ml_inference"
+    )),
+    reason="PyTorch, Pillow, ML-EDA, ML-ModelControl, ML-Inference が要る"
+)
+def test_search_run_without_labels(tmp_path: Path) -> None:
+    """
+    種類の無い写真では, 全ての読めた写真を索引にし, 評価を書かずに検索の
+    一式を作ることを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 版 15 の一式を作れる ML-Inference
+    import ml_inference
+    if ml_inference.BUNDLE_FORMAT_VERSION < 15:
+        pytest.fail("ML-Inference の版 15 の一式づくりが要る")
+
+    # 種類のディレクトリの無い写真で動かす
+    fake = tmp_path / "fake"
+    fake.mkdir()
+    (fake / "fake_source.py").write_text(FAKE_SOURCE, encoding="utf-8")
+    project = tmp_path / "project"
+    tiny_project(project)
+    write_photos(project / "outputs" / "photos", labeled=False)
+    done = run_bundle(project, tmp_path, fake)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "評価は無し" in done.stdout
+    artifacts = project / "outputs" / "search"
+    index = json.loads((artifacts / "search_index.json").read_text())
+    assert len(index["items"]) == len(COLORS) * PER_COLOR
+    assert all(item["label"] is None for item in index["items"])
+    assert not (artifacts / "evaluations" / "search_valid.json").exists()
+    info = yaml.safe_load(
+        (project / "outputs" / "inference" / "inference.yaml").read_text()
+    )
+    assert info["search"]["labeled"] is False

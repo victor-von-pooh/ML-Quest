@@ -294,30 +294,38 @@ def embed_photos(
 
 
 def split_photos(
-    labels: Optional[list], cfg: Any
+    labels: Optional[list], count: int, cfg: Any
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     写真を無作為に索引と検証用の問いに分ける関数
 
-    種類があれば種類ごとに分け, 1 枚しか無い種類は索引に入れる
+    種類があれば種類ごとに分け, 1 枚しか無い種類は索引に入れる. 種類が
+    無ければ評価が無いので, 全ての写真を索引にする
 
     Parameters
     ----------
     labels: Optional[list]
-        写真ごとの種類 (種類が無ければ None で, 枚数は cfg.count)
+        写真ごとの種類 (種類が無ければ None)
+    count: int
+        読めた写真の数
     cfg: Any
-        search_settings の設定 (valid の割合と乱数の種. count に枚数)
+        search_settings の設定 (valid の割合と乱数の種)
 
     Returns
     ----------
     index: np.ndarray
         索引の写真の番号 (小さい順)
     queries: np.ndarray
-        検証用の問いの写真の番号 (小さい順)
+        検証用の問いの写真の番号 (小さい順. 種類が無ければ空)
     """
-    # 種類ごと (種類が無ければ全体を 1 つ) の並べ替えと, 前の問い
+    # 種類が無ければ全てが索引
+    if labels is None:
+        index = np.arange(count)
+        return index, np.zeros(0, dtype=np.int64)
+
+    # 種類ごとの並べ替えと, 前の問い
     rng = np.random.default_rng(cfg.seed)
-    names = labels if labels is not None else [None] * cfg.count
+    names = labels
     queries = []
     for name in dict.fromkeys(names):
         rows = np.flatnonzero(np.array([v == name for v in names]))
@@ -384,8 +392,8 @@ def top_items(
     top: list[list[int]]
         問いごとの, 近い順の索引の写真の番号
     """
-    # 長さで割った点の内積と, 安定な並べ替え
-    unit = unit_rows(points)
+    # 一式と同じ float32 の値の, 長さで割った点の内積と, 安定な並べ替え
+    unit = unit_rows(points.astype(np.float32).astype(np.float64))
     similarity = unit[queries] @ unit[index].T
     top = []
     for row, query in enumerate(queries):
@@ -694,9 +702,9 @@ def main() -> None:
     frame, points, pixels, info = embed_photos(libraries, ready, embedder,
                                                photos)
     labeled = "label" in frame.columns and frame["label"].notna().all()
-    cfg.count = len(frame)
     index, queries = split_photos(
-        frame["label"].astype(str).tolist() if labeled else None, cfg
+        frame["label"].astype(str).tolist() if labeled else None, len(frame),
+        cfg
     )
     print(f"写真: 索引 {len(index)} 枚, 検証用の問い {len(queries)} 枚. "
           f"埋め込みの幅: {points.shape[1]}. 返す件数: {cfg.k}")
@@ -999,7 +1007,8 @@ def search_readme(
         f"を使えない場所では, そこに重みのファイルを置く. {pinned}), 写真を"
         "分類の最後の層の手前の出力で埋め込む. 写真を無作為に索引と検証用の"
         "問い (config の `data.valid` の割合. 種類ごとに分け, 1 枚しか無い"
-        "種類は索引に入れる) に分ける. 種類があれば, 問いごとに索引の写真を"
+        "種類は索引に入れる. 種類が無ければ全ての写真を索引にする) に分ける."
+        " 種類があれば, 問いごとに索引の写真を"
         f"余弦の近さで上位 {k} 件 (config の `search.k`) 並べ, 問いと同じ"
         "種類の写真を正解にした Recall@K と NDCG@K を数え, 写真を縮めた画素を"
         "そのまま並べた値と比べる. 成果物は `outputs.search` (既製のモデル"
