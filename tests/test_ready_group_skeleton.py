@@ -543,10 +543,11 @@ def test_ready_group_run(tmp_path: Path) -> None:
             key: value for key, value in wanted.items() if key != "stability"
         }
 
-    # 一式は版 10 で, 推論の群が割り当ての表と同じ
+    # 一式は版 10 (群の中心から遠い行の閾値を持てば版 17) で, 推論の群が
+    # 割り当ての表と同じ
     bundle = project / "outputs" / "inference"
     info = yaml.safe_load((bundle / "inference.yaml").read_text())
-    assert info["format_version"] == 10
+    assert info["format_version"] in (10, 17)
     assert info["group"]["check"] == {"rows": len(table), "agreement": 1.0}
     script = (
         "import sys, json\n"
