@@ -3,6 +3,7 @@ from string import Template
 from typing import Callable, Optional
 
 from ml_quest.handoff import describe
+from ml_quest.model_names import FEATURE_INPUT, QUANTILES_OUTPUT
 from ml_quest.problem import active_value, get_value
 from ml_quest.questions import DEMAND_ASSIGNED, PART
 
@@ -78,8 +79,8 @@ INFERENCE_DIR = "inference"
 
 # モデルの入力と出力の名前 (ML-ModelControl の同梱の例 tabular_demand と
 # 同じ. 出力は水準の小さい順の分位点)
-FEATURE_INPUT = "x"
-QUANTILES_OUTPUT = "quantiles"
+FEATURE_INPUT = $feature_input
+QUANTILES_OUTPUT = $quantiles_output
 
 # 商品ごとの発注の数と, 需要の決め方 (実験のディレクトリの中)
 ORDERS_FILE = "demand_orders.csv"
@@ -1355,6 +1356,8 @@ def demand_script(problem: dict, literal: Callable) -> str:
     # 頭と学習の流れ
     options = get_value(problem, "data.options")
     head = Template(DEMAND_HEAD).substitute(
+        feature_input=literal(FEATURE_INPUT),
+        quantiles_output=literal(QUANTILES_OUTPUT),
         name=literal(str(problem.get("name", ""))),
         predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         method=literal(active_value(problem, f"{PART}.method")),

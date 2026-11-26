@@ -2,6 +2,7 @@ from ml_quest.bridge import (
     apply_group, apply_recipe, recipe_from, resolve_choice
 )
 from ml_quest.check import check, is_column_part, is_items_part, is_ready
+from ml_quest.contract import check_model_contract, model_contract
 from ml_quest.data import (
     COPY_NAME, attach_data, inspect_data, inspect_key, prune_copies
 )
@@ -42,10 +43,12 @@ __all__ = [
     "TARGET_KINDS", "TARGET_SOURCES", "TASKS", "UNITS", "UPLIFT_ASSIGNED",
     "UPLIFT_OUTCOMES", "VARIED", "active_value",
     "answer", "apply_group", "apply_recipe", "attach_data", "check",
+    "check_model_contract",
     "decision_sensitivity", "decision_text", "describe", "example_problem",
     "get_value", "handoff", "inspect_data", "inspect_key", "is_column_part",
     "is_items_part", "is_ready", "load_problem", "make_project",
-    "model_example", "new_problem", "open_errors", "problem_origin",
+    "model_contract", "model_example", "new_problem", "open_errors",
+    "problem_origin",
     "project_error", "project_of", "prune_copies", "questions",
     "rank_encoding", "read_columns", "recipe_from", "record_project",
     "required_features", "resolve_choice", "save_problem", "skeleton_type",

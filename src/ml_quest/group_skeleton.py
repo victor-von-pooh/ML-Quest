@@ -3,6 +3,9 @@ from string import Template
 from typing import Callable, Optional
 
 from ml_quest.handoff import describe
+from ml_quest.model_names import (
+    EMBEDDING_OUTPUT, FEATURE_INPUT, SIMILARITY_OUTPUT
+)
 from ml_quest.problem import active_value, get_value
 from ml_quest.questions import (
     GROUP_ASSIGNED, GROUP_STABILITIES, GROUP_TAKEN, PART
@@ -75,9 +78,9 @@ OPTIONS = $options
 
 # モデルの入力と出力の名前 (ML-ModelControl の同梱の例 contrastive_encoder
 # と同じ)
-FEATURE_INPUT = "x"
-EMBEDDING_OUTPUT = "embedding"
-SIMILARITY_OUTPUT = "similarity"
+FEATURE_INPUT = $feature_input
+EMBEDDING_OUTPUT = $embedding_output
+SIMILARITY_OUTPUT = $similarity_output
 
 # 種類の列の, 欠けた値の呼び方
 MISSING = "(欠損)"
@@ -1452,6 +1455,9 @@ def group_script(problem: dict, literal: Callable) -> str:
     # 頭 (表の読み方は問題の設定の手元のデータの読み方) と学習の流れ
     options = get_value(problem, "data.options")
     head = Template(GROUP_HEAD).substitute(
+        feature_input=literal(FEATURE_INPUT),
+        embedding_output=literal(EMBEDDING_OUTPUT),
+        similarity_output=literal(SIMILARITY_OUTPUT),
         name=literal(str(problem.get("name", ""))),
         predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         method=literal(active_value(problem, f"{PART}.method")),
