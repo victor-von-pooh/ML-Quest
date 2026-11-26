@@ -1623,7 +1623,7 @@ def is_uplift_part(problem: dict) -> bool:
     uplift: bool
         効果の見積もりの骨組みを書き出す受け持ちか
     """
-    # 今ある記録から学ぶ受け持ちで, 記録で変えたものが値段でない
+    # 記録で変えたものが値段でない, 今ある記録から学ぶ受け持ち
     uplift = is_logged_part(problem) and (
         active_value(problem, f"{PART}.varied") != "price"
     )
@@ -1671,7 +1671,7 @@ def is_price_part(problem: dict) -> bool:
     price: bool
         値段を変える判断の骨組みを書き出す受け持ちか
     """
-    # 今ある記録から学ぶ受け持ちで, 記録で変えたものが値段
+    # 記録で変えたものが値段の, 今ある記録から学ぶ受け持ち
     price = is_logged_part(problem) and (
         active_value(problem, f"{PART}.varied") == "price"
     )
@@ -2058,7 +2058,7 @@ def is_finite_number(value: Any) -> bool:
     number: bool
         真偽値でない有限の数か
     """
-    # 真偽値は数でない
+    # 真偽値を除く数
     number = not isinstance(value, bool) and isinstance(
         value, (int, float)
     ) and math.isfinite(value)

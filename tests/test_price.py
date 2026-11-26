@@ -96,7 +96,7 @@ def test_price_questions() -> None:
     ----------
     None
     """
-    # 値段の列の問いは要り, 処置の列と上位の割合は要らない
+    # 値段の列の問いと, 処置の列と上位の割合の問いの有無
     problem = price_problem()
     items = {item["id"]: item for item in questions(problem)}
     for name in ("price", "units", "cost", "product", "id", "columns"):
@@ -123,7 +123,7 @@ def test_price_questions() -> None:
     assert "mae" in metrics and "loss" in metrics
     assert "qini" not in metrics
 
-    # 答えない (配ったか) と効果の見積もりの問い, 方策では問わない
+    # 配ったかを答えない場合と, 方策の場合の問いの有無
     treat = answer(problem, f"{PART}.varied", None)
     items = {item["id"]: item for item in questions(treat)}
     assert items[f"{PART}.uplift.treatment"]["applies"]
@@ -269,7 +269,7 @@ def test_price_handoff() -> None:
             data["unlabeled"]) == ("record_id", "price", "unit_cost",
                                    "product_id", "drop")
 
-    # モデルは売れた数の 1 を出す雛形, 学習は誤差を最小に
+    # 売れた数の 1 を出す雛形と, 誤差を最小にする学習
     assert stages["model"]["outputs"] == 1
     assert stages["model"]["example"] == "tabular_price"
     assert model_example(price_problem()) == "tabular_price"
