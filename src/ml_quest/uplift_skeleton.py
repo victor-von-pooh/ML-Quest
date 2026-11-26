@@ -3,6 +3,9 @@ from string import Template
 from typing import Callable, Optional
 
 from ml_quest.handoff import describe
+from ml_quest.model_names import (
+    CONTROL_OUTPUT, FEATURE_INPUT, TREATED_OUTPUT
+)
 from ml_quest.problem import active_value, get_value
 from ml_quest.questions import PART, UPLIFT_ASSIGNED, UPLIFT_OUTCOMES
 
@@ -79,9 +82,9 @@ INFERENCE_DIR = "inference"
 
 # モデルの入力と出力の名前 (ML-ModelControl の同梱の例 tabular_uplift と
 # 同じ) と, 効果の決め方の名前 (処置の群と対照の群の 2 つの予測)
-FEATURE_INPUT = "x"
-TREATED_OUTPUT = "treated"
-CONTROL_OUTPUT = "control"
+FEATURE_INPUT = $feature_input
+TREATED_OUTPUT = $treated_output
+CONTROL_OUTPUT = $control_output
 LEARNER = "t_learner"
 
 # 行ごとの効果と, 効果の決め方 (実験のディレクトリの中)
@@ -1135,6 +1138,9 @@ def uplift_script(problem: dict, literal: Callable) -> str:
     names = {item["value"]: item["label"] for item in UPLIFT_OUTCOMES}
     options = get_value(problem, "data.options")
     head = Template(UPLIFT_HEAD).substitute(
+        feature_input=literal(FEATURE_INPUT),
+        treated_output=literal(TREATED_OUTPUT),
+        control_output=literal(CONTROL_OUTPUT),
         name=literal(str(problem.get("name", ""))),
         predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         method=literal(active_value(problem, f"{PART}.method")),

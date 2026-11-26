@@ -3,6 +3,7 @@ from string import Template
 from typing import Callable, Optional
 
 from ml_quest.handoff import describe
+from ml_quest.model_names import FEATURE_INPUT, RECON_OUTPUT
 from ml_quest.problem import active_value, get_value
 from ml_quest.questions import ANOMALY_ASSIGNED, ANOMALY_SCORES, PART
 
@@ -82,8 +83,8 @@ SCORE_NAMES = $score_names
 
 # モデルの入力と出力の名前 (ML-ModelControl の同梱の例 tabular_autoencoder
 # と同じ)
-FEATURE_INPUT = "x"
-RECON_OUTPUT = "recon"
+FEATURE_INPUT = $feature_input
+RECON_OUTPUT = $recon_output
 
 # 正解の要る最良を選ぶ指標 (検証用に異常の行が無いと数えられない)
 LABEL_METRICS = ("precision_at_k", "average_precision")
@@ -1219,6 +1220,8 @@ def anomaly_script(problem: dict, literal: Callable) -> str:
     names = {item["value"]: item["label"] for item in ANOMALY_SCORES}
     options = get_value(problem, "data.options")
     head = Template(ANOMALY_HEAD).substitute(
+        feature_input=literal(FEATURE_INPUT),
+        recon_output=literal(RECON_OUTPUT),
         name=literal(str(problem.get("name", ""))),
         loader=literal(get_value(problem, "data.loader")),
         options=literal(options if isinstance(options, dict) else {}),

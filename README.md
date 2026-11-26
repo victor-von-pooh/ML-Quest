@@ -132,6 +132,16 @@ problem = example_problem("総菜の作る量")
 
 確かめの直すところ (`error`) のうち骨組みを組めるもの (問題の設定の `check` の, 確かめ方や損得などの `error` と, 入れたデータの確かめ `inspect_data` の返す辞書の `findings` の `error`) が残っていると, `make_project` は書き出さない. 残ったまま書き出すなら「それでも書き出す」として `accept_errors=True` を渡す. そのときは README の最後に, 書き出した時点で残っていた直すところの一覧を書く. 残っているものは `open_errors(problem)` で分かる (覚えておいた `inspect_data` の結果を `inspected` に渡せば分析し直さない. 結果の印 `key` が今の問題の設定とデータのものでなければ求め直す). 損得と制約に直すところが残るときは, 意思決定の既定値を付けずに推論の一式を作る骨組みにする. 書き出した後のレシピの下書き (`recipe_from`) も止まらず, 残っている直すところを `notes` に出す. 推論の段階に渡す値 (`handoff`) は, 直すまで作れない. 目的の列が無いなど骨組みを組めない `error` は, 指定しても書き出さない. 入れたデータの確かめには ML-EDA が要り, 無ければ「データを読めません」が直すところに入る (`ml-quest[data]` で入れると消える).
 
+骨組みの学習のスクリプトがモデルの定義に求める入力と出力の名前と, 入力の形の最後の大きさ (骨組みの約束) は `model_contract` で読める. モデルの作成の段階は, 定義を保存する前に `check_model_contract` で確かめられる (直す場所 `id` と文を返す. 最後の大きさの数はデータセットから求めて渡す. 鍵は ML-ModelControl の同梱の例の書き換える引数と同じ名前). 約束の無い骨組み (列の予測, 画像の領域と点群, 既製のモデル, 異常の検知の距離に基づく度合い) では `None` と空 (詳しくは [docs/DESIGN.md](docs/DESIGN.md) の「骨組みの約束」).
+
+```python
+from ml_quest import check_model_contract, model_contract
+
+contract = model_contract(problem)   # 例: 異常の検知の自己符号化器は入力 x (features: 学習に使う列の数) と出力 recon
+for item in check_model_contract(problem, spec, {"features": 12}):   # spec は ML-ModelControl の定義を読んだ辞書
+    print(item["id"], item["message"])   # 例: inputs.x 入力 x の最後の大きさを学習に使う列の数 12 にしてください (今は 16)
+```
+
 ## 文書
 
 - [docs/DESIGN.md](docs/DESIGN.md): 今の設計と決まり, 他のリポジトリとの約束 (問題の設定の形と版)

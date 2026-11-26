@@ -3,6 +3,7 @@ from string import Template
 from typing import Callable, Optional
 
 from ml_quest.handoff import describe
+from ml_quest.model_names import FEATURE_INPUT, UNITS_OUTPUT
 from ml_quest.problem import active_value, get_value
 from ml_quest.questions import PART, PRICE_ASSIGNED
 
@@ -76,8 +77,8 @@ INFERENCE_DIR = "inference"
 
 # モデルの入力と出力の名前 (ML-ModelControl の同梱の例 tabular_price と
 # 同じ) と, 出力の決まり (出力がそのまま売れた数. 最後に softplus)
-FEATURE_INPUT = "x"
-UNITS_OUTPUT = "units"
+FEATURE_INPUT = $feature_input
+UNITS_OUTPUT = $units_output
 LINK = "softplus"
 
 # 商品ごとの選んだ値段と, 値段の決め方 (実験のディレクトリの中)
@@ -1230,6 +1231,8 @@ def price_script(problem: dict, literal: Callable) -> str:
     # 頭と学習の流れ
     options = get_value(problem, "data.options")
     head = Template(PRICE_HEAD).substitute(
+        feature_input=literal(FEATURE_INPUT),
+        units_output=literal(UNITS_OUTPUT),
         name=literal(str(problem.get("name", ""))),
         predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         method=literal(active_value(problem, f"{PART}.method")),

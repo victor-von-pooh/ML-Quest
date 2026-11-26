@@ -3,6 +3,7 @@ from string import Template
 from typing import Callable, Optional
 
 from ml_quest.handoff import describe
+from ml_quest.model_names import ITEM_INPUT, SCORE_OUTPUT, USER_INPUT
 from ml_quest.problem import active_value, get_value
 from ml_quest.questions import PART
 from ml_quest.rank_width import RANK_TEST, RANK_VALID
@@ -62,9 +63,9 @@ OPTIONS = $options
 
 # モデルの入力と点数の出力の名前 (ML-ModelControl の同梱の例
 # two_tower_retrieval と同じ)
-USER_INPUT = "user"
-ITEM_INPUT = "item"
-SCORE_OUTPUT = "score"
+USER_INPUT = $user_input
+ITEM_INPUT = $item_input
+SCORE_OUTPUT = $score_output
 
 # 埋め込みの出力の名前 (両方があれば, 点数を利用者と品物の埋め込みの内積
 # で求める. 品物の埋め込みは 1 度だけ作る)
@@ -1228,6 +1229,9 @@ def rank_script(problem: dict, literal: Callable) -> str:
     # 頭 (反応の表の読み方は問題の設定の手元のデータの読み方) と学習の流れ
     options = get_value(problem, "data.options")
     head = Template(RANK_HEAD).substitute(
+        user_input=literal(USER_INPUT),
+        item_input=literal(ITEM_INPUT),
+        score_output=literal(SCORE_OUTPUT),
         name=literal(str(problem.get("name", ""))),
         predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         method=literal(active_value(problem, f"{PART}.method")),
