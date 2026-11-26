@@ -26,7 +26,8 @@ from ml_quest.requirements import FEATURES, required_features
 from ml_quest.sensitivity import SENSITIVITY_FIELDS, decision_sensitivity
 from ml_quest.rank_width import rank_encoding
 from ml_quest.skeleton import (
-    make_project, open_errors, project_error, record_project
+    SKELETON_TYPES, make_project, open_errors, project_error, record_project,
+    skeleton_type
 )
 from ml_quest.table_width import table_encoding
 
@@ -37,7 +38,7 @@ __all__ = [
     "GROUP_ASSIGNED", "GROUP_TAKEN", "GUARD_COUNTS", "LEGACY_KEYS",
     "METHODS", "METRICS", "MODEL_EXAMPLES", "OUTPUTS", "PART",
     "PRICE_ASSIGNED", "QUESTIONS",
-    "ROLES", "SECTIONS", "SENSITIVITY_FIELDS", "SPLITS",
+    "ROLES", "SECTIONS", "SENSITIVITY_FIELDS", "SKELETON_TYPES", "SPLITS",
     "TARGET_KINDS", "TARGET_SOURCES", "TASKS", "UNITS", "UPLIFT_ASSIGNED",
     "UPLIFT_OUTCOMES", "VARIED", "active_value",
     "answer", "apply_group", "apply_recipe", "attach_data", "check",
@@ -47,6 +48,6 @@ __all__ = [
     "model_example", "new_problem", "open_errors", "problem_origin",
     "project_error", "project_of", "prune_copies", "questions",
     "rank_encoding", "read_columns", "recipe_from", "record_project",
-    "required_features", "resolve_choice", "save_problem", "table_encoding",
-    "upgrade_problem"
+    "required_features", "resolve_choice", "save_problem", "skeleton_type",
+    "table_encoding", "upgrade_problem"
 ]
