@@ -349,7 +349,7 @@ def test_ready_project_limits() -> None:
     generate = answer(ready_problem(), f"{PART}.role", "generate")
     generate = answer(generate, f"{PART}.output", "image")
     generate = answer(generate, f"{PART}.target.kind", "image")
-    assert "予測するかまとめるの場合だけ" in project_error(generate)
+    assert "予測する, まとめるか並べるの場合だけ" in project_error(generate)
 
 
 def test_ready_project_with_images(tmp_path: Path) -> None:

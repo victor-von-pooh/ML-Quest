@@ -596,6 +596,14 @@ def check_decision(problem: dict) -> list[dict]:
             ", 振り分けるのどれかにしてください"
         ))
         return found
+    if kind == "search":
+        found.append(finding(
+            "error", "action.decision",
+            f"{DECISION_NAMES[kind]}判断は, 並べるで既製のモデルをそのまま"
+            "使う受け持ち (似た写真を探す) だけです. 列の予測の判断は, 量を"
+            "決める, 対象を選ぶ, 振り分けるのどれかにしてください"
+        ))
+        return found
     if kind in ("treat", "price"):
         found.append(finding(
             "error", "action.decision",
@@ -1031,6 +1039,8 @@ def check(problem: dict) -> list[dict]:
             found += check_price(problem)
         if is_demand_part(problem):
             found += check_demand(problem)
+        if is_search_part(problem):
+            found += search_findings(problem)
         found += check_part(problem)
         found += check_evaluation(problem)
         found += check_consumer(problem)
@@ -1221,8 +1231,8 @@ def choice_label(
 
 def is_pretrained_part(problem: dict) -> bool:
     """
-    受け持ちが既製のモデルをそのまま使う予測かまとめる (予測するか
-    まとめるで, 作り方が既製のモデルをそのまま) かを返す関数
+    受け持ちが既製のモデルをそのまま使う予測, まとめるか並べる (予測する,
+    まとめるか並べるで, 作り方が既製のモデルをそのまま) かを返す関数
 
     Parameters
     ----------
@@ -1233,11 +1243,11 @@ def is_pretrained_part(problem: dict) -> bool:
     ----------
     pretrained: bool
         一式づくりに渡す値を問う受け持ちか (出力の形と正解の種類は問わ
-        ない. 骨組みの書き出しが画像の分類か群かを確かめる)
+        ない. 骨組みの書き出しが画像の分類か群か順位かを確かめる)
     """
     # 受け持ちと作り方の答え (要らない問いの古い答えは除外)
     pretrained = active_value(problem, f"{PART}.role") in (
-        "predict", "group"
+        "predict", "group", "rank"
     ) and active_value(problem, f"{PART}.method") == "pretrained"
 
     return pretrained
@@ -1335,6 +1345,83 @@ def is_policy_part(problem: dict) -> bool:
     )
 
     return policy
+
+
+def is_search_part(problem: dict) -> bool:
+    """
+    受け持ちが似た写真を探す (並べるで, 作り方が既製のモデルをそのまま)
+    かを返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    search: bool
+        似た写真を探す骨組みを書き出す受け持ちか (出力の形は問わない.
+        骨組みの書き出しが順位かを確かめる)
+    """
+    # 受け持ちと作り方の答え (要らない問いの古い答えは除外)
+    search = active_value(problem, f"{PART}.role") == "rank" and (
+        active_value(problem, f"{PART}.method") == "pretrained"
+    )
+
+    return search
+
+
+def search_findings(problem: dict) -> list[dict]:
+    """
+    似た写真を探すの, 検索の判断の型, 件数と待ち時間の上限を確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 並べるで, 既製のモデルをそのまま)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (検索の判断でない, 件数か上限の形の誤り, 書けない項目は
+        error)
+    """
+    # 型 (検索の判断だけ)
+    found: list[dict] = []
+    decision = active_value(problem, "action.decision")
+    if not isinstance(decision, dict):
+        return found
+    name = DECISION_NAMES["search"]
+    if decision.get("type") != "search":
+        found.append(finding(
+            "error", "action.decision",
+            f"似た写真を探すの判断は「{name}」(search) にしてください (問い"
+            "の写真ごとに, 登録した写真から見た目の近い順に K 件返す)"
+        ))
+        return found
+
+    # 件数は 1 以上の整数, 待ち時間の上限は正の数 (任意)
+    k = decision.get("k")
+    if k is None:
+        found.append(finding(
+            "error", "action.decision",
+            f"{name}判断の k (問いごとに返す件数) を書いてください"
+        ))
+    elif not is_finite_number(k) or not float(k).is_integer() or k < 1:
+        found.append(finding(
+            "error", "action.decision",
+            "返す件数 (k) は 1 以上の整数にしてください"
+        ))
+    limit = decision.get("max_latency_ms")
+    if limit is not None and (not is_finite_number(limit) or limit <= 0):
+        found.append(finding(
+            "error", "action.decision",
+            "待ち時間の上限 (max_latency_ms) はミリ秒の正の数にしてください"
+            " (無ければ空)"
+        ))
+    found += option_findings(decision)
+
+    return found
 
 
 def is_rank_part(problem: dict) -> bool:

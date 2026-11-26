@@ -295,7 +295,7 @@ def test_ready_group_errors(tmp_path: Path) -> None:
     ranking = answer(ranking, f"{PART}.output", "ranking")
     for problem, words in (
         (table, "画像のディレクトリとして読んでいません"),
-        (ranking, "予測するかまとめるの場合だけ"),
+        (ranking, "「近い順に上位 K 件を返す」"),
     ):
         message = project_error(problem)
         assert message is not None and words in message, message

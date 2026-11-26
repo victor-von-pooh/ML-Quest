@@ -20,9 +20,9 @@ from ml_quest.baseline_skeleton import (
 )
 from ml_quest.check import (
     choice_label, is_anomaly_part, is_column_part, is_demand_part,
-    is_generate_part, is_group_part,
-    is_policy_part, is_price_part, is_rank_part, is_ready_group_part,
-    is_uplift_part, split_errors
+    is_generate_part, is_group_part, is_policy_part, is_price_part,
+    is_rank_part, is_ready_group_part, is_search_part, is_uplift_part,
+    split_errors
 )
 from ml_quest.data import (
     ITEMS_KINDS, TABLE_LOADERS, content_kind, copy_data, dataset_info,
@@ -67,6 +67,10 @@ from ml_quest.questions import METRICS, OUTPUTS, PART
 from ml_quest.ready_group_skeleton import (
     READY_GROUP_PHOTOS, ready_group_config, ready_group_message,
     ready_group_readme, ready_group_script
+)
+from ml_quest.search_skeleton import (
+    SEARCH_PHOTOS, search_config, search_message, search_readme,
+    search_script
 )
 from ml_quest.ready_skeleton import (
     READY_CONFIG, READY_SCRIPT, ready_config, ready_message, ready_readme,
@@ -1102,11 +1106,13 @@ def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
         return message, exportable
 
     # 既製のモデルをそのまま使う (学習しない) のは, 予測するの画像の分類
-    # と, まとめるの写真の群分けだけ (学習しないので, 指標と入れたデータ
-    # セットの確かめは無し)
+    # と, まとめるの写真の群分けと, 並べるの似た写真を探すだけ (学習しない
+    # ので, 指標と入れたデータセットの確かめは無し)
     if active_value(upgraded, f"{PART}.method") == "pretrained":
         message = (ready_group_message(upgraded)
                    if is_ready_group_part(upgraded)
+                   else search_message(upgraded)
+                   if is_search_part(upgraded)
                    else ready_message(upgraded))
         return message, exportable
 
@@ -1683,6 +1689,17 @@ def project_files(
     # 既製のモデルの埋め込みで写真を群に分ける (学習せず, 群と推論の一式
     # を作る. 入れた写真は data に写してそのまま読む. 入れていなければ
     # 置き場の outputs/photos)
+    if is_search_part(problem):
+        photos = data_file.as_posix() if data_file else SEARCH_PHOTOS
+        files = {
+            "README.md": search_readme(
+                problem, stages, photos,
+                data_file.as_posix() if data_file else None
+            ),
+            READY_CONFIG: search_config(stages, problem, name, photos),
+            READY_SCRIPT: search_script(problem, literal),
+        }
+        return files
     if is_ready_group_part(problem):
         photos = data_file.as_posix() if data_file else READY_GROUP_PHOTOS
         files = {

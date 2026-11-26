@@ -7,7 +7,7 @@ from ml_quest.check import (
     check, env_id_of, is_anomaly_part, is_column_part, is_demand_part,
     is_finite_number, is_generate_part, is_group_part, is_items_part,
     is_pretrained_part, is_price_part, is_rank_part, is_ready_group_part,
-    is_uplift_part, sha256_of, split_errors
+    is_search_part, is_uplift_part, sha256_of, split_errors
 )
 from ml_quest.data import EXPORT_FUNCTIONS
 from ml_quest.problem import (
@@ -391,7 +391,8 @@ def build_stages(problem: dict) -> dict:
             "inference": {"decision": (anomaly_decision(problem)
                                        or treat_decision(problem)
                                        or price_decision(problem)
-                                       or order_decision(problem)),
+                                       or order_decision(problem)
+                                       or search_decision(problem)),
                           "conclusion": {},
                           "horizon": None, "guard": None,
                           "ready": ready_of(problem)},
@@ -538,11 +539,11 @@ def ready_of(problem: dict) -> Optional[dict]:
     ----------
     ready: Optional[dict]
         library, model, weights (前後の空白を除いた名前), sha256 (決めて
-        いなければ None) (既製のモデルをそのまま使う予測かまとめるでなけ
-        れば None. まとめるは埋め込みの一式づくりに渡す)
+        いなければ None) (既製のモデルをそのまま使う予測, まとめるか並べる
+        でなければ None. まとめると並べるは埋め込みの一式づくりに渡す)
     """
-    # 予測するかまとめるで既製のモデルをそのまま使うときだけ (要らなく
-    # なった問いの古い答えは除外)
+    # 予測する, まとめるか並べるで既製のモデルをそのまま使うときだけ
+    # (要らなくなった問いの古い答えは除外)
     if not is_pretrained_part(problem):
         return None
     ready: dict[str, Any] = {}
@@ -1162,6 +1163,35 @@ def order_decision(problem: dict) -> Optional[dict]:
                 **{key: raw.get(key) for key in ("shortage_cost",
                                                  "holding_cost",
                                                  "max_order")}}
+
+    return decision
+
+
+def search_decision(problem: dict) -> Optional[dict]:
+    """
+    似た写真を探すの, 推論の段階の検索の判断を作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    decision: Optional[dict]
+        type (search) と k だけの検索の判断 (似た写真を探すでないか, 検索
+        の判断でなければ None. 待ち時間の上限は骨組みの config で渡す)
+    """
+    # 問いごとに近い順に K 件を返す判断 (整数の値の小数は整数)
+    raw = active_value(problem, "action.decision")
+    if not is_search_part(problem) or not isinstance(raw, dict) or (
+        raw.get("type") != "search"
+    ):
+        return None
+    k = raw.get("k")
+    if isinstance(k, float) and k.is_integer():
+        k = int(k)
+    decision = {"type": "search", "k": k}
 
     return decision
 
