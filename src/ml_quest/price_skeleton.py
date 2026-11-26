@@ -3,13 +3,13 @@ from string import Template
 from typing import Callable, Optional
 
 from ml_quest.handoff import describe
-from ml_quest.problem import active_value
+from ml_quest.problem import active_value, get_value
 from ml_quest.questions import PART, PRICE_ASSIGNED
 
 # 学習のスクリプトが読み込むライブラリの, ML-Found の登録簿の機能の名前
 # (データセットは ML-EDA で読む. config の model.spec の定義を置くと
-# ML-ModelControl の読み込み)
-PRICE_LIBRARIES = ["eda", "modelcontrol"]
+# ML-ModelControl の読み込みと, ML-Inference の推論の一式)
+PRICE_LIBRARIES = ["eda", "modelcontrol", "inference"]
 
 # データの分析の段階が書き出す, 値段を変えた記録の表の場所 (プロジェクトの
 # ディレクトリから)
@@ -31,8 +31,8 @@ PRICE_HEAD = '''"""
 試しに値段を変えた売れ行きの記録 (ML-EDA の値段を変えた記録の表) で, 値段を
 入力の最後の列に入れて売れた数を学び, 商品ごとに値段の候補の中で上限を
 超えない, 利益 ((値段 − 原価) × 予測した数) が最も大きい値段を選んで, その
-評価 (売れた数の誤差, 値段の弾力性, 見込みの利益の比べ) と推論の段階が読む
-成果物を残す骨組みなので, 印 (TODO) の所を書き足す
+評価 (売れた数の誤差, 値段の弾力性, 見込みの利益の比べ), 推論の段階が読む
+成果物と推論の一式を残す骨組みなので, 印 (TODO) の所を書き足す
 """
 import json
 import math
@@ -65,6 +65,14 @@ PREDICT = $predict
 ROLE = "effect"
 OUTPUT = "effect"
 METHOD = $method
+
+# 元の表の読み方 (問題の設定の手元のデータの読み方. 推論の一式づくりが
+# ML-EDA の load_data に渡す. None は ML-EDA の推定)
+LOADER = $loader
+OPTIONS = $options
+
+# 推論の一式を作る場所 (実験のディレクトリの中)
+INFERENCE_DIR = "inference"
 
 # モデルの入力と出力の名前 (ML-ModelControl の同梱の例 tabular_price と
 # 同じ) と, 出力の決まり (出力がそのまま売れた数. 最後に softplus)
@@ -953,6 +961,88 @@ def write_results(
     (run_dir / ESTIMATOR_FILE).write_text(text + "\\n", encoding="utf-8")
 
 
+def make_inference(
+    cfg: Any, spec: Optional[Path], run_dir: Path, experiment: Experiment
+) -> None:
+    """
+    ML-Inference の値段の一式を, 実験の中の inference/ に作る関数
+
+    Parameters
+    ----------
+    cfg: Any
+        config (元の表の場所, 一式の名前)
+    spec: Optional[Path]
+        ML-ModelControl の定義のファイル (無ければ None)
+    run_dir: Path
+        実験のディレクトリ (商品ごとの選んだ値段と値段の決め方を書いた後)
+    experiment: Experiment
+        実験 (train.log に記録する)
+
+    Returns
+    ----------
+    None
+    """
+    # 定義が無い仮のモデルの一式の省略
+    if spec is None:
+        experiment.logger.info(
+            "仮のモデル (PlaceholderModel) は ML-ModelControl の定義が無い"
+            "ので, 推論の一式を作りません. config の model.spec の場所に"
+            "定義を置くと, 学習の後に作ります"
+        )
+        return
+
+    # 定義を写せなかった実験の一式の省略 (一式は実験に写した定義を読む)
+    if experiment.model_spec_path is None:
+        experiment.logger.info(
+            "モデルの定義を実験に写せなかったので, 推論の一式を作りません "
+            "(理由は source.yaml の model_spec の status)"
+        )
+        return
+
+    # 元の表 (config の data.source) との選んだ値段の比べ (元の表が無けれ
+    # ば省略)
+    data = None
+    if cfg.data.source:
+        path = PROJECT_DIR / str(cfg.data.source)
+        data = path if path.is_file() else None
+    if data is None:
+        experiment.logger.info(
+            f"元の表 (config の data.source: {cfg.data.source}) が無いので,"
+            " 推論の一式の選んだ値段を実験の選んだ値段と比べません"
+        )
+
+    # 約束に合わない場合の ML-Inference の誤りの文の警告と, 学習の結果の
+    # 保存
+    from ml_inference import make_price_bundle
+
+    options = {**OPTIONS, **({"loader": LOADER} if LOADER else {})}
+    try:
+        info = make_price_bundle(
+            run_dir / INFERENCE_DIR, run_dir, name=cfg.experiment.name,
+            data=data, options=options if data is not None else None
+        )
+    except (ValueError, FileNotFoundError) as error:
+        experiment.logger.warning(
+            "成果物か定義が値段の一式の約束に合わないので, 推論の一式を"
+            f"作れません: {error}"
+        )
+        return
+
+    check = info["price"]["check"]
+    compared = ("選んだ値段は比べず" if check is None
+                else f"選んだ値段の一致 {check['agreement'] * 100:.1f} % "
+                f"({check['rows']} 件. 見込みの利益の差の最大 "
+                f"{check['max_diff']:.3g})")
+    decision = info["decision"]
+    experiment.logger.info(
+        f"推論の一式 (値段): {INFERENCE_DIR}/ ({compared}. 候補 "
+        f"{decision['candidates']}, 変える幅の上限 "
+        f"{decision['max_change']}. 版 {info['format_version']})"
+    )
+    for note in info["notes"]:
+        experiment.logger.warning(f"推論の一式の注意: {note}")
+
+
 def main() -> None:
     """
     値段を変えた記録の表で売れ行きを学び, 商品ごとの選んだ値段と評価と
@@ -1064,12 +1154,8 @@ def main() -> None:
         f"{ESTIMATOR_FILE} (変える幅の上限 {cfg.price.max_change})"
     )
 
-    # TODO: ML-Inference の値段の一式づくりを使う, 成果物からの実験の
-    # inference/ への推論の一式の作成
-    experiment.logger.info(
-        "推論の一式はまだ作りません (ML-Inference の値段の一式づくりが"
-        "できたら, 成果物から作ります)"
-    )
+    # 成果物から ML-Inference の推論の一式
+    make_inference(cfg, spec, run_dir, experiment)
 
 
 if __name__ == "__main__":
@@ -1142,10 +1228,13 @@ def price_script(problem: dict, literal: Callable) -> str:
         train.py の中身
     """
     # 頭と学習の流れ
+    options = get_value(problem, "data.options")
     head = Template(PRICE_HEAD).substitute(
         name=literal(str(problem.get("name", ""))),
         predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         method=literal(active_value(problem, f"{PART}.method")),
+        loader=literal(get_value(problem, "data.loader")),
+        options=literal(options if isinstance(options, dict) else {}),
         assigned_columns="[\n" + "".join(
             f"    {json.dumps(name)},\n" for name in PRICE_ASSIGNED
         ) + "]",
@@ -1266,9 +1355,10 @@ def price_readme(
                else "商品の id は無し (行ごとに値段を選ぶ)")
     lines += [
         "", "## 次にすること", "",
-        "学習する環境には ML-EDA, ML-Found, ML-ModelControl を入れる "
-        "(config の `requires` の機能. 足りなければ学習の前に入れ方を示して"
-        "止まる. ML-ModelControl は定義を置くと使う).", "",
+        "学習する環境には ML-EDA, ML-Found, ML-ModelControl, ML-Inference "
+        "を入れる (config の `requires` の機能. 足りなければ学習の前に入れ方"
+        "を示して止まる. ML-ModelControl と ML-Inference は定義を置くと"
+        "使う).", "",
         "1. **データの分析** (ML-EDA, ML-Fathom): ML-EDA の値段を変えた記録"
         "の表 (版 1 の `task: price`) を config の `data.dataset` の場所 "
         f"(`{dataset}`) に書き出す. ML-Fathom の「問題の設定から始める」か, "
@@ -1328,17 +1418,19 @@ def price_readme(
             else f"候補 {decision['candidates']}, 変える幅の上限 "
             f"{decision['max_change']}. config の `price`")
     lines += [
-        "4. **推論** (ML-Inference, ML-Provide): 推論の一式はまだ作らない "
-        "(ML-Inference の値段の一式づくりができたら, 実験の値段の決め方 "
-        "`price_estimator.json`, 前処理のレシピの写し `price_recipe.yaml`, "
-        "学習した重みと写した定義から作る). 推論の段階は新しい行の値段の列を"
-        "今の値段とし, 候補の値段で売れた数を予測して, 上限の中で利益が最も"
-        f"大きい値段を選ぶ ({rule}. 受け渡しの推論の意思決定 "
+        "4. **推論** (ML-Inference, ML-Provide): 学習の後に, 実験の値段の"
+        "決め方 `price_estimator.json`, 前処理のレシピの写し "
+        "`price_recipe.yaml`, 学習した重みと写した定義から, ML-Inference "
+        "の値段の一式を実験の `inference/` に作る (config の `data.source` "
+        "の元の表があれば, 一式の選んだ値段を実験の選んだ値段と比べて "
+        "`train.log` に書く. 仮のモデルでは作らない). 一式は新しい行の値段"
+        "の列を今の値段とし, 候補の値段で売れた数を予測して, 上限の中で"
+        f"利益が最も大きい値段を選ぶ ({rule}. 受け渡しの推論の意思決定 "
         "`{type: price, candidates, max_change}` は, ML-Inference の値段の"
-        "判断が読む形). 選ぶ値段は見積もりで, 試しに値段を変えた記録を前提"
+        "一式が読む形). 選ぶ値段は見積もりで, 試しに値段を変えた記録を前提"
         "にする. 値段を変えた効き目は, 値段を試して確かめる",
-        "", "`train.py` の印 (TODO) の所 (モデルと推論の一式) は書き足す. "
-        "問題の設定を変えたら, 書き出し直すか手で直す.", "",
+        "", "`train.py` の印 (TODO) の所 (モデル) は書き足す. 問題の設定を"
+        "変えたら, 書き出し直すか手で直す.", "",
     ]
     text = "\n".join(lines)
 

@@ -205,7 +205,7 @@ def test_price_project(tmp_path: Path) -> None:
     assert all(len(line) <= 79 for line in script.splitlines())
     config = yaml.safe_load((project / "configs" / "default" / "train.yaml")
                             .read_text(encoding="utf-8"))
-    assert config["requires"] == ["eda", "modelcontrol"]
+    assert config["requires"] == ["eda", "modelcontrol", "inference"]
     assert (config["trainer"]["monitor"], config["trainer"]["mode"]) == (
         "valid/mae", "min"
     )
@@ -220,7 +220,8 @@ def test_price_project(tmp_path: Path) -> None:
                   "`product_id`", "`category`", "tabular_price",
                   "price_estimator.json", "price_choices.csv",
                   "evaluations/price_<分割>.json", "stratified",
-                  "中央値", "price_inputs"):
+                  "中央値", "price_inputs", "inference/",
+                  "ML-Inference を入れる"):
         assert words in readme, words
 
     # 損得と制約の直すところを残した場合の空の候補
@@ -276,7 +277,9 @@ def test_price_training(tmp_path: Path) -> None:
     assert "仮のモデル (PlaceholderModel) で学習します" in log
     assert "予測: 値段を変えたときの売れた数" in log
     assert "学習に使う列: 3 (最後が値段の列 price)" in log
-    assert "推論の一式はまだ作りません" in log
+    assert "仮のモデル (PlaceholderModel) は ML-ModelControl の定義が無い" \
+        "ので, 推論の一式を作りません" in log
+    assert not (run / "inference").exists()
 
     # 検証のたびの売れた数の誤差
     with open(run / "history.csv", encoding="utf-8", newline="") as file:
@@ -390,6 +393,116 @@ def test_price_rows(tmp_path: Path) -> None:
             estimator["product"]) == ("row", None, None)
 
 
+def place_spec(project: Path) -> tuple[dict, Path]:
+    """
+    ML-ModelControl の同梱の例 tabular_price の入力の幅を 3 列にした定義を,
+    プロジェクトの models/model.yaml に置く関数
+
+    Parameters
+    ----------
+    project: Path
+        プロジェクトのディレクトリ
+
+    Returns
+    ----------
+    placed: tuple[dict, Path]
+        置いた定義と, 置いた場所
+    """
+    # 入力の形と最初の層の入力の幅
+    from ml_modelcontrol import load_example
+    spec = load_example("tabular_price")
+    spec["inputs"]["x"]["shape"] = [8, 3]
+    spec["nodes"]["units1"]["params"]["in_features"] = 3
+    place = project / "models" / "model.yaml"
+    place.parent.mkdir(parents=True, exist_ok=True)
+    place.write_text(yaml.safe_dump(spec, allow_unicode=True),
+                     encoding="utf-8")
+    placed = (spec, place)
+
+    return placed
+
+
+def check_bundle(run: Path) -> object:
+    """
+    実験の中に値段の一式ができ, 一式の既定の判断が値段の判断かを確かめる
+    関数
+
+    Parameters
+    ----------
+    run: Path
+        実験のディレクトリ
+
+    Returns
+    ----------
+    bundle: object
+        読み込んだ ML-Inference の一式
+    """
+    # 一式の版, 受け持ちと既定の判断 (ML-Inference が無ければ飛ばす)
+    inference = pytest.importorskip("ml_inference")
+    log = (run / "train.log").read_text(encoding="utf-8")
+    assert "変える幅の上限 0.1. 版 13)" in log
+    bundle = inference.load_bundle(run / "inference")
+    assert bundle.info["format_version"] == 13
+    assert bundle.info["role"] == "effect"
+    assert bundle.info["decision"] == {
+        "type": "price", "candidates": [-0.1, 0.0, 0.1, 0.2],
+        "max_change": 0.1,
+    }
+
+    return bundle
+
+
+def test_price_rows_bundle(tmp_path: Path) -> None:
+    """
+    商品の id の無い表を tabular_price の定義で学び, 推論の一式の選んだ
+    値段が実験の選んだ値段の表と合うことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 商品の id を答えない問題の設定と, 定義での短い学習 (段階のライブラリ
+    # が無ければ飛ばす)
+    for name in ("torch", "ml_eda", "ml_found", "ml_modelcontrol",
+                 "ml_inference"):
+        pytest.importorskip(name)
+    pd = pytest.importorskip("pandas")
+    source = write_sales(tmp_path / "raw")
+    problem = answer(price_problem(), f"{PART}.price.product", None)
+    problem = attach_data(problem, str(source),
+                          copy_to=str(tmp_path / "copies"))
+    project = tmp_path / "project"
+    make_project(problem, project)
+    export_sales(problem, project)
+    place_spec(project)
+    done = run_script(project, tuple(SHORT))
+    assert done.returncode == 0, done.stdout[-2000:] + done.stderr[-2000:]
+    run = only_run(project)
+
+    # 一式づくりの比べ (全ての行が 1 つの分割の 1 行)
+    bundle = check_bundle(run)
+    check = bundle.info["price"]["check"]
+    assert check["rows"] == PRODUCTS * RECORDS
+    assert check["agreement"] == 1.0
+    log = (run / "train.log").read_text(encoding="utf-8")
+    assert "推論の一式 (値段): inference/ (選んだ値段の一致 100.0 % (" \
+        f"{PRODUCTS * RECORDS} 件" in log
+
+    # 元の表を一式で決めた値段と, 実験の選んだ値段の表の行ごとの比べ
+    import ml_inference
+    result = ml_inference.infer(bundle, source)
+    found = result["frame"].set_index("record_id")["change"]
+    choices = pd.read_csv(run / "price_choices.csv")
+    recorded = choices.set_index("record_id")["change"]
+    gap = (found.loc[recorded.index] - recorded).abs()
+    assert float(gap.max()) <= 1e-9
+
+
 def test_price_example_spec(tmp_path: Path) -> None:
     """
     ML-ModelControl の同梱の例 tabular_price の入力の幅を列の数に合わせた
@@ -407,27 +520,27 @@ def test_price_example_spec(tmp_path: Path) -> None:
     # 同梱の例の入力の幅を 3 列に (ML-ModelControl が無ければ飛ばす)
     for name in ("torch", "ml_eda", "ml_found", "ml_modelcontrol"):
         pytest.importorskip(name)
-    from ml_modelcontrol import load_example
     source = write_sales(tmp_path / "raw")
     problem = attach_data(price_problem(), str(source),
                           copy_to=str(tmp_path / "copies"))
     project = tmp_path / "project"
     make_project(problem, project)
     export_sales(problem, project)
-    spec = load_example("tabular_price")
-    spec["inputs"]["x"]["shape"] = [8, 3]
-    spec["nodes"]["units1"]["params"]["in_features"] = 3
-    place = project / "models" / "model.yaml"
-    place.parent.mkdir(parents=True, exist_ok=True)
-    place.write_text(yaml.safe_dump(spec, allow_unicode=True),
-                     encoding="utf-8")
+    spec, place = place_spec(project)
     done = run_script(project, tuple(SHORT))
     assert done.returncode == 0, done.stdout[-2000:] + done.stderr[-2000:]
     run = only_run(project)
-    assert "仮のモデル" not in (run / "train.log").read_text(encoding="utf-8")
+    log = (run / "train.log").read_text(encoding="utf-8")
+    assert "仮のモデル" not in log
     assert (run / "model_spec.yaml").is_file()
     row = read_evaluation(run, "price_test")["rows"][0]
     assert row["profit_gain"] >= 0
+
+    # 定義のモデルの推論の一式 (商品は分割をまたぐので選んだ値段は比べ
+    # ない)
+    bundle = check_bundle(run)
+    assert bundle.info["price"]["check"] is None
+    assert "推論の一式 (値段): inference/ (選んだ値段は比べず" in log
 
     # 出力の無い定義の, 出力先を作る前の停止
     spec["outputs"] = {"count": "units_softplus"}
