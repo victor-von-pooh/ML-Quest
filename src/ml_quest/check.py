@@ -10,9 +10,9 @@ from ml_quest.problem import (
 from ml_quest.questions import (
     ANOMALY_ASSIGNED, ANOMALY_SCORES, COLLECTS, CONSUMERS, FALLBACKS,
     GROUP_ASSIGNED, GROUP_STABILITIES, GROUP_TAKEN, GUARD_COUNTS,
-    METHODS, METRICS, NOT_COUNTED, OUTPUTS, PART, QUESTIONS,
+    METHODS, METRICS, NOT_COUNTED, OUTPUTS, PART, PRICE_ASSIGNED, QUESTIONS,
     READY_LIBRARIES, ROLES, SIMULATORS, TARGET_KINDS, TARGET_SOURCES, UNITS,
-    UPLIFT_ASSIGNED, UPLIFT_OUTCOMES, V1_METRICS
+    UPLIFT_ASSIGNED, UPLIFT_OUTCOMES, V1_METRICS, VARIED
 )
 
 # その他の指標の名前 (学習の記録の名前と曲線のファイルの名前)
@@ -54,7 +54,7 @@ GENERATE_KINDS = ("image", "table")
 PART_DICTS = [f"{PART}.target", f"{PART}.target.process",
               f"{PART}.evaluation", f"{PART}.policy", f"{PART}.ready",
               f"{PART}.rank", f"{PART}.group", f"{PART}.anomaly",
-              f"{PART}.uplift"]
+              f"{PART}.uplift", f"{PART}.price"]
 
 # 受け持ちの, 選んで書く項目と選択肢 (手で書いたファイルの確かめ)
 PART_CHOICES = {
@@ -67,6 +67,7 @@ PART_CHOICES = {
     f"{PART}.group.stability": GROUP_STABILITIES,
     f"{PART}.anomaly.score": ANOMALY_SCORES,
     f"{PART}.uplift.outcome_kind": UPLIFT_OUTCOMES,
+    f"{PART}.varied": VARIED,
 }
 
 # 方策の守りの, 文で書く項目
@@ -88,6 +89,14 @@ RANK_COLUMNS = [f"{PART}.rank.{name}" for name in (
 UPLIFT_COLUMNS = {f"{PART}.uplift.treatment": "処置の列",
                   f"{PART}.uplift.outcome": "結果の列",
                   f"{PART}.uplift.id": "行の id の列"}
+
+# 値段を変える判断の, 列の名前の項目 (値段, 売れた数, 原価, 商品の id,
+# 行の id) と文の中の呼び方
+PRICE_COLUMNS = {f"{PART}.price.price": "値段の列",
+                 f"{PART}.price.units": "売れた数の列",
+                 f"{PART}.price.cost": "原価の列",
+                 f"{PART}.price.product": "商品の id の列",
+                 f"{PART}.price.id": "行の id の列"}
 
 # 並べるの列の項目の, 文の中の呼び方
 RANK_TITLES = dict(zip(RANK_COLUMNS, ("利用者の列", "品物の列", "時刻の列",
@@ -111,7 +120,8 @@ TASK_NAMES = {"classification": "分類", "regression": "回帰",
 COLUMN_LISTS = ["information.columns", f"{PART}.series_by",
                 "information.known", "information.unknown",
                 "information.forbidden", f"{PART}.group.columns",
-                f"{PART}.anomaly.columns", f"{PART}.uplift.columns"]
+                f"{PART}.anomaly.columns", f"{PART}.uplift.columns",
+                f"{PART}.price.columns"]
 
 
 def finding(level: str, key: str, message: str) -> dict:
@@ -217,7 +227,7 @@ def check_shape(problem: dict) -> list[dict]:
                 f"{PART}.target.process.name", *PART_CHOICES,
                 *POLICY_TEXTS, *READY_TEXTS, *RANK_COLUMNS,
                 f"{PART}.group.id", f"{PART}.anomaly.label",
-                f"{PART}.anomaly.id", *UPLIFT_COLUMNS):
+                f"{PART}.anomaly.id", *UPLIFT_COLUMNS, *PRICE_COLUMNS):
         value = get_value(problem, key)
         if value is not None and not isinstance(value, str):
             found.append(finding("error", key,
@@ -565,12 +575,12 @@ def check_decision(problem: dict) -> list[dict]:
     if not decision:
         return found
     kind = decision["type"]
-    if kind == "treat":
+    if kind in ("treat", "price"):
         found.append(finding(
             "error", "action.decision",
             f"{DECISION_NAMES[kind]}判断は, 効果を見積もるで方策でなく, 今ある"
-            "記録から効果を見積もる受け持ちだけです. 予測を使う判断は, 量を"
-            "決める, 対象を選ぶ, 振り分けるのどれかにしてください"
+            "記録から学ぶ受け持ちだけです. 予測を使う判断は, 量を決める, 対象"
+            "を選ぶ, 振り分けるのどれかにしてください"
         ))
         return found
     columns = active_value(problem, "information.columns") or []
@@ -996,6 +1006,8 @@ def check(problem: dict) -> list[dict]:
             found += check_anomaly(problem)
         if is_uplift_part(problem):
             found += check_uplift(problem)
+        if is_price_part(problem):
+            found += check_price(problem)
         found += check_part(problem)
         found += check_evaluation(problem)
         found += check_consumer(problem)
@@ -1611,14 +1623,60 @@ def is_uplift_part(problem: dict) -> bool:
     uplift: bool
         効果の見積もりの骨組みを書き出す受け持ちか
     """
+    # 今ある記録から学ぶ受け持ちで, 記録で変えたものが値段でない
+    uplift = is_logged_part(problem) and (
+        active_value(problem, f"{PART}.varied") != "price"
+    )
+
+    return uplift
+
+
+def is_logged_part(problem: dict) -> bool:
+    """
+    受け持ちが, 効果を見積もるで方策でなく今ある記録から学ぶ (作り方が既製
+    のモデルをそのままでない) かを返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    logged: bool
+        効果の見積もりか値段を変える判断か
+    """
     # 受け持ち, 方策か, 集め方と作り方の答え (要らない問いの古い答えは除外)
-    uplift = active_value(problem, f"{PART}.role") == "effect" and (
+    logged = active_value(problem, f"{PART}.role") == "effect" and (
         active_value(problem, f"{PART}.autonomous") is not True
         and active_value(problem, f"{PART}.collect") == "log"
         and active_value(problem, f"{PART}.method") != "pretrained"
     )
 
-    return uplift
+    return logged
+
+
+def is_price_part(problem: dict) -> bool:
+    """
+    受け持ちが値段を変える判断 (今ある記録から学び, 記録で変えたものが
+    値段) かを返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    price: bool
+        値段を変える判断の骨組みを書き出す受け持ちか
+    """
+    # 今ある記録から学ぶ受け持ちで, 記録で変えたものが値段
+    price = is_logged_part(problem) and (
+        active_value(problem, f"{PART}.varied") == "price"
+    )
+
+    return price
 
 
 def check_uplift(problem: dict) -> list[dict]:
@@ -1788,6 +1846,224 @@ def uplift_columns(problem: dict) -> list[dict]:
         ))
 
     return found
+
+
+def check_price(problem: dict) -> list[dict]:
+    """
+    値段を変える判断の正解の出どころ, 列, 値段の判断と指標を確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 値段を変える判断)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (候補が全て上限を超える場合だけ warning, 他は error)
+    """
+    # 正解は試しに値段を変えた記録 (値段と売れた数の組)
+    found: list[dict] = []
+    source = active_value(problem, f"{PART}.target.source")
+    if source not in (None, "intervention"):
+        found.append(finding(
+            "error", f"{PART}.target.source",
+            "試しに値段を変えた記録から学ぶので, 正解の出どころは"
+            f"{choice_label(TARGET_SOURCES, 'intervention')}にしてください "
+            "(値段の列と売れた数の列を持つ表)"
+        ))
+
+    # 列の答えと, 値段の判断の型, 候補, 上限
+    found += price_columns(problem)
+    found += price_findings(problem)
+
+    # 方策の報酬は環境の評価のエピソードの値で, 記録からは数えない値
+    if active_value(problem, f"{PART}.evaluation.metric") == "reward":
+        found.append(finding(
+            "error", f"{PART}.evaluation.metric",
+            f"{choice_label(METRICS, 'reward')}は方策の指標です. 値段を変える"
+            f"判断なら{choice_label(METRICS, 'mae')}か損失にしてください"
+        ))
+
+    return found
+
+
+def price_columns(problem: dict) -> list[dict]:
+    """
+    値段を変える判断の列の答えを確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 値段を変える判断)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (使えるデータの列に無い, 予測に使う列と重なる, 列どうしが
+        同じ, 商品の id と行の id の列の名前の決まり, ML-EDA の元の値段の
+        列の名前. どれも error)
+    """
+    # 使えるデータの列の一覧が無いときの, 列に無いかの確かめの省略
+    found: list[dict] = []
+    columns = active_value(problem, "information.columns") or []
+    used = active_value(problem, f"{PART}.price.columns") or []
+    missing = [name for name in used if columns and name not in columns]
+    if missing:
+        found.append(finding(
+            "error", f"{PART}.price.columns",
+            f"{', '.join(missing)} は使えるデータの列にありません"
+        ))
+    named: dict[str, str] = {}
+    for item, title in PRICE_COLUMNS.items():
+        name = active_value(problem, item)
+        if not name:
+            continue
+        if columns and name not in columns:
+            found.append(finding("error", item,
+                                 f"{name} は使えるデータの列にありません"))
+        elif name in used:
+            found.append(finding(
+                "error", item,
+                f"{name} は売れ行きの予測に使う列にもあります. {title}は予測に"
+                "使う列に入れません (値段の列は骨組みが入力の最後に足します)"
+            ))
+        same = [key for key, value in named.items() if value == name]
+        if same:
+            found.append(finding(
+                "error", item,
+                f"{name} は{PRICE_COLUMNS[same[0]]}と同じです. 別の列にして"
+                "ください"
+            ))
+        named[item] = name
+
+    # 商品の id と行の id の列の名前 (商品ごとの選んだ値段の表の他の列と,
+    # ML-EDA の行の位置と元の値段の列)
+    for item in (f"{PART}.price.product", f"{PART}.price.id"):
+        key = active_value(problem, item)
+        if key and key in PRICE_ASSIGNED:
+            found.append(finding(
+                "error", item,
+                f"{PRICE_COLUMNS[item]} {key} は商品ごとの選んだ値段の表の列 "
+                f"({', '.join(PRICE_ASSIGNED)}) と同じ名前です. 名前を変えた"
+                "列を作ってから選んでください"
+            ))
+    if not active_value(problem, f"{PART}.price.id") and "row_id" in columns:
+        found.append(finding(
+            "error", f"{PART}.price.id",
+            "使えるデータの列に row_id があります. データの分析の段階は行の"
+            "位置を row_id の列にするので, 行の id の列を答えてください"
+        ))
+    if "price_raw" in columns:
+        found.append(finding(
+            "error", "information.columns",
+            "使えるデータの列に price_raw があります. データの分析の段階は"
+            "元の値段を price_raw の列に置くので, 名前を変えた列を作って"
+            "ください"
+        ))
+
+    return found
+
+
+def price_findings(problem: dict) -> list[dict]:
+    """
+    値段を変える判断の, 値段の判断の型, 候補と変える幅の上限を確かめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 値段を変える判断)
+
+    Returns
+    ----------
+    found: list[dict]
+        確かめ (値段の判断でない, 候補か上限の形の誤り, 書けない項目は
+        error. 今の値段の他の候補が全て上限を超える場合は warning)
+    """
+    # 型 (値段の判断だけ)
+    found: list[dict] = []
+    decision = active_value(problem, "action.decision")
+    if not isinstance(decision, dict):
+        return found
+    name = DECISION_NAMES["price"]
+    if decision.get("type") != "price":
+        found.append(finding(
+            "error", "action.decision",
+            f"値段を変える判断の判断は「{name}」(price) にしてください (商品"
+            "ごとに, 候補の中で上限を超えない, 利益が最も大きい値段を選ぶ)"
+        ))
+        return found
+
+    # 候補は -1 より大きい数の並びで, 重ならず, 今の値段 (0) を含む
+    candidates = decision.get("candidates")
+    ratios = candidates if isinstance(candidates, list) else []
+    numbers = all(is_finite_number(value) for value in ratios)
+    if candidates is None:
+        found.append(finding(
+            "error", "action.decision",
+            f"{name}判断の candidates (値段の候補の変える割合) を書いて"
+            "ください"
+        ))
+    elif not ratios or not numbers or any(value <= -1 for value in ratios):
+        found.append(finding(
+            "error", "action.decision",
+            "値段の候補 (candidates) は, -1 より大きい数 (今の値段に対する"
+            "変える割合. 1 割上げるなら 0.1) の並びにしてください"
+        ))
+    elif len(set(ratios)) != len(ratios) or 0 not in ratios:
+        found.append(finding(
+            "error", "action.decision",
+            "値段の候補 (candidates) は同じ割合を重ねず, 今の値段 (割合 0) "
+            "を含めてください"
+        ))
+
+    # 上限は 0 以上の数 (今の値段の他の候補が全て上限を超えると選べない)
+    limit = decision.get("max_change")
+    if limit is None:
+        found.append(finding(
+            "error", "action.decision",
+            f"{name}判断の max_change (値段を変える幅の上限) を書いて"
+            "ください"
+        ))
+    elif not is_finite_number(limit) or limit < 0:
+        found.append(finding(
+            "error", "action.decision",
+            "値段を変える幅の上限 (max_change) は 0 以上の数 (変える割合の"
+            "絶対値. 1 割までなら 0.1) にしてください"
+        ))
+    elif ratios and numbers and not any(
+        value != 0 and abs(value) <= limit for value in ratios
+    ):
+        found.append(finding(
+            "warning", "action.decision",
+            "今の値段の他の候補が全て値段を変える幅の上限を超えるので, いつも"
+            "今の値段を選びます. 上限の中の候補を足してください"
+        ))
+    found += option_findings(decision)
+
+    return found
+
+
+def is_finite_number(value: Any) -> bool:
+    """
+    値が真偽値でない有限の数かを返す関数
+
+    Parameters
+    ----------
+    value: Any
+        値
+
+    Returns
+    ----------
+    number: bool
+        真偽値でない有限の数か
+    """
+    # 真偽値は数でない
+    number = not isinstance(value, bool) and isinstance(
+        value, (int, float)
+    ) and math.isfinite(value)
+
+    return number
 
 
 def check_v1(problem: dict) -> list[dict]:

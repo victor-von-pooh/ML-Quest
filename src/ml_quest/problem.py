@@ -43,7 +43,11 @@ DECISION_FIELDS = {
                "capacity": False},
     "none": {},
     "treat": {"budget": True},
+    "price": {"candidates": True, "max_change": True},
 }
+
+# 意思決定の型ごとの, 数の並びで書く項目 (値段の候補の変える割合)
+DECISION_LISTS = {"price": ("candidates",)}
 
 # 意思決定の型ごとの, 選んで書く項目と選択肢 (ML-Inference の形). 対象を
 # 選ぶ型の効果の渡し方 (share は防げる割合, uplift は 行動したとき − しない
@@ -73,14 +77,15 @@ FIELD_NAMES = {
     "budget_cost": "費用の上限", "miss_cost": "見逃しの損",
     "false_alarm_cost": "空振りの損", "capacity": "回せる件数の上限",
     "positive": "当たりのクラス", "effect_kind": "効果の渡し方",
-    "effect_goal": "向き",
+    "effect_goal": "向き", "candidates": "値段の候補",
+    "max_change": "変える幅の上限",
 }
 
 # 意思決定の型の名前
 DECISION_NAMES = {
     "quantity": "量を決める", "select": "対象を選ぶ",
     "triage": "振り分ける", "none": "意思決定しない",
-    "treat": "効果の上位から配る",
+    "treat": "効果の上位から配る", "price": "利益が最も大きい値段を選ぶ",
 }
 
 
@@ -417,6 +422,10 @@ def choice_fits(problem: dict, choice: dict) -> bool:
                "tasks": get_value(problem, f"{PART}.task"),
                "sources": get_value(problem, f"{PART}.target.source")}
     autonomous = get_value(problem, f"{PART}.autonomous")
+    varied = active_value(problem, f"{PART}.varied") or (
+        "treat" if active_value(problem, f"{PART}.collect") == "log"
+        and autonomous is not True else None
+    )
     if "roles" in choice:
         fits = answers["role"] is None or answers["role"] in choice["roles"]
         return fits
@@ -428,6 +437,8 @@ def choice_fits(problem: dict, choice: dict) -> bool:
                 for name in ("kinds", "tasks", "sources"))
         and ("policy" not in item or not isinstance(autonomous, bool)
              or autonomous is item["policy"])
+        and ("varied" not in item or varied is None
+             or varied in item["varied"])
         for item in choice["fits"]
     )
 
@@ -721,6 +732,11 @@ def clean_decision(value: Any) -> Optional[dict]:
     decision: dict = {"type": kind}
     for field in DECISION_FIELDS[kind]:
         item = value.get(field)
+        if field in DECISION_LISTS.get(kind, ()):
+            ratios = clean_ratios(item, f"action.decision の {field}")
+            if ratios is not None:
+                decision[field] = ratios
+            continue
         decision_value = clean_amount(item, f"action.decision の {field}")
         if decision_value is not None:
             decision[field] = decision_value
@@ -736,6 +752,40 @@ def clean_decision(value: Any) -> Optional[dict]:
         decision[field] = item
 
     return decision
+
+
+def clean_ratios(value: Any, key: str) -> Optional[list]:
+    """
+    数の並びの答え (値段の候補の変える割合) を確かめて返す関数
+
+    Parameters
+    ----------
+    value: Any
+        答え (数の並びか, カンマで区切った数の文字列)
+    key: str
+        項目の場所
+
+    Returns
+    ----------
+    ratios: Optional[list]
+        答えの順の数の並び (空なら None)
+    """
+    # 文字列はカンマで区切り, 並びの要素は数だけ (列の名前は書けない)
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    items = value.split(",") if isinstance(value, str) else value
+    if not isinstance(items, (list, tuple)):
+        raise ValueError(f"{key} は数の並びで答えてください")
+    ratios = []
+    for item in items:
+        number = clean_number(item, key)
+        if number is None:
+            raise ValueError(f"{key} に空の要素があります")
+        ratios.append(number)
+    if not ratios:
+        return None
+
+    return ratios
 
 
 def clean_amount(value: Any, key: str) -> Union[int, float, str, None]:

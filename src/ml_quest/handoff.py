@@ -4,8 +4,9 @@ from typing import Any, Optional
 
 from ml_quest.check import (
     check, env_id_of, is_anomaly_part, is_column_part, is_generate_part,
-    is_group_part, is_items_part, is_pretrained_part, is_rank_part,
-    is_ready_group_part, is_uplift_part, sha256_of, split_errors
+    is_group_part, is_items_part, is_pretrained_part, is_price_part,
+    is_rank_part, is_ready_group_part, is_uplift_part, sha256_of,
+    split_errors
 )
 from ml_quest.data import EXPORT_FUNCTIONS
 from ml_quest.problem import (
@@ -31,7 +32,8 @@ DEFAULT_SAFETY_KEY = "cost"
 # 一から学習する受け持ちと正解の種類ごとの, モデルの作成の雛形
 # (ML-ModelControl の同梱の例の名前. 並べる, まとめる, 効果を見積もるは
 # 正解の種類を問わないので None. 異常は度合いの決め方が自己符号化器の
-# ときだけ. 効果を見積もるは方策でない効果の見積もりのときだけ)
+# ときだけ. 効果を見積もるは方策でない効果の見積もりのときだけで, 記録で
+# 変えたものが値段の値段を変える判断は正解の種類の代わりに price)
 MODEL_EXAMPLES = {
     ("predict", "mask"): "unet_segmentation",
     ("predict", "anomaly"): "tabular_autoencoder",
@@ -40,6 +42,7 @@ MODEL_EXAMPLES = {
     ("rank", None): "two_tower_retrieval",
     ("group", None): "contrastive_encoder",
     ("effect", None): "tabular_uplift",
+    ("effect", "price"): "tabular_price",
 }
 
 # 選んで書く意思決定の項目 (値を名前にして文にする)
@@ -104,7 +107,8 @@ def model_example(problem: dict) -> Optional[str]:
     if active_value(problem, f"{PART}.method") != "scratch":
         return None
     key = (active_value(problem, f"{PART}.role"),
-           active_value(problem, f"{PART}.target.kind"))
+           "price" if is_price_part(problem)
+           else active_value(problem, f"{PART}.target.kind"))
     example = MODEL_EXAMPLES.get(key)
 
     # 異常の検知の距離に基づく度合い (モデル無し) と, 方策の頭 (入力と出力
@@ -113,7 +117,9 @@ def model_example(problem: dict) -> Optional[str]:
         active_value(problem, f"{PART}.anomaly.score") != "autoencoder"
     ):
         example = None
-    if key[0] == "effect" and not is_uplift_part(problem):
+    if key[0] == "effect" and not is_uplift_part(problem) and (
+        not is_price_part(problem)
+    ):
         example = None
 
     return example
@@ -219,7 +225,9 @@ def handoff(problem: dict) -> dict:
         数え方. まとめるで学習しなければ None), anomaly (異常の検知の度合いの
         決め方, 列, 人が確かめる件数の上限. 異常の検知でなければ None),
         uplift (効果の見積もりの処置, 結果, 列と上位の割合. 効果の見積もり
-        でなければ None), project (書き出したプロジェクトの
+        でなければ None), price (値段を変える判断の値段, 売れた数, 原価,
+        商品の id, 行の id の列と予測に使う列. 値段を変える判断でなければ
+        None), project (書き出したプロジェクトの
         path. データセットとモデルの定義の場所は data の project_dataset
         と model の project_model_spec. 記録が無ければ None)
 
@@ -350,11 +358,12 @@ def build_stages(problem: dict) -> dict:
     if not is_column_part(problem):
         # 異常の検知の自己符号化器は入力と同じ幅を出す (ML-EDA の
         # model_inputs の outputs と同じく学習に使う列の数). 効果の見積もり
-        # は出力の頭ごとに 1
+        # は出力の頭ごとに 1, 値段を変える判断は売れた数の 1
         anomaly = anomaly_of(problem)
         uplift = uplift_of(problem)
+        price = price_of(problem)
         outputs = (len(anomaly["columns"]) if anomaly
-                   else 1 if uplift else None)
+                   else 1 if uplift or price else None)
         stages = {
             "part": part,
             "data": {**column_data(problem, None),
@@ -364,6 +373,7 @@ def build_stages(problem: dict) -> dict:
                      **group_data(problem),
                      **anomaly_data(problem),
                      **uplift_data(problem),
+                     **price_data(problem),
                      "project_dataset": project["dataset"]},
             "model": {"task": None, "outputs": outputs,
                       "role": part["role"],
@@ -372,7 +382,8 @@ def build_stages(problem: dict) -> dict:
                       "project_model_spec": project["model_spec"]},
             "training": training,
             "inference": {"decision": (anomaly_decision(problem)
-                                       or treat_decision(problem)),
+                                       or treat_decision(problem)
+                                       or price_decision(problem)),
                           "conclusion": {},
                           "horizon": None, "guard": None,
                           "ready": ready_of(problem)},
@@ -382,6 +393,7 @@ def build_stages(problem: dict) -> dict:
             "group": group_of(problem),
             "anomaly": anomaly,
             "uplift": uplift,
+            "price": price,
             "project": {"path": project["path"]},
         }
         return stages
@@ -408,6 +420,7 @@ def build_stages(problem: dict) -> dict:
         "group": None,
         "anomaly": None,
         "uplift": None,
+        "price": None,
         "project": {"path": project["path"]},
     }
 
@@ -877,6 +890,108 @@ def treat_decision(problem: dict) -> Optional[dict]:
     ):
         return None
     decision = {"type": "treat", "budget": whole(raw.get("budget"))}
+
+    return decision
+
+
+def price_of(problem: dict) -> Optional[dict]:
+    """
+    値段を変える判断の値段, 売れた数, 原価, 商品の id, 行の id の列と予測に
+    使う列をまとめる関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    price: Optional[dict]
+        price (値段の列), units (売れた数の列), cost (原価の列), product
+        (商品の id の列), id (行の id の列. 答えていない列は None),
+        columns (予測に使う列. 値段の列は含まない) (値段を変える判断で
+        なければ None)
+    """
+    # 値段を変える判断のときだけ (要らなくなった問いの古い答えは除外)
+    if not is_price_part(problem):
+        return None
+    price: dict[str, Any] = {
+        name: active_value(problem, f"{PART}.price.{name}")
+        for name in ("price", "units", "cost", "product", "id")
+    }
+    price["columns"] = list(
+        active_value(problem, f"{PART}.price.columns") or []
+    )
+
+    return price
+
+
+def price_data(problem: dict) -> dict:
+    """
+    値段を変える判断の, データの分析の段階に渡す値を作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    data: dict
+        target (売れた数の列), task (price), split (stratified), known
+        (予測に使う列と, 最後に値段の列), drop (他の使えるデータの列), id,
+        price, cost, product, unlabeled (drop) (値段を変える判断でなければ
+        空)
+    """
+    # ML-EDA の値段を変えた記録の表のレシピの値 (値段の列は学習に使う列の
+    # 最後)
+    data: dict = {}
+    price = price_of(problem)
+    if price is None:
+        return data
+    kept = [*price["columns"], price["price"], price["units"],
+            price["cost"], price["product"], price["id"]]
+    columns = active_value(problem, "information.columns") or []
+    data = {
+        "target": price["units"], "task": "price", "split": "stratified",
+        "known": [*price["columns"], price["price"]],
+        "drop": [name for name in columns if name not in kept],
+        "id": price["id"], "price": price["price"], "cost": price["cost"],
+        "product": price["product"], "unlabeled": "drop",
+    }
+
+    return data
+
+
+def price_decision(problem: dict) -> Optional[dict]:
+    """
+    値段を変える判断の, 推論の段階の値段の判断を作る関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    decision: Optional[dict]
+        type (price), candidates (今の値段に対する変える割合の並び),
+        max_change (変える幅の上限) だけの値段の判断 (値段を変える判断で
+        ないか, 値段の判断でなければ None)
+    """
+    # 候補の中で上限を超えない, 利益が最も大きい値段を選ぶ判断
+    raw = active_value(problem, "action.decision")
+    if not is_price_part(problem) or not isinstance(raw, dict) or (
+        raw.get("type") != "price"
+    ):
+        return None
+    candidates = raw.get("candidates")
+    decision = {
+        "type": "price",
+        "candidates": (list(candidates) if isinstance(candidates, list)
+                       else None),
+        "max_change": raw.get("max_change"),
+    }
 
     return decision
 
@@ -1387,6 +1502,8 @@ def number_text(value: Any) -> str:
     # 整数は桁区切り, 小数は丸め. 手で書いた真偽値と空は, 数でないと分かる文
     if isinstance(value, bool) or value is None:
         text = f"{yaml_name(value)} (数でない値)"
+    elif isinstance(value, list):
+        text = "[" + ", ".join(number_text(item) for item in value) + "]"
     elif not isinstance(value, (int, float)):
         text = str(value)
     elif isinstance(value, int):
@@ -1438,6 +1555,8 @@ def decision_text(decision: dict) -> str:
         names["effect"] = "確率の差"
     if decision.get("type") == "treat":
         names["budget"] = "配る数の上限"
+    if decision.get("type") == "price":
+        names["max_change"] = "値段を変える幅の上限"
     items: list[Any] = [
         f"{names.get(key, key)} " + number_text(
             OPTION_NAMES.get(value, value)

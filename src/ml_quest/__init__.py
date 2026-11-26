@@ -17,9 +17,9 @@ from ml_quest.problem import (
 )
 from ml_quest.questions import (
     ANOMALY_ASSIGNED, ANOMALY_SCORES, BASELINE_TYPES, GROUP_ASSIGNED,
-    GROUP_TAKEN, GUARD_COUNTS, METHODS, METRICS, OUTPUTS, PART, QUESTIONS,
-    ROLES, SECTIONS, SPLITS, TARGET_KINDS, TARGET_SOURCES, TASKS, UNITS,
-    UPLIFT_ASSIGNED, UPLIFT_OUTCOMES
+    GROUP_TAKEN, GUARD_COUNTS, METHODS, METRICS, OUTPUTS, PART,
+    PRICE_ASSIGNED, QUESTIONS, ROLES, SECTIONS, SPLITS, TARGET_KINDS,
+    TARGET_SOURCES, TASKS, UNITS, UPLIFT_ASSIGNED, UPLIFT_OUTCOMES, VARIED
 )
 from ml_quest.requirements import FEATURES, required_features
 from ml_quest.sensitivity import SENSITIVITY_FIELDS, decision_sensitivity
@@ -33,10 +33,11 @@ __all__ = [
     "ANOMALY_ASSIGNED", "ANOMALY_SCORES", "BASELINE_TYPES", "COPY_NAME",
     "EXAMPLES", "FEATURES", "FORMAT_VERSION",
     "GROUP_ASSIGNED", "GROUP_TAKEN", "GUARD_COUNTS", "LEGACY_KEYS",
-    "METHODS", "METRICS", "MODEL_EXAMPLES", "OUTPUTS", "PART", "QUESTIONS",
+    "METHODS", "METRICS", "MODEL_EXAMPLES", "OUTPUTS", "PART",
+    "PRICE_ASSIGNED", "QUESTIONS",
     "ROLES", "SECTIONS", "SENSITIVITY_FIELDS", "SPLITS",
     "TARGET_KINDS", "TARGET_SOURCES", "TASKS", "UNITS", "UPLIFT_ASSIGNED",
-    "UPLIFT_OUTCOMES", "active_value",
+    "UPLIFT_OUTCOMES", "VARIED", "active_value",
     "answer", "apply_group", "apply_recipe", "attach_data", "check",
     "decision_sensitivity", "decision_text", "describe", "example_problem",
     "get_value", "handoff", "inspect_data", "inspect_key", "is_column_part",
