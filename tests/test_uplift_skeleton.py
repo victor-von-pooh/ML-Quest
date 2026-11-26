@@ -200,7 +200,7 @@ def test_uplift_project(tmp_path: Path) -> None:
     assert all(len(line) <= 79 for line in script.splitlines())
     config = yaml.safe_load((project / "configs" / "default" / "train.yaml")
                             .read_text(encoding="utf-8"))
-    assert config["requires"] == ["eda", "modelcontrol"]
+    assert config["requires"] == ["eda", "modelcontrol", "inference"]
     assert (config["trainer"]["monitor"], config["trainer"]["mode"]) == (
         "valid/qini", "max"
     )
@@ -214,7 +214,7 @@ def test_uplift_project(tmp_path: Path) -> None:
     for words in ("outputs/dataset", "`coupon`", "`purchased`", "`age`",
                   "`customer_id`", "tabular_uplift", "uplift_estimator.json",
                   "uplift_effects.csv", "evaluations/uplift_<分割>.json",
-                  "50 件", "stratified"):
+                  "50 件", "stratified", "inference/", "上位 30 %"):
         assert words in readme, words
 
     # 損失で選ぶ場合の並んだときの指標の無いことと, 損得と制約の直す
@@ -283,6 +283,9 @@ def test_uplift_training(tmp_path: Path, kind: str) -> None:
     assert "仮のモデル (PlaceholderModel) で学習します" in log
     assert "効果: クーポンで買う確率がどれだけ上がるか" in log
     assert "学習に使う列: 2" in log
+    assert "検証用の Qini の係数" in log and "上位 30 % の効果の差" in log
+    assert "推論の一式を作りません" in log
+    assert not (run / "inference").exists()
 
     # 検証のたびの Qini の係数での最良の選択
     with open(run / "history.csv", encoding="utf-8", newline="") as file:
@@ -380,6 +383,11 @@ def test_uplift_example_spec(tmp_path: Path) -> None:
     assert "仮のモデル" not in (run / "train.log").read_text(encoding="utf-8")
     assert (run / "model_spec.yaml").is_file()
     assert read_evaluation(run, "uplift_test")["rows"][0]["qini"] > 0
+    description = read_evaluation(run, "uplift_test")["description"]
+    assert "上位 30 % (K = 0.3)" in description
+
+    # 定義のモデルの推論の一式の確かめ
+    check_inference(run, source)
 
     # 出力が 1 つの定義の, 出力先を作る前の停止
     del spec["outputs"]["control"]
@@ -389,6 +397,48 @@ def test_uplift_example_spec(tmp_path: Path) -> None:
     assert done.returncode == 1
     assert "定義の出力に control を入れてください" in done.stdout
     assert len(list((project / "outputs").glob("*/*/*/train.log"))) == 1
+
+
+def check_inference(run: Path, source: Path) -> None:
+    """
+    推論の一式の効果が実験の効果と同じで, 一式の既定の判断が配る判断かを
+    確かめる関数
+
+    Parameters
+    ----------
+    run: Path
+        実験のディレクトリ
+    source: Path
+        元の表の CSV
+
+    Returns
+    ----------
+    None
+    """
+    # 一式づくりの比べと, 元の表を一式で推論した効果
+    inference = pytest.importorskip("ml_inference")
+    pd = pytest.importorskip("pandas")
+    log = (run / "train.log").read_text(encoding="utf-8")
+    assert "推論の一式 (効果): inference/ (効果の一致 100.0 %" in log
+    assert "配る数の上限 50. 版 12" in log
+    bundle = inference.load_bundle(run / "inference")
+    assert bundle.info["format_version"] == 12
+    assert bundle.info["role"] == "effect"
+    assert bundle.info["decision"] == {"type": "treat", "budget": 50}
+    assert bundle.info["uplift"]["check"]["rows"] == ROWS
+    assert bundle.info["uplift"]["check"]["agreement"] == 1.0
+    frame = inference.predict(bundle, source)
+    effects = pd.read_csv(run / "uplift_effects.csv",
+                          dtype={"customer_id": str})
+    found = frame.set_index("customer_id")["effect"]
+    recorded = effects.set_index("customer_id")["effect"]
+    gap = (found.loc[recorded.index] - recorded).abs()
+    assert float(gap.max()) <= 1e-6 + 1e-4 * float(recorded.abs().max())
+
+    # 既定の判断での配る件数 (効果が正の行の上位から上限まで)
+    result = inference.infer(bundle, source)
+    acted = int(result["frame"]["action"].sum())
+    assert 0 < acted <= 50
 
 
 def load_script(project: Path) -> object:

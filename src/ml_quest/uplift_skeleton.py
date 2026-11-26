@@ -8,8 +8,8 @@ from ml_quest.questions import PART, UPLIFT_ASSIGNED, UPLIFT_OUTCOMES
 
 # 学習のスクリプトが読み込むライブラリの, ML-Found の登録簿の機能の名前
 # (データセットは ML-EDA で読む. config の model.spec の定義を置くと
-# ML-ModelControl の読み込み)
-UPLIFT_LIBRARIES = ["eda", "modelcontrol"]
+# ML-ModelControl の読み込みと, ML-Inference の推論の一式)
+UPLIFT_LIBRARIES = ["eda", "modelcontrol", "inference"]
 
 # データの分析の段階が書き出す, 介入の記録の表の場所 (プロジェクトの
 # ディレクトリから)
@@ -31,7 +31,8 @@ UPLIFT_HEAD = '''"""
 無作為に配った記録の表 (ML-EDA の介入の記録の表) で, 処置の群と対照の群の
 結果の 2 つの予測 (T-learner) を学び, 行ごとの効果 (処置したときの結果 −
 しないときの結果) とその評価 (Qini の曲線と係数, 上位 K 割の効果の差),
-推論の段階が読む成果物を残す骨組みなので, 印 (TODO) の所を書き足す
+推論の段階が読む成果物と推論の一式を残す骨組みなので, 印 (TODO) の所を
+書き足す
 """
 import json
 import math
@@ -68,6 +69,14 @@ METHOD = $method
 # 結果の種類の名前
 OUTCOME_NAMES = $outcome_names
 
+# 元の表の読み方 (問題の設定の手元のデータの読み方. 推論の一式づくりが
+# ML-EDA の load_data に渡す. None は ML-EDA の推定)
+LOADER = $loader
+OPTIONS = $options
+
+# 推論の一式を作る場所 (実験のディレクトリの中)
+INFERENCE_DIR = "inference"
+
 # モデルの入力と出力の名前 (ML-ModelControl の同梱の例 tabular_uplift と
 # 同じ) と, 効果の決め方の名前 (処置の群と対照の群の 2 つの予測)
 FEATURE_INPUT = "x"
@@ -93,8 +102,9 @@ ASSIGNED_COLUMNS = $assigned_columns
 EVALUATION = "uplift"
 EVALUATION_TEXT = (
     "{split}の行 ({rows} 行. 処置の群 {treated} 行, 対照の群 {control} 行) "
-    "の効果の見積もり ({outcome}) の, Qini の係数 qini と上位 K 割 (K = "
-    "{k}) の処置の群と対照の群の結果の平均の差 uplift_at_k ({weights}). "
+    "の効果の見積もり ({outcome}) の, Qini の係数 qini と上位 {percent} % "
+    "(K = {k}) の処置の群と対照の群の結果の平均の差 uplift_at_k ("
+    "{weights}). "
     "大きいほど良い. effect は分割の全ての行の結果の平均の差 (無作為に配った"
     "場合), estimated は見積もりの平均. 配る数の上限は {budget}"
 )
@@ -767,14 +777,15 @@ def evaluate_splits(
         }
         names = {"split": title, "rows": row["rows"],
                  "treated": row["treated"], "control": row["control"],
-                 "k": k, "outcome": info["outcome"],
+                 "k": k, "percent": f"{k * 100:g}",
+                 "outcome": info["outcome"],
                  "weights": info["weights"],
                  "budget": cfg.uplift.get("budget")}
         lift = ("無し (上位に片方の群が無い)" if row["uplift_at_k"] is None
                 else f"{row['uplift_at_k']:.4f}")
         experiment.logger.info(
-            f"{title}の Qini の係数 {row['qini']:.4f}, 上位 {k} 割の効果の差 "
-            f"{lift} (分割の全ての行の差 {row['effect']:.4f})"
+            f"{title}の Qini の係数 {row['qini']:.4f}, 上位 {k * 100:g} % の"
+            f"効果の差 {lift} (分割の全ての行の差 {row['effect']:.4f})"
         )
         save_evaluation(
             experiment, f"{EVALUATION}_{split}", row, split,
@@ -859,6 +870,86 @@ def write_results(
     }
     text = json.dumps(estimator, ensure_ascii=False, indent=2)
     (run_dir / ESTIMATOR_FILE).write_text(text + "\\n", encoding="utf-8")
+
+
+def make_inference(
+    cfg: Any, spec: Optional[Path], run_dir: Path, experiment: Experiment
+) -> None:
+    """
+    ML-Inference の効果の一式を, 実験の中の inference/ に作る関数
+
+    Parameters
+    ----------
+    cfg: Any
+        config (元の表の場所, 一式の名前)
+    spec: Optional[Path]
+        ML-ModelControl の定義のファイル (無ければ None)
+    run_dir: Path
+        実験のディレクトリ (行ごとの効果と効果の決め方を書いた後)
+    experiment: Experiment
+        実験 (train.log に記録する)
+
+    Returns
+    ----------
+    None
+    """
+    # 定義が無い仮のモデルの一式の省略
+    if spec is None:
+        experiment.logger.info(
+            "仮のモデル (PlaceholderModel) は ML-ModelControl の定義が無い"
+            "ので, 推論の一式を作りません. config の model.spec の場所に"
+            "定義を置くと, 学習の後に作ります"
+        )
+        return
+
+    # 定義を写せなかった実験の一式の省略 (一式は実験に写した定義を読む)
+    if experiment.model_spec_path is None:
+        experiment.logger.info(
+            "モデルの定義を実験に写せなかったので, 推論の一式を作りません "
+            "(理由は source.yaml の model_spec の status)"
+        )
+        return
+
+    # 元の表 (config の data.source) との効果の比べ (元の表が無ければ
+    # 省略)
+    data = None
+    if cfg.data.source:
+        path = PROJECT_DIR / str(cfg.data.source)
+        data = path if path.is_file() else None
+    if data is None:
+        experiment.logger.info(
+            f"元の表 (config の data.source: {cfg.data.source}) が無いので,"
+            " 推論の一式の効果を実験の効果と比べません"
+        )
+
+    # 約束に合わない場合の ML-Inference の誤りの文の警告と, 学習の結果の
+    # 保存
+    from ml_inference import make_uplift_bundle
+    options = {**OPTIONS, **({"loader": LOADER} if LOADER else {})}
+    try:
+        info = make_uplift_bundle(
+            run_dir / INFERENCE_DIR, run_dir, name=cfg.experiment.name,
+            data=data, options=options if data is not None else None
+        )
+    except (ValueError, FileNotFoundError) as error:
+        experiment.logger.warning(
+            "成果物か定義が効果の一式の約束に合わないので, 推論の一式を"
+            f"作れません: {error}"
+        )
+        return
+    check = info["uplift"]["check"]
+    compared = ("効果は比べず" if check is None
+                else f"効果の一致 {check['agreement'] * 100:.1f} % "
+                f"({check['rows']} 行. 差の最大 {check['max_diff']:.3g})")
+    decision = info["decision"]
+    budget = ("配る数の上限は無し" if decision is None
+              else f"配る数の上限 {decision['budget']}")
+    experiment.logger.info(
+        f"推論の一式 (効果): {INFERENCE_DIR}/ ({compared}. {budget}. 版 "
+        f"{info['format_version']})"
+    )
+    for note in info["notes"]:
+        experiment.logger.warning(f"推論の一式の注意: {note}")
 
 
 def main() -> None:
@@ -963,6 +1054,9 @@ def main() -> None:
         f"(配る数の上限 {cfg.uplift.get('budget')})"
     )
 
+    # 成果物から ML-Inference の推論の一式
+    make_inference(cfg, spec, run_dir, experiment)
+
 
 if __name__ == "__main__":
     main()
@@ -1039,11 +1133,14 @@ def uplift_script(problem: dict, literal: Callable) -> str:
     """
     # 頭と学習の流れ
     names = {item["value"]: item["label"] for item in UPLIFT_OUTCOMES}
+    options = get_value(problem, "data.options")
     head = Template(UPLIFT_HEAD).substitute(
         name=literal(str(problem.get("name", ""))),
         predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         method=literal(active_value(problem, f"{PART}.method")),
         outcome_names=literal(names),
+        loader=literal(get_value(problem, "data.loader")),
+        options=literal(options if isinstance(options, dict) else {}),
         assigned_columns="[\n" + "".join(
             f"    {json.dumps(name)},\n" for name in UPLIFT_ASSIGNED
         ) + "]",
@@ -1165,9 +1262,10 @@ def uplift_readme(
            else "行の位置 (`row_id`)")
     lines += [
         "", "## 次にすること", "",
-        "学習する環境には ML-EDA, ML-Found, ML-ModelControl を入れる "
-        "(config の `requires` の機能. 足りなければ学習の前に入れ方を示して"
-        "止まる. ML-ModelControl は定義を置くと使う).", "",
+        "学習する環境には ML-EDA, ML-Found, ML-ModelControl, ML-Inference "
+        "を入れる (config の `requires` の機能. 足りなければ学習の前に入れ方"
+        "を示して止まる. ML-ModelControl と ML-Inference は定義を置くと"
+        "使う).", "",
         "1. **データの分析** (ML-EDA, ML-Fathom): ML-EDA の介入の記録の表 "
         "(版 1 の `task: uplift`) を config の `data.dataset` の場所 "
         f"(`{dataset}`) に書き出す. ML-Fathom の「問題の設定から始める」か, "
@@ -1211,7 +1309,8 @@ def uplift_readme(
         "良いモデルを選ぶ. 行ごとの効果は `treated` から `control` を引いた"
         "値 (0 と 1 はシグモイドで確率にしてから. 量は元の単位に戻してから)"
         ". 学習の後に, 検証用とテスト用の分割ごとに, Qini の係数と上位 K "
-        f"割 (K = {uplift['k']}. config の `uplift.k`) の効果の差 (上位の行"
+        f"割 (K = {uplift['k']} で上位 {uplift['k'] * 100:g} %. config の "
+        "`uplift.k`) の効果の差 (上位の行"
         "の処置の群と対照の群の結果の平均の差) を "
         "`evaluations/uplift_<分割>.json` に, Qini の曲線を "
         "`evaluations/qini_curve_<分割>.json` に書く. 結果は "
@@ -1225,13 +1324,17 @@ def uplift_readme(
     budget = (f"{decision['budget']} 件. config の `uplift.budget`"
               if decision else "損得と制約に直すところが残っているので空")
     lines += [
-        "4. **推論** (ML-Inference, ML-Provide): 実験の効果の決め方 "
-        "`uplift_estimator.json`, 前処理のレシピの写し `uplift_recipe.yaml`,"
-        " 学習した重みと写した定義が, 推論の段階が新しい行の効果を出す"
-        "成果物. 推論の 1 回で, 効果の高い順に配る数の上限 "
+        "4. **推論** (ML-Inference, ML-Provide): 学習の後に, 実験の効果の"
+        "決め方 `uplift_estimator.json`, 前処理のレシピの写し "
+        "`uplift_recipe.yaml`, 学習した重みと写した定義から, ML-Inference "
+        "の効果の一式を実験の `inference/` に作る (config の `data.source` "
+        "の元の表があれば, 一式の効果を実験の効果と比べて `train.log` に"
+        "書く. 仮のモデルでは作らない). 一式は新しい行にレシピの前処理を"
+        "かけて効果を出す. 推論の 1 回で, 効果の高い順に配る数の上限 "
         f"({budget}) まで配る (受け渡しの推論の意思決定 "
-        "`{type: treat, budget}`). 効果は見積もりで, 無作為に配った記録を"
-        "前提にする. 配った効果は, 配る相手を無作為に分けて試して確かめる",
+        "`{type: treat, budget}` は, ML-Inference の効果の一式が読む形). "
+        "効果は見積もりで, 無作為に配った記録を前提にする. 配った効果は, "
+        "配る相手を無作為に分けて試して確かめる",
         "", "`train.py` の印 (TODO) の所 (モデル) は書き足す. 問題の設定を"
         "変えたら, 書き出し直すか手で直す.", "",
     ]
