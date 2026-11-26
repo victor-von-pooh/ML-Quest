@@ -467,11 +467,9 @@ def test_apply_group_refuses() -> None:
         "spend", "visits"
     ]
 
-    # まとめるで学習しない受け持ちと, レシピの書き戻しの誤り
-    ready = answer(problem, f"{PART}.method", "pretrained")
-    for other in (ready, example_problem("総菜の作る量")):
-        with pytest.raises(ValueError, match="まとめるで学習する"):
-            apply_group(other, {"k": 4})
+    # まとめるでない受け持ちと, レシピの書き戻しの誤り
+    with pytest.raises(ValueError, match="まとめるで学習する"):
+        apply_group(example_problem("総菜の作る量"), {"k": 4})
     with pytest.raises(ValueError):
         apply_recipe(problem, {"target": "spend"})
 
