@@ -21,8 +21,8 @@ from ml_quest.baseline_skeleton import (
 from ml_quest.check import (
     choice_label, is_anomaly_part, is_column_part, is_generate_part,
     is_group_part,
-    is_policy_part, is_rank_part, is_ready_group_part, is_uplift_part,
-    split_errors
+    is_policy_part, is_price_part, is_rank_part, is_ready_group_part,
+    is_uplift_part, split_errors
 )
 from ml_quest.data import (
     ITEMS_KINDS, TABLE_LOADERS, content_kind, copy_data, dataset_info,
@@ -44,6 +44,10 @@ from ml_quest.items_skeleton import (
 from ml_quest.policy_skeleton import (
     POLICY_LIBRARIES, POLICY_MODEL, policy_config, policy_env, policy_name,
     policy_readme, policy_script
+)
+from ml_quest.price_skeleton import (
+    PRICE_DATASET, PRICE_LIBRARIES, price_config, price_name, price_readme,
+    price_script
 )
 from ml_quest.problem import (
     active_value, data_location, get_value, set_value, upgrade_problem
@@ -827,6 +831,7 @@ def experiment_name(problem: dict, name: Optional[str]) -> str:
                else group_name(problem) if is_group_part(problem)
                else anomaly_name(problem) if is_anomaly_part(problem)
                else uplift_name(problem) if is_uplift_part(problem)
+               else price_name(problem) if is_price_part(problem)
                else items_name(problem))
     raw = name or default
     text = re.sub(r"[^\w-]+", "_", raw).strip("_") or "problem"
@@ -1109,24 +1114,27 @@ def project_check(problem: dict) -> tuple[Optional[str], list[dict]]:
     group = is_group_part(upgraded)
     anomaly = is_anomaly_part(upgraded)
     uplift = is_uplift_part(upgraded)
+    price = is_price_part(upgraded)
     if not is_column_part(upgraded) and skeleton_kind(upgraded) is None and (
         not generate and not policy and not rank and not group
-        and not anomaly and not uplift
+        and not anomaly and not uplift and not price
     ):
         message = ("骨組みを書き出せるのは, 予測するで正解の種類が表の列, "
                    "画像の領域, 点群, 異常の場合と, 作るで正解の種類が画像か表の場合"
                    "と, 並べるとまとめるの場合と, 効果を見積もるで続けて行動を"
-                   "選ぶ方策か今ある記録から効果を見積もる場合と, 予測するで"
+                   "選ぶ方策か今ある記録から効果を見積もるか値段を選ぶ場合と, "
+                   "予測するで"
                    "既製のモデルをそのまま使う画像の分類の場合だけです (方策で"
                    "なく試して集める効果の見積もりと, 他の正解の種類はまだ扱え"
                    "ません)")
         return message, exportable
-    if generate or policy or rank or group or anomaly or uplift:
+    if generate or policy or rank or group or anomaly or uplift or price:
         message = (policy_message(upgraded) if policy
                    else rank_message(upgraded) if rank
                    else group_message(upgraded) if group
                    else anomaly_message(upgraded) if anomaly
                    else uplift_message(upgraded) if uplift
+                   else price_message(upgraded) if price
                    else table_message(upgraded)
                    if active_value(upgraded, f"{PART}.target.kind") == "table"
                    else generate_message(upgraded))
@@ -1363,6 +1371,42 @@ def uplift_message(problem: dict) -> Optional[str]:
                    f"見積もります (入れたデータ {Path(str(source)).name} は表"
                    "として読んでいません). 処置の列と結果の列を持つ表のファイル"
                    " (CSV, Parquet など) を入れてください")
+
+    return message
+
+
+def price_message(problem: dict) -> Optional[str]:
+    """
+    値段を変える判断の骨組みを書き出せない理由を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 値段を変える判断)
+
+    Returns
+    ----------
+    message: Optional[str]
+        誤りの文 (出力の形が行動ごとの差でない, 入れたデータが表でない.
+        書き出せるなら None)
+    """
+    # 値段を変えた記録の表 (指標は売れた数の誤差か損失. Qini と方策の報酬は
+    # 確かめの error)
+    output = active_value(problem, f"{PART}.output")
+    loader = active_value(problem, "data.loader")
+    options = get_value(problem, "data.options")
+    source = get_value(problem, "data.source")
+    text = isinstance(options, dict) and options.get("text_column")
+    message = None
+    if output != "effect":
+        message = ("値段を変える判断の骨組みは, 出力の形が「行動ごとの差」の"
+                   "場合だけです (今は"
+                   f"{choice_label(OUTPUTS, output, problem)})")
+    elif source and (loader not in TABLE_LOADERS or text):
+        message = ("値段を変える判断の骨組みは, 試しに値段を変えた売れ行きの"
+                   f"記録の表で学びます (入れたデータ {Path(str(source)).name}"
+                   " は表として読んでいません). 値段の列と売れた数の列を持つ表"
+                   "のファイル (CSV, Parquet など) を入れてください")
 
     return message
 
@@ -1699,6 +1743,23 @@ def project_files(
                 data_file.as_posix() if data_file else None
             ),
             "train.py": uplift_script(problem, literal),
+        }
+        return files
+
+    # 値段を変える判断 (入れた表は data に写し, 値段を変えた記録の表は
+    # データの分析の段階が outputs/dataset に書き出す)
+    if is_price_part(problem):
+        files = {
+            "README.md": price_readme(
+                problem, stages, PRICE_DATASET,
+                data_file.as_posix() if data_file else None
+            ),
+            "configs/default/train.yaml": price_config(
+                experiment_name(problem, name), stages, PRICE_DATASET,
+                requires_text(PRICE_LIBRARIES, stages), spec_exists,
+                data_file.as_posix() if data_file else None
+            ),
+            "train.py": price_script(problem, literal),
         }
         return files
 
