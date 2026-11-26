@@ -5,11 +5,11 @@
 
 ## 優先度 高
 
-### 値段を変える判断の骨組み
-- 何を: 値段を変える判断 (docs/DESIGN.md の「値段を変える判断の列と値段の候補」) の骨組みを書き出す. ML-EDA の値段を変えた記録の表 (版 1 の `task: price`) を読み, 同梱の例 `tabular_price` の形 (出力 `units`) で値段を入力の最後の列に入れて売れた数を学び, 売れた数の予測の誤差と ML-Found の `price_elasticity` と `profit_lift` で評価し, 商品ごとの選んだ値段の表と推論の段階が読む成果物を実験に残す. 形は docs/DESIGN.md の「効果の見積もりの骨組み」にならい, 出力の形, 損失, 成果物の版は docs/DESIGN.md の 2, 4, 11 節に書く
-- なぜ: 今の節目の実例は値段を変える判断で, 問い, 確かめ, 受け渡しとレシピの雛形はあるが, 書き出せる骨組みが無いため
-- 終わりの条件: 骨組みを書き出せる. 特徴で弾力性の違う商品の値段を無作為に変えた合成の表で短く学び, 評価 (予測の誤差, 弾力性, 見込みの利益の比べ), 商品ごとの選んだ値段の表と成果物ができ, 成果物の既定の判断が `{type: price, candidates, max_change}` で, 選んだ値段が上限を超えないことをテストで確かめる
-- つながり: docs/DESIGN.md の「効果の見積もりの骨組み」, ML-EDA の docs/DESIGN.md の「値段を変えた記録の表」, ML-ModelControl の docs/DESIGN.md の 9 節の同梱の例 `tabular_price`, ML-Found の docs/DESIGN.md の 14 節の「値段を変える判断の弾力性と利益の比べ」, ML-Inference の「値段を変える判断」, ML-Pathfinder の「値段を変える判断の型を描く」, 「処置を入力に入れる効果の見積もり (S-learner)」(処置を入力に入れる形が近い)
+### 値段を変える判断の骨組みが学習の後に推論の一式を作る
+- 何を: 値段を変える判断の骨組み (docs/DESIGN.md の「値段を変える判断の骨組み」) の `train.py` が, 成果物 (`price_estimator.json`, `price_recipe.yaml`, `price_choices.csv`) を書いた後に, ML-Inference の値段の一式づくりで実験の中の `inference/` に値段の一式を作る. 元の表があれば, 一式の選んだ値段を `price_choices.csv` と比べて `train.log` に書く. 仮のモデルと定義を写せなかった実験は作らない (効果の見積もりの骨組みと同じ)
+- なぜ: 今の骨組みは成果物までで, ML-Inference の値段の一式づくりがまだ無いので推論の一式を作らず, 推論の段階 (ML-Provide) に渡せないため
+- 終わりの条件: 列の数に合わせた `tabular_price` の定義で学んだ実験の中に値段の一式ができ, 一式の既定の判断が `{type: price, candidates, max_change}` で, 一式の選んだ値段が `price_choices.csv` と合うことをテストで確かめる. docs/DESIGN.md の 2 節と「値段を変える判断の骨組み」の「推論」に書く
+- つながり: ML-Inference の「値段を変える判断」(一式の形と成果物を読む約束は ML-Inference の側で決める), docs/DESIGN.md の「効果の見積もりの骨組み」の「推論」
 
 ## 優先度 中
 
