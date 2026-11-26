@@ -2,6 +2,7 @@ import ast
 import csv
 import importlib.util
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -880,3 +881,35 @@ def test_rank_inference_skips(tmp_path: Path) -> None:
                               " 推論の一式を作れません: ")
     assert "埋め込みの内積の正の定数倍になっていません" in warning
     assert not (run / "inference").exists()
+
+
+def test_rank_metrics_found(tmp_path: Path) -> None:
+    """
+    書き出した骨組みの Recall@K と NDCG が, ML-Found の数え方 (正解の無い
+    利用者を数えない, 数える利用者がいなければ 0) と手で数えた値になる
+    ことを確かめる関数
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 利用者 0 は 2 件の正解のうち 1 位だけ当たり, 利用者 1 は正解が無い
+    module = script_module(tmp_path)
+    target = {"users": [0, 1, 2], "relevant": {0: {3, 9}, 1: set(),
+                                               2: {5}}}
+    top = [[3, 4, 5], [1, 2, 3], [6, 5, 7]]
+    found = module.rank_metrics(top, target, 3)
+    ndcg_0 = 1.0 / (1.0 + 1.0 / math.log2(3))
+    ndcg_2 = (1.0 / math.log2(3)) / 1.0
+    assert found["recall_at_k"] == pytest.approx((0.5 + 1.0) / 2)
+    assert found["ndcg"] == pytest.approx((ndcg_0 + ndcg_2) / 2)
+
+    # 数える利用者がいなければ 0
+    empty = module.rank_metrics([[1]], {"users": [1], "relevant": {1: set()}},
+                                1)
+    assert empty == {"recall_at_k": 0.0, "ndcg": 0.0}
