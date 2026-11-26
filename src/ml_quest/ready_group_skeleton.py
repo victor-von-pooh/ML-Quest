@@ -929,7 +929,8 @@ def ready_group_readme(
         "`evaluations/group_stability.json`, 写真の幅と高さの群の要約の "
         "`evaluations/group_summary.json`) に残る. 続けて `bundle.path` (`"
         + READY_BUNDLE + "`) に ML-Inference の既製の埋め込みの群分けの一式 "
-        "(版 10) を作り, 写真を割り当て直して成果物の割り当てと比べる",
+        "(版 10. 群の中心から遠い行の閾値を持てば版 17) を作り, 写真を割り"
+        "当て直して成果物の割り当てと比べる",
         "3. **推論** (ML-Inference, ML-Provide): ML-Provide で作った一式を"
         "登録し, 写真のファイルかディレクトリを渡すと, 写真ごとに最も近い群"
         "の番号 `group` とその中心までの距離 `distance` が返り, 群の要約と"

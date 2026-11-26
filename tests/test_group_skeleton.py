@@ -798,7 +798,8 @@ def check_bundle(run: Path, dataset: Path) -> None:
     ----------
     None
     """
-    # 一式は版 9 で, 学習の表の割り当て直しが全て同じ
+    # 一式は版 9 (群の中心から遠い行の閾値を持てば版 16) で, 学習の表の
+    # 割り当て直しが全て同じ
     pytest.importorskip("ml_inference")
     from ml_inference import group_summary, predict
     log = (run / "train.log").read_text(encoding="utf-8")
@@ -807,7 +808,7 @@ def check_bundle(run: Path, dataset: Path) -> None:
     bundle = run / "inference"
     info = yaml.safe_load((bundle / "inference.yaml")
                           .read_text(encoding="utf-8"))
-    assert info["format_version"] == 9
+    assert info["format_version"] in (9, 16)
     assert info["output"]["form"] == "cluster"
     group = info["group"]
     assert (group["k"], group["rows"], group["id"]) == (3, 240, "customer")
