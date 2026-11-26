@@ -59,13 +59,38 @@ ANOMALY_SCORES = [
 ANOMALY_ASSIGNED = ("split", "score", "anomaly", "rank", "column",
                     "column_share")
 
-# 効果を見積もるで, 続けて行動を選ぶ方策でなく, 今ある記録から効果を見積
-# もる場合だけの問い (以下「効果の見積もり」. 既製のモデルをそのまま使う
-# 場合は骨組みが無いので含めない)
-UPLIFT = [USES_ML, {"id": f"{PART}.role", "equals": "effect"},
+# 効果を見積もるで, 続けて行動を選ぶ方策でなく, 今ある記録から学ぶ場合
+# だけの問い (記録で変えたもの. 既製のモデルをそのまま使う場合は骨組みが
+# 無いので含めない)
+LOGGED = [USES_ML, {"id": f"{PART}.role", "equals": "effect"},
           {"none": [{"id": f"{PART}.autonomous", "equals": True}]},
           {"id": f"{PART}.collect", "equals": "log"},
           {"none": [PRETRAINED]}]
+
+# 今ある記録で変えたもの (答えなければ配ったか)
+VARIED = [
+    {"value": "treat", "label": "配ったか (クーポンを配った行と配らなかった"
+     "行. 処置の列)"},
+    {"value": "price", "label": "値段 (試しに値段を変えた売れ行き. 値段の"
+     "列)"},
+]
+
+# 記録で変えたものが値段か
+PRICED = {"id": f"{PART}.varied", "equals": "price"}
+
+# 今ある記録から, 配ったかの効果を見積もる場合だけの問い (以下「効果の見積
+# もり」)
+UPLIFT = [*LOGGED, {"none": [PRICED]}]
+
+# 今ある記録から, 商品ごとに利益が最も大きい値段を選ぶ場合だけの問い (以下
+# 「値段を変える判断」)
+PRICE = [*LOGGED, PRICED]
+
+# 値段を変える判断の商品の id の列と行の id の列にできない名前 (商品ごとの
+# 選んだ値段の表の他の列と, ML-EDA の元の値段の列)
+PRICE_ASSIGNED = ("split", "rows", "current_price", "cost", "change",
+                  "price", "profit", "current_profit", "elasticity",
+                  "price_raw")
 
 # 効果の見積もりの結果の種類 (ML-EDA の介入の記録の表の outcome)
 UPLIFT_OUTCOMES = [
@@ -280,18 +305,19 @@ GROUP = [USES_ML, {"id": f"{PART}.role", "equals": "group"},
 GROUP_ANY = [USES_ML, {"id": f"{PART}.role", "equals": "group"}]
 
 # 使えるデータの列を問う場合 (列の予測と異常の検知と, 並べるかまとめるで
-# 学習する場合と, 効果の見積もり)
+# 学習する場合と, 効果の見積もりと, 値段を変える判断)
 COLUMNS_ASKED = [{"any": [
     {"all": [USES_ML, {"none": [PRETRAINED]},
              {"id": f"{PART}.role", "in": ["predict", "rank", "group"]},
              {"any": [{"id": f"{PART}.role", "in": ["rank", "group"]},
                       {"id": f"{PART}.target.kind",
                        "in": ["column", "anomaly"]}]}]},
-    {"all": UPLIFT},
+    {"all": LOGGED},
 ]}]
 
-# 意思決定の型と損得を問う場合 (列の予測と, 効果の見積もり)
-DECIDED = [{"any": [{"all": COLUMN_TARGET}, {"all": UPLIFT}]}]
+# 意思決定の型と損得を問う場合 (列の予測と, 効果の見積もりと, 値段を変える
+# 判断)
+DECIDED = [{"any": [{"all": COLUMN_TARGET}, {"all": LOGGED}]}]
 
 # 群の安定性の数え方 (作り直し方)
 GROUP_STABILITIES = [
@@ -386,9 +412,20 @@ DECISION_TYPES = [
     {"value": "none", "label": "意思決定しない (人が予測を見て決める)",
      "fits": [{"role": "predict"}], "fields": []},
     {"value": "treat", "label": "効果の上位から配る (クーポン, 案内)",
-     "fits": [{"role": "effect", "policy": False}], "fields": [
+     "fits": [{"role": "effect", "policy": False, "varied": ["treat"]}],
+     "fields": [
          {"key": "budget", "required": True,
           "label": "配る数の上限 (守る指標. 1 以上の整数)"},
+     ]},
+    {"value": "price", "label": "利益が最も大きい値段を選ぶ (商品ごとの値段)",
+     "fits": [{"role": "effect", "policy": False, "varied": ["price"]}],
+     "fields": [
+         {"key": "candidates", "required": True, "list": True,
+          "label": "値段の候補 (今の値段に対する変える割合の並び. 0 を含む. "
+                   "1 割上げるなら 0.1)"},
+         {"key": "max_change", "required": True,
+          "label": "値段を変える幅の上限 (守る指標. 変える割合の絶対値. "
+                   "1 割までなら 0.1)"},
      ]},
 ]
 
@@ -422,7 +459,8 @@ METRICS = [
     {"value": "mae", "label": "外れの大きさの平均 (平均絶対誤差. 小さいほど"
      "良い)", "tasks": ["regression", "forecasting"], "better": "lower",
      "fits": [{"role": "predict", "kinds": ["column"],
-               "tasks": ["regression", "forecasting"]}]},
+               "tasks": ["regression", "forecasting"]},
+              {"role": "effect", "policy": False, "varied": ["price"]}]},
     {"value": "rmse", "label": "大きな外れを重く見た外れ (二乗平均平方根誤差"
      ". 小さいほど良い)", "tasks": ["regression", "forecasting"],
      "better": "lower",
@@ -469,7 +507,8 @@ METRICS = [
     {"value": "silhouette", "label": "群のまとまり (シルエット係数. 大きい"
      "ほど良い)", "better": "higher", "fits": [{"role": "group"}]},
     {"value": "qini", "label": "効果の順の当たり (Qini 係数. 大きいほど"
-     "良い)", "better": "higher", "fits": [{"role": "effect"}]},
+     "良い)", "better": "higher",
+     "fits": [{"role": "effect", "varied": ["treat"]}]},
     {"value": "other", "label": "その他 (名前と, 大きいほど良いか小さい"
      "ほど良いかを書く)", "better": None, "fits": [{}]},
 ]
@@ -695,6 +734,13 @@ QUESTIONS: list[dict[str, Any]] = [
      "title": "行動の結果のデータは, どう集めますか",
      "help": "試して集めるなら, 学習で環境とのやり取り (強化学習) の道具が"
              "要る. 実際に試すなら, 外れたときの損に気を付ける"},
+    {"id": f"{PART}.varied", "section": 5, "kind": "choice",
+     "required": False, "when": LOGGED, "choices": VARIED,
+     "title": "記録で変えたのは, 配ったかですか, 値段ですか",
+     "help": "配ったか (クーポンを配った行と配らなかった行) なら, 顧客ごとの"
+             "効果を見積もり, 効果の高い順に配る. 値段 (試しに値段を変えた"
+             "売れ行き) なら, 値段を入力に入れて売れた数を予測し, 商品ごとに"
+             "候補の中で利益が最も大きい値段を選ぶ. 答えなければ配ったか"},
     {"id": f"{PART}.simulator", "section": 5, "kind": "choice",
      "required": True,
      "when": [*EFFECT, {"id": f"{PART}.collect", "equals": "simulator"}],
@@ -825,6 +871,36 @@ QUESTIONS: list[dict[str, Any]] = [
      "help": "配る前に分かっている顧客の特徴の列 (年齢, 来店の回数など). 処置"
              "の列, 結果の列, 行の id の列と, 配った後に決まる列 (クーポンを"
              "使ったかなど) は入れない"},
+    {"id": f"{PART}.price.price", "section": 5, "kind": "column",
+     "required": True, "when": PRICE, "title": "値段の列は",
+     "help": "売ったときの値段の列 (0 より大きい数). 試しに値段を変えた記録 "
+             "(無作為に近い) を前提にする (売れ行きに合わせて値段を決めた"
+             "記録では, 値段の効き方を取り違える). 売れ行きの予測の入力の"
+             "最後の列になる. 例: price"},
+    {"id": f"{PART}.price.units", "section": 5, "kind": "column",
+     "required": True, "when": PRICE, "title": "売れた数の列は",
+     "help": "その値段で売れた数の列 (0 以上の数). 予測する値. 例: units"},
+    {"id": f"{PART}.price.cost", "section": 5, "kind": "column",
+     "required": False, "when": PRICE, "title": "原価の列は (あれば)",
+     "help": "商品 1 つを仕入れるか作るのにかかる値段の列 (0 以上の数). 利益"
+             "は (値段 − 原価) × 売れた数. 無ければ空のまま (原価を 0 とし, "
+             "売上で選ぶ). 予測の入力には入れない. 例: unit_cost"},
+    {"id": f"{PART}.price.product", "section": 5, "kind": "column",
+     "required": False, "when": PRICE, "title": "商品の id の列は (あれば)",
+     "help": "値段を選ぶ単位の商品を指す列 (同じ商品の行は何行あってもよい)"
+             ". 今の値段は商品ごとの記録の値段の中央値にする. 無ければ空の"
+             "まま (行ごとに選び, 今の値段はその行の値段). 予測の入力には"
+             "入れない. 例: product_id"},
+    {"id": f"{PART}.price.id", "section": 5, "kind": "column",
+     "required": False, "when": PRICE, "title": "行の id の列は (あれば)",
+     "help": "記録の 1 行を指す列. 欠けも同じ値も無い列. 予測には使わない. "
+             "無ければ空のまま (行の位置で指す). 例: record_id"},
+    {"id": f"{PART}.price.columns", "section": 5, "kind": "columns",
+     "required": True, "when": PRICE,
+     "title": "売れ行きの予測に使う列は (値段の列の他)",
+     "help": "値段を決める前に分かっている商品の特徴の列 (種類, 曜日など). "
+             "値段の列, 売れた数の列, 原価の列, 商品の id の列, 行の id の列"
+             "と, 売れた後に決まる列 (残った数など) は入れない"},
     {"id": f"{PART}.task", "section": 5, "kind": "choice", "required": True,
      "when": COLUMN_TARGET, "choices": TASKS, "title": "どの種類の問題ですか",
      "help": "目的の値がクラスなら分類, 値なら回帰. 時刻の順に過去から先を"
@@ -930,7 +1006,9 @@ QUESTIONS: list[dict[str, Any]] = [
              "件数か費用の上限. 振り分ける: 見逃しの損と空振りの損, 回せる件数"
              ". 人が予測を見て決めるなら「意思決定しない」. 効果の上位から"
              "配る: 配る数の上限 (守る指標. 1 回に配れる数. 効果の高い順に"
-             "上限まで配る)"},
+             "上限まで配る). 利益が最も大きい値段を選ぶ: 値段の候補 (今の値段"
+             "に対する変える割合の並び. 0 を含む) と, 値段を変える幅の上限 "
+             "(守る指標. 上限を超える候補は選ばない)"},
     {"id": f"{PART}.anomaly.capacity", "section": 7, "kind": "number",
      "required": True, "when": ANOMALY,
      "title": "人が 1 回に確かめられる件数の上限は (守る指標)",

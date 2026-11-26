@@ -5,7 +5,7 @@ from typing import Any, Optional
 from ml_quest.check import (
     check_group, finding, is_anomaly_part, is_column_part,
     is_generate_part, is_group_part, is_items_part, is_policy_part,
-    is_uplift_part
+    is_price_part, is_uplift_part
 )
 from ml_quest.data import EXPORT_FUNCTIONS, ITEMS_LOADER, PAIR_NAMES
 from ml_quest.handoff import export_split, export_stages, project_of
@@ -19,8 +19,9 @@ from ml_quest.questions import PART, SPLITS
 VALID_RATIO = 0.15
 TEST_RATIO = 0.15
 
-# 効果の見積もりのレシピの分割の割合の既定値 (2 つの群の差で数える Qini の
-# 揺れを抑えるため, 他より多く検証用とテスト用に置く)
+# 効果の見積もりと値段を変える判断のレシピの分割の割合の既定値 (2 つの群の
+# 差で数える Qini と, 商品ごとの利益の比べの揺れを抑えるため, 他より多く
+# 検証用とテスト用に置く)
 UPLIFT_VALID_RATIO = 0.2
 UPLIFT_TEST_RATIO = 0.2
 
@@ -63,8 +64,8 @@ GROUP_KEYS = {"columns": "群を作る列", "id": "行を見分ける列",
 
 def require_column_part(problem: dict, purpose: str) -> None:
     """
-    列の予測, ファイルの組, 画像か表の生成, 異常の検知, 効果の見積もりの
-    受け持ちでなければ止める関数
+    列の予測, ファイルの組, 画像か表の生成, 異常の検知, 効果の見積もり,
+    値段を変える判断の受け持ちでなければ止める関数
 
     Parameters
     ----------
@@ -82,7 +83,7 @@ def require_column_part(problem: dict, purpose: str) -> None:
     ValueError
         方策の受け持ち (データの分析の段階を通らない) の場合と, 列の予測
         でも, ファイルの組でも, 画像か表の生成でも, 異常の検知でも, 効果の
-        見積もりでもない場合
+        見積もりでも, 値段を変える判断でもない場合
     """
     # 方策は環境とのやり取りで集めるので, データの分析の段階が無い. 他の
     # 受け持ちのデータの約束は, データの分析の段階の版の上げの後
@@ -93,13 +94,13 @@ def require_column_part(problem: dict, purpose: str) -> None:
         )
     if not is_column_part(problem) and not is_items_part(problem) and (
         not is_generate_part(problem) and not is_anomaly_part(problem)
-        and not is_uplift_part(problem)
+        and not is_uplift_part(problem) and not is_price_part(problem)
     ):
         raise ValueError(
             f"{purpose}は, 予測するで正解の種類が表の列, 画像の領域, 点群, "
             "異常の場合と, 作るで正解の種類が画像か表の場合と, 効果を見積もる"
-            "で今ある記録から効果を見積もる場合だけです (他の受け持ちと正解"
-            "の種類はまだ扱えません)"
+            "で今ある記録から効果を見積もるか値段を選ぶ場合だけです (他の受け"
+            "持ちと正解の種類はまだ扱えません)"
         )
 
 
@@ -153,7 +154,8 @@ def recipe_from(problem: dict) -> dict:
         )[0] if item["id"] == f"{PART}.group_column"
             and not is_generate_part(problem)
             and not is_anomaly_part(problem)
-            and not is_uplift_part(problem)]
+            and not is_uplift_part(problem)
+            and not is_price_part(problem)]
     elif is_generate_part(problem):
         recipe = generate_recipe(
             active_value(problem, f"{PART}.target.kind"), notes
@@ -162,6 +164,8 @@ def recipe_from(problem: dict) -> dict:
         recipe = anomaly_recipe(data, notes)
     elif is_uplift_part(problem):
         recipe = uplift_recipe(data, notes)
+    elif is_price_part(problem):
+        recipe = price_recipe(data, notes)
     else:
         recipe = skeleton_recipe(problem, data, notes)
 
@@ -499,6 +503,49 @@ def uplift_recipe(data: dict, notes: list) -> dict:
     return recipe
 
 
+def price_recipe(data: dict, notes: list) -> dict:
+    """
+    値段を変える判断のレシピの雛形を作る関数
+
+    Parameters
+    ----------
+    data: dict
+        受け渡しのデータの分析の値 (値段を変える判断)
+    notes: list
+        知らせの文の並び (書き足す)
+
+    Returns
+    ----------
+    recipe: dict
+        ML-EDA の値段を変えた記録の表のレシピ (task: price. 売れた数の列,
+        値段の列と, 原価, 商品の id, 行の id の列は答えたときだけ. 分割は
+        値段の段で層を作る stratified)
+    """
+    # 予測に使わない列の削除と, 数の列 (値段の列も) の標準化 (欠けた値と
+    # 種類の列の扱いはデータの分析の段階)
+    steps: list[dict] = []
+    if data["drop"]:
+        steps.append({"op": "drop_columns", "columns": list(data["drop"])})
+    steps.append({"op": "standardize", "columns": "auto"})
+    notes.append("骨組みは数の列だけを読み, 欠けた値を読めません. 欠けた値"
+                 "は impute か drop_missing で無くし, 種類の列は one_hot で"
+                 "数の列にしてください. 売れた後に決まる列 (残った数など) は"
+                 " drop_columns で落としてください")
+    recipe: dict[str, Any] = {
+        "format_version": 1, "task": "price", "target": data["target"],
+        "price": data["price"],
+    }
+    for key in ("cost", "product", "id"):
+        if data[key]:
+            recipe[key] = data[key]
+    recipe.update(steps=steps, split={
+        "method": "stratified", "valid": UPLIFT_VALID_RATIO,
+        "test": UPLIFT_TEST_RATIO, "seed": 0, "unlabeled": data["unlabeled"],
+    })
+
+    return recipe
+
+
 def recipe_columns(recipe: dict) -> tuple[set[str], int]:
     """
     レシピで落とす列と, 過去の値の最も小さいずらし幅を集める関数
@@ -569,6 +616,9 @@ def apply_recipe(problem: dict, recipe: dict) -> dict:
         return result
     if is_uplift_part(updated):
         result = apply_uplift(updated, recipe)
+        return result
+    if is_price_part(updated):
+        result = apply_price(updated, recipe)
         return result
     changes = []
     old_target = get_value(updated, f"{PART}.target.column")
@@ -754,6 +804,68 @@ def apply_uplift(problem: dict, recipe: dict) -> dict:
             "error", "data.recipe",
             "効果の見積もりの分割は stratified にしてください (全ての分割に"
             "処置の群と対照の群を置くため)"
+        ))
+    if split.get("valid", SPLIT_DEFAULTS["valid"]) == 0:
+        conflicts.append(finding(
+            "warning", "data.recipe",
+            "検証用の分割がありません. 骨組みは最も良いモデルを選べず止まる"
+            "ので, 検証用の割合を 0 より大きくしてください"
+        ))
+    set_value(problem, "data.recipe", copy.deepcopy(recipe))
+    result = {"problem": problem, "changes": [], "conflicts": conflicts,
+              "choices": []}
+
+    return result
+
+
+def apply_price(problem: dict, recipe: dict) -> dict:
+    """
+    値段を変える判断のレシピを問題の設定に書き戻す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2. 値段を変える判断. 写したもの)
+    recipe: dict
+        ML-EDA のレシピ
+
+    Returns
+    ----------
+    result: dict
+        apply_recipe と同じ形 (他の答えは変えず, 選ぶ問いは無い)
+    """
+    # タスクと, 売れた数, 値段, 原価, 商品の id, 行の id の列は答えのまま
+    # (推論の段階が同じ列で値段を変えて利益を数えるため). 分割は ML-EDA の
+    # 値段を変える判断の stratified だけ
+    conflicts = []
+    if recipe.get("task") != "price":
+        conflicts.append(finding(
+            "error", "data.recipe",
+            "値段を変える判断のレシピのタスクは price にしてください (今は "
+            f"{recipe.get('task')})"
+        ))
+    for key, name, title in (
+        ("target", f"{PART}.price.units", "売れた数の列"),
+        ("price", f"{PART}.price.price", "値段の列"),
+        ("cost", f"{PART}.price.cost", "原価の列"),
+        ("product", f"{PART}.price.product", "商品の id の列"),
+        ("id", f"{PART}.price.id", "行の id の列"),
+    ):
+        answered = active_value(problem, name)
+        if recipe.get(key) != answered:
+            conflicts.append(finding(
+                "error", "data.recipe",
+                f"レシピの {key} ({recipe.get(key)}) が答えた{title} ("
+                f"{answered}) と違います. 問題の設定の答えに合わせるか, 答え"
+                "を直してください"
+            ))
+    split = recipe.get("split")
+    split = split if isinstance(split, dict) else {}
+    if split.get("method") != "stratified":
+        conflicts.append(finding(
+            "error", "data.recipe",
+            "値段を変える判断の分割は stratified にしてください (値段の高い"
+            "行と低い行を全ての分割に置くため)"
         ))
     if split.get("valid", SPLIT_DEFAULTS["valid"]) == 0:
         conflicts.append(finding(
