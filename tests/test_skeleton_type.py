@@ -64,6 +64,12 @@ def test_skeleton_type_answers() -> None:
         ({f"{PART}.role": "rank", f"{PART}.method": "pretrained"}, "search"),
         ({f"{PART}.role": "group", f"{PART}.method": "pretrained"},
          "group_ready"),
+        ({f"{PART}.method": "pretrained", f"{PART}.target.kind": "mask"},
+         "ready"),
+        ({f"{PART}.role": "effect", f"{PART}.autonomous": True}, "policy"),
+        ({f"{PART}.role": "effect", f"{PART}.collect": "log"}, "uplift"),
+        ({f"{PART}.role": "effect", f"{PART}.collect": "log",
+          f"{PART}.varied": "price"}, "price"),
     ]
     for answers, kind in cases:
         problem = base
