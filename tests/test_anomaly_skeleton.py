@@ -442,16 +442,22 @@ def test_anomaly_project(tmp_path: Path) -> None:
     place = record_project(problem, project)["project"]["dataset"]
     assert place == str((project / "outputs/dataset").resolve())
 
-    # 距離: 学習とモデルの設定を書かない
+    # 距離: 1 回の検証と CPU を書き, 最適化とモデルの設定を書かない
     other = tmp_path / "distance"
     make_project(anomaly_problem("none", "distance"), other)
+    script = (other / "train.py").read_text(encoding="utf-8")
+    assert all(len(line) <= 79 for line in script.splitlines())
     config = yaml.safe_load((other / "configs" / "default" / "train.yaml")
                             .read_text(encoding="utf-8"))
     assert config["requires"] == ["eda", "inference"]
-    assert "trainer" not in config and "model" not in config
+    assert config["trainer"] == {"epochs": 1, "monitor": "valid/loss",
+                                 "mode": "min"}
+    assert config["experiment"]["device"] == "cpu"
+    assert "optimizer" not in config and "model" not in config
     assert config["anomaly"]["ridge"] == 0.001
     readme = (other / "README.md").read_text(encoding="utf-8")
     assert "モデルの定義を使わない" in readme
+    assert "中心と精度行列を持つ `final_model.pt`" in readme
     assert "異常の正解は無い" in readme
 
     # 書き出せない出力の形
@@ -568,10 +574,123 @@ def test_anomaly_training(tmp_path: Path) -> None:
     assert scorer["model"] is None
     assert len(scorer["distance"]["center"]) == 3
     assert len(scorer["distance"]["precision"]) == 3
-    assert not (run / "final_model.pt").exists()
+    check_distance_run(run, other, scorer)
 
     # 実験の中の推論の一式の度合いの確かめ
     check_inference(run, source, NORMAL + ANOMALIES)
+
+
+
+def test_anomaly_distance_without_valid(tmp_path: Path) -> None:
+    """
+    検証用の割合を 0 にした表では, 距離に基づく度合いも出力先を作る前に
+    検証用の正常の行が無いことを案内して止まることを確かめる関数 (PyTorch
+    と段階のライブラリが無ければ飛ばす)
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # レシピの雛形の検証用の割合を 0 にして書き出し
+    for name in ("torch", "ml_eda", "ml_found"):
+        pytest.importorskip(name)
+    eda = pytest.importorskip("ml_eda")
+    source = write_rows(tmp_path / "raw")
+    problem = attach_data(anomaly_problem(score="distance"), str(source),
+                          copy_to=str(tmp_path / "copies"))
+    project = tmp_path / "project"
+    make_project(problem, project)
+    start = recipe_from(problem)
+    recipe = {**start["recipe"],
+              "split": {**start["recipe"]["split"], "valid": 0.0,
+                        "test": 0.2}}
+    load = start["load"]
+    data = eda.load_data(load["path"], loader=load["loader"],
+                         **(load["options"] or {}))
+    place = Path(record_project(problem, project)["project"]["dataset"])
+    eda.export_dataset(data, recipe, place)
+
+    # 検証の損失を数えられないので, 実験のディレクトリを作らずに停止
+    done = run_script(project)
+    assert done.returncode == 1
+    assert "検証用の正常の行がありません" in done.stdout
+    assert not (project / "outputs" / "anomaly_distance").exists()
+
+def check_distance_run(run: Path, project: Path, scorer: dict) -> None:
+    """
+    距離に基づく度合いの実験が他の実験と同じ形で残り, 度合いと評価が
+    学習用の行から数え直した中心と精度行列の値と同じかを確かめる関数
+
+    Parameters
+    ----------
+    run: Path
+        実験のディレクトリ
+    project: Path
+        プロジェクトのディレクトリ (outputs/dataset に異常の検知の表)
+    scorer: dict
+        anomaly_scorer.json の中身
+
+    Returns
+    ----------
+    None
+    """
+    # run.json は完了で Optimizer は無く, history.csv は 1 回の検証
+    np = pytest.importorskip("numpy")
+    torch = pytest.importorskip("torch")
+    found = pytest.importorskip("ml_found")
+    eda = pytest.importorskip("ml_eda")
+    status = json.loads((run / "run.json").read_text(encoding="utf-8"))
+    assert status["status"] == "completed"
+    assert status["optimizers"] == []
+    assert (status["monitor"], status["best_epoch"]) == ("valid/loss", 1)
+    with open(run / "history.csv", encoding="utf-8", newline="") as file:
+        rows = list(csv.DictReader(file))
+    assert len(rows) == 1
+    assert list(rows[0]) == ["epoch", "valid/loss", "valid/precision_at_k",
+                             "valid/average_precision"]
+
+    # final_model.pt のバッファは度合いの決め方の中心と精度行列と同じ
+    weights = torch.load(run / "final_model.pt", weights_only=True)
+    assert set(weights) == {"center", "precision"}
+    assert weights["center"].dtype == torch.float64
+    assert weights["center"].tolist() == scorer["distance"]["center"]
+    assert weights["precision"].tolist() == scorer["distance"]["precision"]
+
+    # 学習用の行から数え直した中心と精度行列と, 度合いの式
+    dataset = eda.load_dataset(project / "outputs" / "dataset")
+    points = np.asarray(dataset.arrays("train")[0], dtype=np.float32)
+    points = points.astype(np.float64)
+    center = points.mean(axis=0)
+    covariance = np.cov(points, rowvar=False) + np.eye(3) * 0.001
+    precision = np.linalg.inv(covariance)
+    assert np.allclose(scorer["distance"]["center"], center,
+                       rtol=1e-12, atol=1e-12)
+    assert np.allclose(scorer["distance"]["precision"], precision,
+                       rtol=1e-9, atol=1e-9)
+    pd = pytest.importorskip("pandas")
+    scores = pd.read_csv(run / "anomaly_scores.csv",
+                         dtype={"reading_id": str})
+    for split in ("valid", "test"):
+        x = np.asarray(dataset.arrays(split)[0], dtype=np.float32)
+        diff = x.astype(np.float64) - center
+        expected = np.einsum("ij,jk,ik->i", diff, precision, diff) / 3
+        part = scores[scores["split"] == split]
+        assert np.allclose(part["score"].to_numpy(), expected, rtol=1e-9)
+
+        # 評価の値は, 行ごとの度合いの表の度合いと正解から数えた値
+        row = read_evaluation(run, f"anomaly_{split}")["rows"][0]
+        values = part["score"].to_numpy(copy=True)
+        labels = part["anomaly"].to_numpy(copy=True)
+        assert row["precision_at_k"] == found.precision_at_k(values,
+                                                             labels, 5)
+        assert row["average_precision"] == pytest.approx(
+            found.average_precision(values, labels), rel=1e-12
+        )
 
 
 def test_anomaly_unlabeled(tmp_path: Path) -> None:
