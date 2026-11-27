@@ -13,7 +13,7 @@ ML-Quest で作業するときの方針をまとめる.
 ## コードの書き方
 
 - [CODING_STYLE.md](CODING_STYLE.md) に従う (日本語の NumPy 形式の docstring, コメントは体言止め, 79 文字以内, 入れ子の関数を書かないなど). 書き出す学習のスクリプトの骨組みも同じ書き方にする
-- ドキュメントとコードのコメントでは, 「機械学習を全て GUI 上で行う」という目的のために開発しているリポジトリ (今は ML-Found, ML-Dashboard, ML-ModelControl, ML-CreateArchitecture, ML-EDA, ML-Fathom, ML-Inference, ML-Provide, ML-Quest, ML-Pathfinder, ML_tester) 以外に触れない. ローカルのディレクトリ構成やパスも書かない. 外部のライブラリ (PyTorch, pandas など) には触れてよい
+- ドキュメントとコードのコメントでは, 「機械学習を全て GUI 上で行う」という目的のために開発しているリポジトリ (今は ML-Found, ML-Dashboard, ML-ModelControl, ML-CreateArchitecture, ML-EDA, ML-Fathom, ML-Inference, ML-Provide, ML-Quest, ML-Pathfinder, ML_tester, ML-Studio) 以外に触れない. ローカルのディレクトリ構成やパスも書かない. 外部のライブラリ (PyTorch, pandas など) には触れてよい
 
 ## 文書
 
