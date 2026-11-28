@@ -127,6 +127,7 @@ def test_policy_project(tmp_path: Path) -> None:
     assert config["requires"] == ["rl", "modelcontrol"]
     assert config["model"]["spec"] == "models/policy.yaml"
     assert not (project / "models" / "policy.yaml").exists()
+    assert config["model"]["placeholder"] is True
     assert config["experiment"]["name"] == "CartPole-v1_policy"
     assert (config["trainer"]["monitor"], config["trainer"]["mode"]) == (
         "valid/reward", "max"

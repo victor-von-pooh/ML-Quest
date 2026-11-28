@@ -215,6 +215,9 @@ def test_price_project(tmp_path: Path) -> None:
                                "max_change": 0.1}
     assert config["model"]["placeholder"] is True
     assert config["experiment"]["name"] == "units_price"
+    assert config["trainer"]["epochs"] == 100
+    assert config["trainer"]["early_stopping"] == {"use": True,
+                                                   "patience": 10}
     readme = (project / "README.md").read_text(encoding="utf-8")
     for words in ("outputs/dataset", "`price`", "`units`", "`unit_cost`",
                   "`product_id`", "`category`", "tabular_price",
@@ -532,6 +535,7 @@ def test_price_example_spec(tmp_path: Path) -> None:
     run = only_run(project)
     log = (run / "train.log").read_text(encoding="utf-8")
     assert "仮のモデル" not in log
+    assert "合わせられませんでした" not in log
     assert (run / "model_spec.yaml").is_file()
     row = read_evaluation(run, "price_test")["rows"][0]
     assert row["profit_gain"] >= 0
