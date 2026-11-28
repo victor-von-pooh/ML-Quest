@@ -546,8 +546,9 @@ def test_group_project(tmp_path: Path) -> None:
 
 def test_group_functions(tmp_path: Path) -> None:
     """
-    書き出した train.py の, k-means, 一致とまとまりの数え方, 列の符号化,
-    行の分け方を確かめる関数 (PyTorch と段階のライブラリが無ければ飛ばす)
+    書き出した train.py の, k-means, 一致とまとまりの数え方, 列の符号化と
+    崩し方, 行の分け方を確かめる関数 (PyTorch と段階のライブラリが無ければ
+    飛ばす)
 
     Parameters
     ----------
@@ -599,6 +600,23 @@ def test_group_functions(tmp_path: Path) -> None:
     features = names["encode_rows"](frame, encoding)
     assert features.tolist() == [[-1.0, 1.0, 0.0], [1.0, 0.0, 1.0],
                                  [0.0, 0.0, 0.0]]
+
+    # 崩し方: 特徴ごとの元の列の番号は符号化と同じ並びで, 種類の列の 0 と 1
+    # の列の組は同じ行から借りる (崩しても 1 がちょうど 1 つ)
+    torch = pytest.importorskip("torch")
+    wide = pd.DataFrame({"spend": rng.normal(0, 1, 200),
+                         "region": rng.choice(["a", "b", "c"], 200)})
+    encoding = names["make_encoding"](wide)
+    columns = names["feature_columns"](encoding)
+    assert columns.tolist() == [0, 1, 1, 1]
+    pool = torch.tensor(names["encode_rows"](wide, encoding))
+    index = torch.tensor(columns)
+    generator = torch.Generator().manual_seed(0)
+    view = names["corrupt"](pool, pool, index, 0.5, generator)
+    assert view[:, 1:].sum(1).tolist() == [1.0] * 200
+    assert 0 < (view[:, 1:] != pool[:, 1:]).any(1).float().mean() < 0.5
+    assert torch.equal(names["corrupt"](pool, pool, index, 0.0, generator),
+                       pool)
 
     # 行の分け方: 検証用は割合の数で, 学習用と重ならない
     cfg = yaml.safe_load((project / "configs" / "default" / "train.yaml")

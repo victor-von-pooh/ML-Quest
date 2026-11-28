@@ -526,16 +526,19 @@ class PlaceholderModel(nn.Module):
 class GroupTrainer(Trainer):
     def __init__(
         self, model: nn.Module, experiment: Experiment,
-        features: torch.Tensor, valid: torch.Tensor, cfg: Any
+        features: torch.Tensor, valid: torch.Tensor, columns: torch.Tensor,
+        cfg: Any
     ):
         # 親クラスのコンストラクタを呼び出す (step を上書きするので
         # step_fn は None)
         super(GroupTrainer, self).__init__(model, experiment, None)
 
         # 学習用と検証用の行の特徴 (崩すときに値を借りる行と, 群を作る行),
-        # 群の設定, 埋め込みを求めるまとまりの大きさ, 乱数の種を保存
+        # 特徴ごとの元の列の番号, 群の設定, 埋め込みを求めるまとまりの
+        # 大きさ, 乱数の種を保存
         self.features = features
         self.valid = valid
+        self.columns = columns
         self.group = cfg.group
         self.batch_size = cfg.data.batch_size
         self.seed = cfg.experiment.seed
@@ -581,8 +584,10 @@ class GroupTrainer(Trainer):
         (x,) = batch
         model = self.model if phase == "train" else self.eval_model()
         rate = self.group.corruption
-        views = torch.cat([corrupt(x, self.features, rate, self.generator),
-                           corrupt(x, self.features, rate, self.generator)])
+        views = torch.cat([
+            corrupt(x, self.features, self.columns, rate, self.generator),
+            corrupt(x, self.features, self.columns, rate, self.generator)
+        ])
         similarity = encode(model, views)[SIMILARITY_OUTPUT]
 
         # 自分自身との類似度は隠し, i 番目の正解は同じ行のもう一方
@@ -628,11 +633,11 @@ class GroupTrainer(Trainer):
 
 
 def corrupt(
-    x: torch.Tensor, pool: torch.Tensor, rate: float,
+    x: torch.Tensor, pool: torch.Tensor, columns: torch.Tensor, rate: float,
     generator: Optional[torch.Generator]
 ) -> torch.Tensor:
     """
-    行の特徴の一部を, 他の行の同じ特徴の値に置き換えて崩す関数
+    群を作る列の一部を, 他の行の同じ列の値に置き換えて崩す関数
 
     Parameters
     ----------
@@ -640,8 +645,10 @@ def corrupt(
         (件数, 符号化した行の幅) の行の特徴
     pool: torch.Tensor
         値を借りる行の特徴 (学習用の行)
+    columns: torch.Tensor
+        (符号化した行の幅,) の, 特徴ごとの元の列の番号 (feature_columns)
     rate: float
-        置き換える特徴の割合
+        置き換える列の割合
     generator: Optional[torch.Generator]
         乱数 (None なら torch の乱数)
 
@@ -651,11 +658,15 @@ def corrupt(
         崩した行の特徴 (x と同じデバイス)
     """
     # TODO: 課題に合う崩し方 (数の列に雑音を足すなど) に置き換えられる.
-    # 特徴ごとの, 学習用の無作為な行の値による置き換え
-    rows = torch.randint(len(pool), tuple(x.shape), generator=generator)
-    columns = torch.arange(x.shape[1]).expand_as(rows)
-    borrowed = pool[rows, columns].to(x.device)
-    mask = torch.rand(tuple(x.shape), generator=generator) < rate
+    # 元の列ごとの, 学習用の無作為な行の値による置き換え (種類の列の 0 と 1
+    # の列の組は同じ行から借り, どの行にも無い組を作らない)
+    count = int(columns.max()) + 1
+    rows = torch.randint(len(pool), (len(x), count),
+                         generator=generator)[:, columns]
+    places = torch.arange(x.shape[1]).expand_as(rows)
+    borrowed = pool[rows, places].to(x.device)
+    mask = (torch.rand((len(x), count), generator=generator)
+            < rate)[:, columns]
     view = torch.where(mask.to(x.device), borrowed, x)
 
     return view
@@ -819,6 +830,30 @@ def encode_rows(frame: pd.DataFrame, encoding: dict) -> np.ndarray:
     features = np.concatenate(parts, 1).astype(np.float32)
 
     return features
+
+
+def feature_columns(encoding: dict) -> np.ndarray:
+    """
+    符号化した行の特徴ごとの, 元の列の番号を返す関数
+
+    Parameters
+    ----------
+    encoding: dict
+        make_encoding の符号化
+
+    Returns
+    ----------
+    columns: np.ndarray
+        (符号化した行の幅,) の int64 (encode_rows と同じ並び. 数の列は 1 つ,
+        種類の列は値の数だけ同じ番号)
+    """
+    # TODO: encode_rows に特徴を足したら, 足した特徴の元の列の番号も足す
+    # (崩すときに同じ番号の特徴をまとめて置き換える)
+    sizes = [1] * len(encoding["numeric"])
+    sizes += [len(values) for values in encoding["categories"].values()]
+    columns = np.repeat(np.arange(len(sizes)), sizes)
+
+    return columns
 
 
 def read_rows(
@@ -1255,6 +1290,12 @@ def main() -> None:
     encoding = make_encoding(frame.iloc[train])
     features = encode_rows(frame, encoding)
     width = features.shape[1]
+    columns = feature_columns(encoding)
+    if len(columns) != width:
+        print(f"特徴ごとの元の列の番号 ({len(columns)} 個) が符号化した行の"
+              f"幅 ({width}) と合いません. encode_rows に足した特徴の元の"
+              "列の番号を feature_columns に足してください")
+        sys.exit(1)
 
     # モデルの定義の確かめ (誤りなら出力先を作る前に止まる)
     spec = project_spec(cfg)
@@ -1297,7 +1338,8 @@ def main() -> None:
             "その場所に置くと, 定義のモデルで学習します"
         )
     model = make_model(width, cfg, spec, base_dir)
-    trainer = GroupTrainer(model, experiment, train_x, valid_x, cfg)
+    trainer = GroupTrainer(model, experiment, train_x, valid_x,
+                           torch.tensor(columns), cfg)
     trainer.fit(train_loader, valid_loader)
 
     # 実験だけで見直せるように, 問題の設定の写し (元の問題の場所
@@ -1421,7 +1463,8 @@ group:
   # 中心までの二乗距離の和が最も小さいものを使う)
   iterations: 100
   inits: 5
-  # 対照学習で崩す (他の行の値に置き換える) 特徴の割合
+  # 対照学習で崩す (他の行の値に置き換える) 群を作る列の割合 (種類の列は
+  # 値ごとの 0 と 1 の列をまとめて置き換える)
   corruption: 0.3
   # シルエット係数を数える行の数の上限 (多ければ無作為に選ぶ)
   sample: 2000
@@ -1602,8 +1645,9 @@ def group_readme(
         "モデル) で学習する (config の `model.placeholder: true` がその目印)",
         "3. **学習・評価** (ML-Found): `python train.py`. 行を無作為"
         "に学習用と検証用 (config の `data.valid` の割合) に分ける. 学習は, "
-        "行の特徴の一部 (config の `group.corruption` の割合) を他の行の値に"
-        "置き換えた 2 通りの崩し方を, 同じ行どうしで近い埋め込みにする対照"
+        "群を作る列の一部 (config の `group.corruption` の割合. 種類の列は"
+        "値ごとの 0 と 1 の列をまとめて) を他の行の値に置き換えた 2 通りの"
+        "崩し方を, 同じ行どうしで近い埋め込みにする対照"
         "学習 (バッチの中の他の行と比べる交差エントロピー). 検証のたびに, "
         f"学習用の行の埋め込みを k-means で {group['k']} つの群 (config の "
         "`group.k`) に分け, 検証用の行を割り当てたシルエット係数 (群の"
