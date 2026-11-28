@@ -986,15 +986,6 @@ def make_inference(
     ----------
     None
     """
-    # s_learner の一式の省略 (ML-Inference の効果の一式は t_learner だけ
-    # を読む)
-    if LEARNER == "s_learner":
-        experiment.logger.info(
-            "効果の決め方が s_learner なので, 推論の一式を作りません "
-            "(ML-Inference の効果の一式は t_learner の成果物を読みます)"
-        )
-        return
-
     # 定義が無い仮のモデルの一式の省略
     if spec is None:
         experiment.logger.info(
@@ -1396,10 +1387,8 @@ def uplift_readme(
         "", "## 次にすること", "",
         "学習する環境には ML-EDA, ML-Found, ML-ModelControl, ML-Inference "
         "を入れる (config の `requires` の機能. 足りなければ学習の前に入れ方"
-        + ("を示して止まる. ML-ModelControl は定義を置くと使う. "
-           "ML-Inference は `s_learner` では使わない)." if single else
-           "を示して止まる. ML-ModelControl と ML-Inference は定義を置くと"
-           "使う)."), "",
+        "を示して止まる. ML-ModelControl と ML-Inference は定義を置くと"
+        "使う).", "",
         "1. **データの分析** (ML-EDA): ML-EDA の介入の記録の表 "
         "(版 1 の `task: uplift`) を config の `data.dataset` の場所 "
         f"(`{dataset}`) に書き出す. データの分析の段階の「この問題から始める」か, "
@@ -1468,22 +1457,23 @@ def uplift_readme(
         "`uplift_recipe.yaml`)"
     )
 
-    # 4. 推論 (s_learner は一式を作らない)
+    # 4. 推論 (効果の一式の版は効果の決め方で変わる)
     budget = (f"{decision['budget']} 件. config の `uplift.budget`"
               if decision else "損得と制約に直すところが残っているので空")
-    if single:
-        lines += s_learner_lines(budget)
-        text = "\n".join(lines)
-        return text
+    version = (
+        "版 18. 一式の `uplift.output` に結果の予測 `outcome` の名前を持"
+        "ち, 処置の列を 1 と 0 にした予測の差を効果にする" if single else
+        "版 12. 一式の `uplift` に `treated` と `control` の名前を持つ"
+    )
     lines += [
         "4. **推論** (ML-Inference): 学習の後に, 実験の効果の"
         "決め方 `uplift_estimator.json`, 前処理のレシピの写し "
         "`uplift_recipe.yaml`, 学習した重みと写した定義から, ML-Inference "
-        "の効果の一式を実験の `inference/` に作る (config の `data.source` "
-        "の元の表があれば, 一式の効果を実験の効果と比べて `train.log` に"
-        "書く. 仮のモデルでは作らない). 一式は新しい行にレシピの前処理を"
-        "かけて効果を出す. 推論の 1 回で, 効果の高い順に配る数の上限 "
-        f"({budget}) まで配る (受け渡しの推論の意思決定 "
+        f"の効果の一式 ({version}) を実験の `inference/` に作る (config の "
+        "`data.source` の元の表があれば, 一式の効果を実験の効果と比べて "
+        "`train.log` に書く. 仮のモデルでは作らない). 一式は新しい行に"
+        "レシピの前処理をかけて効果を出す. 推論の 1 回で, 効果の高い順に"
+        f"配る数の上限 ({budget}) まで配る (受け渡しの推論の意思決定 "
         "`{type: treat, budget}` は, ML-Inference の効果の一式が読む形). "
         "効果は見積もりで, 無作為に配った記録を前提にする. 配った効果は, "
         "配る相手を無作為に分けて試して確かめる",
@@ -1493,32 +1483,3 @@ def uplift_readme(
     text = "\n".join(lines)
 
     return text
-
-
-def s_learner_lines(budget: str) -> list[str]:
-    """
-    効果の決め方が s_learner の README の推論の案内を作る関数
-
-    Parameters
-    ----------
-    budget: str
-        配る数の上限の文
-
-    Returns
-    ----------
-    lines: list[str]
-        推論の案内と, 終わりの書き足す所の案内の行
-    """
-    # t_learner だけを読む ML-Inference の効果の一式の案内
-    lines = [
-        "4. **推論** (ML-Inference): ML-Inference の効果の一式は 2 つの予測 "
-        "(`t_learner`) の成果物を読むので, 1 つの予測 (`s_learner`) では"
-        "学習の後に一式を作らない (理由を `train.log` に書く). 行ごとの"
-        "効果 `uplift_effects.csv` を効果の高い順に並べ, 配る数の上限 "
-        f"({budget}) まで配る. 効果は見積もりで, 無作為に配った記録を前提"
-        "にする. 配った効果は, 配る相手を無作為に分けて試して確かめる",
-        "", "`train.py` の印 (TODO) の所 (モデル) は書き足す. 問題を変えた"
-        "ら, 書き出し直すか手で直す.", "",
-    ]
-
-    return lines
