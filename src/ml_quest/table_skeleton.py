@@ -2,6 +2,7 @@ import json
 from string import Template
 from typing import Callable, Optional
 
+from ml_quest.generate_skeleton import generation_origin
 from ml_quest.handoff import describe
 from ml_quest.problem import active_value
 from ml_quest.questions import PART
@@ -52,6 +53,11 @@ PREDICT = $predict
 ROLE = "generate"
 OUTPUT = "table"
 METHOD = $method
+
+# task.yaml の正解の種類と出どころの種類 (問題の設定の正解の出どころ
+# から. 自分自身なら学んだ表が正解で measurement, 他は unknown)
+TARGET_KIND = "table"
+ORIGIN_TYPE = $origin_type
 
 # 推論の一式の出力の形 (ML-Inference の表の出力の雑音だけの一式. 列の
 # 符号化を一式に写し, 列の名前と値の表を返す)
@@ -1171,11 +1177,17 @@ def main() -> None:
         print("\\n".join(f"- {message}" for message in errors))
         sys.exit(1)
 
-    # 何の実験か (受け持ち, 出力の形, 作るもの, 作り方は問題の設定から).
+    # 何の実験か (受け持ち, 出力の形, 作るもの, 作り方, 正解の出どころは
+    # 問題の設定から. 学習に使ったデータセットは場所と dataset.yaml の名前.
+    # 版 1 のデータセットなので版は書かない).
     # TODO: 既製のモデルを元にするなら, 元にした実験か重みを task["base"]
     experiment = start_experiment(cfg, diff, str(PROJECT_DIR))
-    write_task(experiment, {"role": ROLE, "output": OUTPUT,
-                            "what": PREDICT, "method": METHOD})
+    write_task(experiment, {
+        "role": ROLE, "output": OUTPUT, "what": PREDICT,
+        "target": {"kind": TARGET_KIND, "origin": {"type": ORIGIN_TYPE}},
+        "method": METHOD,
+        "dataset": {"path": str(path), "name": dataset.info.get("name")},
+    })
 
     # 列の数, 符号化した行の幅, 行の数と学習と検証の loader
     numbers = sum(column["type"] == "number" for column in columns)
@@ -1330,6 +1342,7 @@ def table_script(problem: dict, literal: Callable) -> str:
         name=literal(str(problem.get("name", ""))),
         predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         method=literal(active_value(problem, f"{PART}.method")),
+        origin_type=literal(generation_origin(problem)),
     )
     # train.log の初めの行の作るもの (空なら省く)
     made = ("作るもの: {PREDICT}. "
