@@ -840,6 +840,24 @@ QUESTIONS: list[dict[str, Any]] = [
              "評価の点数のように全ての行が 0 より大きい列では, 見たい反応を "
              "1, 他を 0 にした列を作ってから選ぶ. 無ければ空のまま (全ての"
              "行を反応とみなす)"},
+    {"id": f"{PART}.rank.shown", "section": 5, "kind": "column",
+     "required": False, "when": RANK,
+     "title": "見せただけの印の列は (あれば)",
+     "help": "利用者に見せたが選ばれなかった品物の行に真 (true か 1) を"
+             "付けた列. 選んだ行は偽 (false か 0) か空のまま. 1 行が見せた"
+             "品物 1 件で, 選んだ反応と見せただけの記録を 1 つの表に置く. "
+             "あれば, 見せただけの品物を学習の負の例にし, 1 回の提示の中で"
+             "選んだ品物を上に並べられたかも確かめる. 無ければ空のまま "
+             "(選んだ反応だけで学ぶ). 例: shown_only"},
+    {"id": f"{PART}.rank.presentation", "section": 5, "kind": "column",
+     "required": False,
+     "when": [*RANK, {"id": f"{PART}.rank.shown", "filled": True}],
+     "title": "提示の列は (あれば)",
+     "help": "1 回の提示 (1 度に見せた品物の並び) の ID の列. 同じ利用者と"
+             "提示の行を 1 回の提示とみなす. 無ければ空のまま (同じ利用者と"
+             "時刻の行を 1 回の提示とみなす. 選んだ行の時刻が見せた時刻より"
+             "後になる表では, 提示の列を選ぶ). 提示の欠けた行は選んだ行も除く. "
+             "例: impression_id"},
     {"id": f"{PART}.rank.k", "section": 5, "kind": "number",
      "required": True, "when": RANK,
      "title": "利用者ごとに上位何件を並べますか (K)",

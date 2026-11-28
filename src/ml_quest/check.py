@@ -80,9 +80,10 @@ READY_TEXTS = [f"{PART}.ready.{name}" for name in (
     "model", "weights", "sha256"
 )]
 
-# 並べるの, 反応の表の列の名前の項目 (利用者, 品物, 時刻, 反応の強さ)
+# 並べるの, 反応の表の列の名前の項目 (利用者, 品物, 時刻, 反応の強さ,
+# 見せただけの印, 提示)
 RANK_COLUMNS = [f"{PART}.rank.{name}" for name in (
-    "user", "item", "time", "reaction"
+    "user", "item", "time", "reaction", "shown", "presentation"
 )]
 
 # 効果の見積もりの, 列の名前の項目 (処置, 結果, 行の id) と文の中の呼び方
@@ -112,7 +113,8 @@ DEMAND_TAKEN = ("demand", "demand_previous")
 
 # 並べるの列の項目の, 文の中の呼び方
 RANK_TITLES = dict(zip(RANK_COLUMNS, ("利用者の列", "品物の列", "時刻の列",
-                                      "反応の強さの列")))
+                                      "反応の強さの列", "見せただけの印の列",
+                                      "提示の列")))
 
 # はいかいいえで答える項目
 BOOLEANS = [f"{PART}.autonomous", f"{PART}.ros2", "ml.gpu"]
@@ -1478,7 +1480,8 @@ def check_rank(problem: dict) -> list[dict]:
             found.append(finding(
                 "error", key,
                 f"{name} は{RANK_TITLES[chosen[name]]}と同じ列です. 利用者, "
-                "品物, 時刻, 反応の強さは別の列にしてください"
+                "品物, 時刻, 反応の強さ, 見せただけの印, 提示は別の列にして"
+                "ください"
             ))
         else:
             chosen[name] = key

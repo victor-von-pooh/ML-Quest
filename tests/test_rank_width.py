@@ -17,7 +17,8 @@ from ml_quest.rank_width import (
 from test_rank_skeleton import ITEMS, USERS, attached, rank_problem
 
 # 骨組みの train.py から写しを取り出す関数の名前
-COPIED_FUNCTIONS = ("read_reactions", "split_by_time", "make_index")
+COPIED_FUNCTIONS = ("read_reactions", "cut_times", "split_by_cuts",
+                    "split_by_time", "make_index")
 
 # 写しを比べる反応の表の列の名前
 COLUMNS = {"user": "member", "item": "item_id", "time": "ts",

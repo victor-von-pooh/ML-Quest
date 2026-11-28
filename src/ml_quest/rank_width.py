@@ -183,7 +183,8 @@ def rank_encoding(
     ----------
     encoding: Optional[dict]
         users (学習用の利用者の数), items (学習用の品物の数), rows (分割の
-        名前から反応の行の数), notes (除いた行の知らせ). 並べるで学習
+        名前から反応の行の数), notes (除いた行の知らせ). 見せただけの印の
+        列があれば, 印が偽の行 (選んだ反応) だけで数える. 並べるで学習
         しなければ None. 数は学習用の分割だけで決まるので, 検証用に正解の
         ある利用者がいなくても止まらない (骨組みの train.py は学習の前に
         止まる)
@@ -207,15 +208,27 @@ def rank_encoding(
     if not path.is_file():
         raise FileNotFoundError(f"反応の表 {path} がありません")
     options = get_value(problem, "data.options")
-    frame = import_eda().load_data(
-        path, loader=get_value(problem, "data.loader"),
-        **(options if isinstance(options, dict) else {})
-    ).frame
-
-    # 列をそろえ, 時刻の順に分け, 学習用にいる利用者と品物に番号
+    options = options if isinstance(options, dict) else {}
+    loader = get_value(problem, "data.loader")
     columns = {key: active_value(problem, f"{PART}.rank.{key}")
-               for key in ("user", "item", "time", "reaction")}
-    reactions, notes = read_reactions(frame, columns)
+               for key in ("user", "item", "time", "reaction", "shown",
+                           "presentation")}
+
+    # 見せただけの印の列があれば, ML-EDA の load_reactions で選んだ反応を
+    # 読む (骨組みの train.py と同じ). 無ければ列のそろえ
+    if columns["shown"]:
+        read = import_eda().load_reactions(
+            path, columns["user"], columns["item"], columns["time"],
+            columns["reaction"], loader, shown=columns["shown"],
+            presentation=columns["presentation"], **options
+        )
+        reactions = read.frame[["user", "item", "time"]]
+        notes = list(read.notes)
+    else:
+        frame = import_eda().load_data(path, loader=loader, **options).frame
+        reactions, notes = read_reactions(frame, columns)
+
+    # 時刻の順に分け, 学習用にいる利用者と品物に番号
     splits = split_by_time(reactions, valid, test)
     index = make_index(splits["train"])
     encoding = {"users": len(index["users"]), "items": len(index["items"]),
