@@ -2,6 +2,7 @@ import json
 from string import Template
 from typing import Callable, Optional
 
+from ml_quest.generate_skeleton import generation_origin
 from ml_quest.handoff import describe
 from ml_quest.problem import active_value
 from ml_quest.questions import PART
@@ -53,10 +54,10 @@ ROLE = "generate"
 OUTPUT = "table"
 METHOD = $method
 
-# task.yaml の正解の種類と出どころの種類 (ML-Found の出どころの値に,
-# 学んだデータそのものが正解に当たるものが無いので unknown)
+# task.yaml の正解の種類と出どころの種類 (問題の設定の正解の出どころが
+# 自分自身なら, 学んだ表そのものが正解なので self. 他は unknown)
 TARGET_KIND = "table"
-ORIGIN_TYPE = "unknown"
+ORIGIN_TYPE = $origin_type
 
 # 推論の一式の出力の形 (ML-Inference の表の出力の雑音だけの一式. 列の
 # 符号化を一式に写し, 列の名前と値の表を返す)
@@ -1341,6 +1342,7 @@ def table_script(problem: dict, literal: Callable) -> str:
         name=literal(str(problem.get("name", ""))),
         predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         method=literal(active_value(problem, f"{PART}.method")),
+        origin_type=literal(generation_origin(problem)),
     )
     # train.log の初めの行の作るもの (空なら省く)
     made = ("作るもの: {PREDICT}. "

@@ -383,7 +383,7 @@ def test_table_project(tmp_path: Path) -> None:
     assert 'ROLE = "generate"' in script and 'OUTPUT = "table"' in script
     assert 'PREDICT = "顧客の表に似た行"' in script
     assert 'TARGET_KIND = "table"' in script
-    assert 'ORIGIN_TYPE = "unknown"' in script
+    assert 'ORIGIN_TYPE = "self"' in script
     assert "PlaceholderModel" in script
 
     # config: 要る機能, 監視, EMA, データセットとモデルの定義の場所
@@ -516,7 +516,7 @@ def test_table_training(tmp_path: Path) -> None:
                      encoding="utf-8")
     run, _ = train(project)
 
-    # 何の実験か (正解は学んだ表で出どころは分からない, データセットは
+    # 何の実験か (正解は学んだ表そのもので出どころは self, データセットは
     # 書き出した場所と名前)
     task = yaml.safe_load((run / "task.yaml").read_text(encoding="utf-8"))
     assert (task["role"], task["output"], task["what"]) == (
@@ -526,12 +526,12 @@ def test_table_training(tmp_path: Path) -> None:
                           .read_text(encoding="utf-8"))["name"]
     assert task["target"] == {
         "kind": "table",
-        "origin": {"type": "unknown", "name": None, "settings": None},
+        "origin": {"type": "self", "name": None, "settings": None},
     }
     assert task["dataset"] == {"path": "outputs/dataset", "name": name,
                                "format_version": None}
     log = (run / "train.log").read_text(encoding="utf-8")
-    assert "正解の出どころは分からない" in log
+    assert "学んだデータそのものが正解" in log
 
     # 雑音だけの一式 (版 7): 学習と同じ雑音の予定の ddim で, 列の符号化を
     # 写した表の出力
