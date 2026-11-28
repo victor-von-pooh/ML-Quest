@@ -399,7 +399,9 @@ def test_uplift_example_spec(tmp_path: Path) -> None:
     assert len(list((project / "outputs").glob("*/*/*/train.log"))) == 1
 
 
-def check_inference(run: Path, source: Path) -> None:
+def check_inference(
+    run: Path, source: Path, learner: str = "t_learner"
+) -> None:
     """
     推論の一式の効果が実験の効果と同じで, 一式の既定の判断が配る判断かを
     確かめる関数
@@ -410,6 +412,8 @@ def check_inference(run: Path, source: Path) -> None:
         実験のディレクトリ
     source: Path
         元の表の CSV
+    learner: str = "t_learner"
+        効果の決め方 (t_learner は版 12, s_learner は版 18)
 
     Returns
     ----------
@@ -420,9 +424,15 @@ def check_inference(run: Path, source: Path) -> None:
     pd = pytest.importorskip("pandas")
     log = (run / "train.log").read_text(encoding="utf-8")
     assert "推論の一式 (効果): inference/ (効果の一致 100.0 %" in log
-    assert "配る数の上限 50. 版 12" in log
+    version = 18 if learner == "s_learner" else 12
+    assert f"配る数の上限 50. 版 {version}" in log
     bundle = inference.load_bundle(run / "inference")
-    assert bundle.info["format_version"] == 12
+    assert bundle.info["format_version"] == version
+    assert bundle.info["uplift"]["learner"] == learner
+    names = ({"output": "outcome"} if learner == "s_learner"
+             else {"treated": "treated", "control": "control"})
+    held = {key: bundle.info["uplift"].get(key) for key in names}
+    assert held == names
     assert bundle.info["role"] == "effect"
     assert bundle.info["decision"] == {"type": "treat", "budget": 50}
     assert bundle.info["uplift"]["check"]["rows"] == ROWS
@@ -566,7 +576,7 @@ def test_s_learner_project(tmp_path: Path) -> None:
     assert all(len(line) <= 79 for line in config_text.splitlines())
     readme = (project / "README.md").read_text(encoding="utf-8")
     for words in ("tabular_uplift_s", "`outcome`", "学習に使う列の数 + 1",
-                  "一式を作らない", "50 件"):
+                  "版 18", "`uplift.output`", "50 件"):
         assert words in readme, words
     assert "`treated`" not in readme
 
@@ -639,7 +649,7 @@ def test_s_learner_training(tmp_path: Path, kind: str) -> None:
 def test_s_learner_example_spec(tmp_path: Path) -> None:
     """
     ML-ModelControl の同梱の例 tabular_uplift_s の入力の幅を, 学習に使う
-    列の数 + 処置の列の 1 に合わせた定義で学び, 一式を作らない理由を残し,
+    列の数 + 処置の列の 1 に合わせた定義で学び, 版 18 の推論の一式を作り,
     合わない定義は出力先を作る前に止まることを確かめる関数
 
     Parameters
@@ -671,8 +681,10 @@ def test_s_learner_example_spec(tmp_path: Path) -> None:
     run = only_run(project)
     log = (run / "train.log").read_text(encoding="utf-8")
     assert "仮のモデル" not in log
-    assert "効果の決め方が s_learner なので, 推論の一式を作りません" in log
     assert read_evaluation(run, "uplift_test")["rows"][0]["qini"] > 0
+
+    # 1 つの予測の推論の一式の確かめ
+    check_inference(run, source, "s_learner")
 
     # 特徴の列の数だけの入力の幅と, T-learner の出力の定義の停止
     narrow = adapt_example("tabular_uplift_s", {"features": 2})
