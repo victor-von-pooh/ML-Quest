@@ -1212,15 +1212,17 @@ def main() -> None:
         sys.exit(1)
 
     # 何の実験か (受け持ち, 出力の形, 作るもの, 作り方は問題の設定から.
-    # 学習に使ったデータセットは場所と dataset.yaml の名前.
-    # 版 1 のデータセットなので版は書かない).
+    # 学習に使ったデータセットは場所と dataset.yaml の名前と版 (load_dataset
+    # が読む版 1). 版 1 は受け持ちと出どころを持たず, パスで渡すと ML-Found
+    # が止まるので辞書で渡す).
     # TODO: 既製のモデルを元にするなら, 元にした実験か重みを task["base"]
     experiment = start_experiment(cfg, diff, str(PROJECT_DIR))
     write_task(experiment, {
         "role": ROLE, "output": OUTPUT, "what": PREDICT,
         "target": {"kind": TARGET_KIND, "origin": {"type": ORIGIN_TYPE}},
         "method": METHOD,
-        "dataset": {"path": str(path), "name": dataset.info.get("name")},
+        "dataset": {"path": str(path), "name": dataset.info.get("name"),
+                    "format_version": dataset.info.get("format_version")},
     })
 
     # 列の数, 符号化した行の幅, 行の数と学習と検証の loader

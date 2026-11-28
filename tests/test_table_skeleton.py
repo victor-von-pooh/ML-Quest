@@ -557,7 +557,7 @@ def test_table_training(tmp_path: Path) -> None:
     run, _ = train(project)
 
     # 何の実験か (正解は学んだ表そのもので出どころは self, データセットは
-    # 書き出した場所と名前)
+    # 書き出した場所と名前と版 1)
     task = yaml.safe_load((run / "task.yaml").read_text(encoding="utf-8"))
     assert (task["role"], task["output"], task["what"]) == (
         "generate", "table", "顧客の表に似た行"
@@ -569,7 +569,7 @@ def test_table_training(tmp_path: Path) -> None:
         "origin": {"type": "self", "name": None, "settings": None},
     }
     assert task["dataset"] == {"path": "outputs/dataset", "name": name,
-                               "format_version": None}
+                               "format_version": 1}
     log = (run / "train.log").read_text(encoding="utf-8")
     assert "学んだデータそのものが正解" in log
 
