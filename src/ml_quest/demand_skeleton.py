@@ -124,6 +124,10 @@ LEVELS_TEXT = ("{split}の発注を決める日の行の, 学んだ水準ごと�
 
 # 評価する分割の名前
 SPLIT_NAMES = {"valid": "検証用", "test": "テスト用"}
+
+# 初めの予測の平均を合わせるときに数える行の数の目安と, 偏りの探索の回数
+MATCH_ROWS = 4096
+MATCH_STEPS = 40
 '''
 
 # 需要の予測の部品, Trainer, 発注の数の決め方と評価, 学習の流れ
@@ -637,7 +641,7 @@ def make_model(
     base_dir: Optional[Path]
         定義の中の相対の参照の起点 (None なら定義のディレクトリ)
     scale: float
-        学習用の行の先の期間の需要の平均 (仮のモデルの初めの分位点の目安)
+        学習用の行の先の期間の需要の平均 (初めの分位点の目安)
 
     Returns
     ----------
@@ -656,9 +660,101 @@ def make_model(
     return model
 
 
+def shifted_mean(
+    model: nn.Module, layer: nn.Linear, x: torch.Tensor, shift: float
+) -> float:
+    """
+    最後の全結合の層の偏りを shift だけ動かしたときの, 分位点の予測の平均を
+    求める関数
+
+    Parameters
+    ----------
+    model: nn.Module
+        需要のモデル
+    layer: nn.Linear
+        偏りを動かす全結合の層
+    x: torch.Tensor
+        (件数, 学習に使う列の数) の行
+    shift: float
+        偏りに足す値
+
+    Returns
+    ----------
+    mean: float
+        分位点の予測の平均 (偏りは元に戻す)
+    """
+    # 偏りを動かして予測し, 元に戻す
+    with torch.no_grad():
+        layer.bias.add_(shift)
+        mean = float(predict(model, x).mean())
+        layer.bias.sub_(shift)
+
+    return mean
+
+
+def match_scale(model: nn.Module, x: np.ndarray, scale: float) -> bool:
+    """
+    初めの分位点の予測の平均を目安に合わせるよう, 最後の全結合の層の偏りを
+    動かす関数
+
+    Parameters
+    ----------
+    model: nn.Module
+        需要のモデル (定義から組み立てたモデルか, 仮のモデル)
+    x: np.ndarray
+        (件数, 学習に使う列の数) の学習用の行
+    scale: float
+        学習用の行の先の期間の需要の平均
+
+    Returns
+    ----------
+    matched: bool
+        合わせたか (偏りのある全結合の層が無いか, 偏りを動かしても予測の
+        平均が目安をまたがなければ False で, 偏りは変えない)
+    """
+    # 出力の手前の, 偏りのある最後の全結合の層
+    layers = [module for module in model.modules()
+              if isinstance(module, nn.Linear) and module.bias is not None]
+    if not layers or len(x) == 0:
+        return False
+    layer = layers[-1]
+
+    # 多い行は間引いて数える (偏りの探索で何度も予測するため)
+    stride = max(len(x) // MATCH_ROWS, 1)
+    rows = torch.as_tensor(np.asarray(x[::stride], dtype=np.float32))
+    model.eval()
+
+    # 予測の平均が目安をまたぐ偏りの幅を, 倍にしながら探す
+    sign = 1.0 if shifted_mean(model, layer, rows, 0.0) < scale else -1.0
+    low, high = 0.0, None
+    for power in range(MATCH_STEPS):
+        shift = sign * 2.0 ** power
+        if (shifted_mean(model, layer, rows, shift) < scale) == (sign > 0):
+            low = shift
+        else:
+            high = shift
+            break
+    if high is None:
+        model.train()
+        return False
+
+    # 二分法で目安に合う偏りに寄せる
+    for _ in range(MATCH_STEPS):
+        middle = (low + high) / 2
+        if (shifted_mean(model, layer, rows, middle) < scale) == (sign > 0):
+            low = middle
+        else:
+            high = middle
+    with torch.no_grad():
+        layer.bias.add_((low + high) / 2)
+    model.train()
+
+    return True
+
+
 def demand_scale(splits: dict) -> float:
     """
-    仮のモデルの初めの分位点の目安を求める関数
+    初めの分位点の目安を求める関数
 
     Parameters
     ----------
@@ -747,8 +843,15 @@ def train_demand(
             "仮のモデル (PlaceholderModel) で学習します. モデルの作成・選定の段階で組んだ定義を"
             "その場所に置くと, 定義のモデルで学習します"
         )
+    scale = demand_scale(splits)
     model = make_model(splits["train"]["x"].shape[1], len(levels), cfg,
-                       spec, base_dir, demand_scale(splits))
+                       spec, base_dir, scale)
+    if not match_scale(model, splits["train"]["x"], scale):
+        experiment.logger.warning(
+            "初めの分位点の予測の平均を学習用の行の需要の平均に合わせられませんでした "
+            "(偏りのある全結合の層が無いか, 偏りで予測が動かない). 学習が"
+            "収まるまでに長くかかることがあります"
+        )
     trainer = DemandTrainer(model, experiment, valid, levels, cfg)
     trainer.fit(train_loader, valid_loader)
 
@@ -1296,13 +1399,17 @@ optimizer:
     lr: 0.01
 
 trainer:
-  epochs: 30
+  epochs: 100
   grad_clip_norm: 1.0
   # 問題の「最良を選ぶ指標」(valid/loss は検証用の行の, 学んだ水準の
   # 分位点の損失の平均. valid/mae は検証用の行の, 0.5 の分位点の平均絶対
   # 誤差 (先の期間の需要の単位). どちらも小さいほど良い)
   monitor: $monitor
   mode: $mode
+  # 検証の指標 (monitor) が 10 エポック続けて良くならなければ止める
+  early_stopping:
+    use: true
+    patience: 10
 
 # プロジェクト固有の設定
 data:

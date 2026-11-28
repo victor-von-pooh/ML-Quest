@@ -97,6 +97,10 @@ ASSIGNED_COLUMNS = $assigned_columns
 # 弾力性を数える値段の上げ幅 (今の値段の 1 %)
 ELASTICITY_STEP = 0.01
 
+# 初めの予測の平均を合わせるときに数える行の数の目安と, 偏りの探索の回数
+MATCH_ROWS = 4096
+MATCH_STEPS = 40
+
 # 評価の名前 (evaluations/<名前>_<分割>.json), 説明と向き
 EVALUATION = "price"
 EVALUATION_TEXT = (
@@ -591,6 +595,98 @@ def make_model(
     return model
 
 
+def shifted_mean(
+    model: nn.Module, layer: nn.Linear, x: torch.Tensor, shift: float
+) -> float:
+    """
+    最後の全結合の層の偏りを shift だけ動かしたときの, 売れた数の予測の平均を
+    求める関数
+
+    Parameters
+    ----------
+    model: nn.Module
+        売れ行きのモデル
+    layer: nn.Linear
+        偏りを動かす全結合の層
+    x: torch.Tensor
+        (件数, 学習に使う列の数) の行
+    shift: float
+        偏りに足す値
+
+    Returns
+    ----------
+    mean: float
+        売れた数の予測の平均 (偏りは元に戻す)
+    """
+    # 偏りを動かして予測し, 元に戻す
+    with torch.no_grad():
+        layer.bias.add_(shift)
+        mean = float(predict(model, x).mean())
+        layer.bias.sub_(shift)
+
+    return mean
+
+
+def match_scale(model: nn.Module, x: np.ndarray, scale: float) -> bool:
+    """
+    初めの売れた数の予測の平均を目安に合わせるよう, 最後の全結合の層の偏りを
+    動かす関数
+
+    Parameters
+    ----------
+    model: nn.Module
+        売れ行きのモデル (定義から組み立てたモデルか, 仮のモデル)
+    x: np.ndarray
+        (件数, 学習に使う列の数) の学習用の行
+    scale: float
+        学習用の行の売れた数の平均
+
+    Returns
+    ----------
+    matched: bool
+        合わせたか (偏りのある全結合の層が無いか, 偏りを動かしても予測の
+        平均が目安をまたがなければ False で, 偏りは変えない)
+    """
+    # 出力の手前の, 偏りのある最後の全結合の層
+    layers = [module for module in model.modules()
+              if isinstance(module, nn.Linear) and module.bias is not None]
+    if not layers or len(x) == 0:
+        return False
+    layer = layers[-1]
+
+    # 多い行は間引いて数える (偏りの探索で何度も予測するため)
+    stride = max(len(x) // MATCH_ROWS, 1)
+    rows = torch.as_tensor(np.asarray(x[::stride], dtype=np.float32))
+    model.eval()
+
+    # 予測の平均が目安をまたぐ偏りの幅を, 倍にしながら探す
+    sign = 1.0 if shifted_mean(model, layer, rows, 0.0) < scale else -1.0
+    low, high = 0.0, None
+    for power in range(MATCH_STEPS):
+        shift = sign * 2.0 ** power
+        if (shifted_mean(model, layer, rows, shift) < scale) == (sign > 0):
+            low = shift
+        else:
+            high = shift
+            break
+    if high is None:
+        model.train()
+        return False
+
+    # 二分法で目安に合う偏りに寄せる
+    for _ in range(MATCH_STEPS):
+        middle = (low + high) / 2
+        if (shifted_mean(model, layer, rows, middle) < scale) == (sign > 0):
+            low = middle
+        else:
+            high = middle
+    with torch.no_grad():
+        layer.bias.add_((low + high) / 2)
+    model.train()
+
+    return True
+
+
 def units_scale(splits: dict) -> float:
     """
     損失で売れた数と予測を割る値を求める関数
@@ -684,6 +780,12 @@ def train_units(
         )
     model = make_model(splits["train"]["x"].shape[1], cfg, spec, base_dir,
                        scale)
+    if not match_scale(model, splits["train"]["x"], scale):
+        experiment.logger.warning(
+            "初めの売れた数の予測の平均を学習用の行の売れた数の平均に合わせられませんでした "
+            "(偏りのある全結合の層が無いか, 偏りで予測が動かない). 学習が"
+            "収まるまでに長くかかることがあります"
+        )
     trainer = PriceTrainer(model, experiment, valid, scale, cfg)
     trainer.fit(train_loader, valid_loader)
 
@@ -1176,7 +1278,7 @@ optimizer:
     lr: 0.001
 
 trainer:
-  epochs: 30
+  epochs: 100
   grad_clip_norm: 1.0
   # 問題の「最良を選ぶ指標」(valid/mae は検証用の行の, 記録の値段での
   # 売れた数の平均絶対誤差 (売れた数の単位). valid/loss は検証用の行の,
@@ -1184,6 +1286,10 @@ trainer:
   # 小さいほど良い)
   monitor: $monitor
   mode: $mode
+  # 検証の指標 (monitor) が 10 エポック続けて良くならなければ止める
+  early_stopping:
+    use: true
+    patience: 10
 
 # プロジェクト固有の設定
 data:

@@ -337,6 +337,9 @@ def test_demand_project(tmp_path: Path) -> None:
                                "max_order": 60}
     assert config["model"]["placeholder"] is True
     assert config["experiment"]["name"] == "units_demand"
+    assert config["trainer"]["epochs"] == 100
+    assert config["trainer"]["early_stopping"] == {"use": True,
+                                                   "patience": 10}
     readme = (project / "README.md").read_text(encoding="utf-8")
     for words in ("outputs/dataset", "`product_id`", "`date`", "`units`",
                   "`stock`", "`category`", "tabular_demand", "PinballLoss",
@@ -516,6 +519,7 @@ def test_demand_bundle(tmp_path: Path) -> None:
     run = trained_run(tmp_path, demand_problem(), spec=True)
     log = (run / "train.log").read_text(encoding="utf-8")
     assert "仮のモデル" not in log
+    assert "合わせられませんでした" not in log
     assert (run / "model_spec.yaml").is_file()
 
     # 一式の版, 受け持ちと既定の判断と, 元の表での発注の数の比べ
