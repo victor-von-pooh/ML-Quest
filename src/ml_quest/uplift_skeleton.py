@@ -2,9 +2,9 @@ import json
 from string import Template
 from typing import Callable, Optional
 
-from ml_quest.handoff import describe
+from ml_quest.handoff import describe, uplift_learner
 from ml_quest.model_names import (
-    CONTROL_OUTPUT, FEATURE_INPUT, TREATED_OUTPUT
+    CONTROL_OUTPUT, FEATURE_INPUT, OUTCOME_OUTPUT, TREATED_OUTPUT
 )
 from ml_quest.problem import active_value, get_value
 from ml_quest.questions import PART, UPLIFT_ASSIGNED, UPLIFT_OUTCOMES
@@ -31,11 +31,11 @@ UPLIFT_PLACEHOLDER = """  # spec のファイルが無いうちは train.py の�
 UPLIFT_HEAD = '''"""
 問題の設定 (problem.yaml) から ML-Quest が書き出した学習のスクリプト
 
-無作為に配った記録の表 (ML-EDA の介入の記録の表) で, 処置の群と対照の群の
-結果の 2 つの予測 (T-learner) を学び, 行ごとの効果 (処置したときの結果 −
-しないときの結果) とその評価 (Qini の曲線と係数, 上位 K 割の効果の差),
-推論の段階が読む成果物と推論の一式を残す骨組みなので, 印 (TODO) の所を
-書き足す
+無作為に配った記録の表 (ML-EDA の介入の記録の表) で,
+$learner_doc
+を学び, 行ごとの効果 (処置したときの結果 − しないときの結果) とその評価
+(Qini の曲線と係数, 上位 K 割の効果の差), 推論の段階が読む成果物を残す
+骨組みなので, 印 (TODO) の所を書き足す
 """
 import json
 import math
@@ -81,11 +81,14 @@ OPTIONS = $options
 INFERENCE_DIR = "inference"
 
 # モデルの入力と出力の名前 (ML-ModelControl の同梱の例 tabular_uplift と
-# 同じ) と, 効果の決め方の名前 (処置の群と対照の群の 2 つの予測)
+# tabular_uplift_s と同じ) と, 効果の決め方の名前 (t_learner は処置の群と
+# 対照の群の 2 つの予測, s_learner は処置の列を入力の最後に足した 1 つの
+# 予測)
 FEATURE_INPUT = $feature_input
 TREATED_OUTPUT = $treated_output
 CONTROL_OUTPUT = $control_output
-LEARNER = "t_learner"
+OUTCOME_OUTPUT = $outcome_output
+LEARNER = $learner
 
 # 行ごとの効果と, 効果の決め方 (実験のディレクトリの中)
 EFFECTS_FILE = "uplift_effects.csv"
@@ -124,7 +127,7 @@ CURVE_POINTS = 101
 SPLIT_NAMES = {"valid": "検証用", "test": "テスト用"}
 '''
 
-# T-learner の部品, Trainer, 効果と評価, 学習の流れ
+# 効果の予測の部品, Trainer, 効果と評価, 学習の流れ
 UPLIFT_MAIN = '''
 
 class PlaceholderModel(nn.Module):
@@ -132,16 +135,20 @@ class PlaceholderModel(nn.Module):
         # 親クラスのコンストラクタを呼び出す
         super(PlaceholderModel, self).__init__()
 
-        # 学習に使う列の数と, 隠れ層の幅を保存
+        # モデルの入力の幅と, 隠れ層の幅を保存
         self.features = features
         self.width = width
 
         # TODO: 課題に合うモデルに置き換える. 今は動くことを確かめるための,
-        # 重みを共有しない 2 つの全結合の枝 (処置の群と対照の群)
-        self.treated = nn.Sequential(nn.Linear(self.features, self.width),
-                                     nn.ReLU(), nn.Linear(self.width, 1))
-        self.control = nn.Sequential(nn.Linear(self.features, self.width),
-                                     nn.ReLU(), nn.Linear(self.width, 1))
+        # 全結合の枝 (t_learner は重みを共有しない処置の群と対照の群の 2 つ,
+        # s_learner は処置の列を足した入力の 1 つ)
+        names = ([OUTCOME_OUTPUT] if LEARNER == "s_learner"
+                 else [TREATED_OUTPUT, CONTROL_OUTPUT])
+        self.heads = nn.ModuleDict({
+            name: nn.Sequential(nn.Linear(self.features, self.width),
+                                nn.ReLU(), nn.Linear(self.width, 1))
+            for name in names
+        })
 
     def forward(self, x: torch.Tensor) -> dict:
         """
@@ -150,16 +157,17 @@ class PlaceholderModel(nn.Module):
         Parameters
         ----------
         x: torch.Tensor
-            (件数, 学習に使う列の数) の行の特徴
+            (件数, モデルの入力の幅) の行の特徴 (s_learner は最後の列が
+            処置)
 
         Returns
         ----------
         outputs: dict
-            treated と control (どちらも (件数, 1) の予測)
+            t_learner は treated と control, s_learner は outcome (どれも
+            (件数, 1) の予測)
         """
-        # 2 つの枝の順伝播
-        outputs = {TREATED_OUTPUT: self.treated(x),
-                   CONTROL_OUTPUT: self.control(x)}
+        # 枝ごとの順伝播
+        outputs = {name: head(x) for name, head in self.heads.items()}
 
         return outputs
 
@@ -200,14 +208,14 @@ class UpliftTrainer(Trainer):
         Returns
         ----------
         outputs: dict
-            処置の群の行は treated, 対照の群の行は control の損失の平均
-            (loss)
+            処置の群の行は処置したとき, 対照の群の行はしないときの予測の
+            損失の平均 (loss. s_learner では行の処置の値を入れた予測の
+            損失)
         """
         # 学習のモデルと, 検証の評価のモデル (EMA があれば EMA)
         x, treatment, y = batch
         model = self.model if phase == "train" else self.eval_model()
-        treated, control = predict(model, x)
-        chosen = torch.where(treatment == 1, treated, control)
+        chosen = predict_chosen(model, x, treatment)
         outputs = {"loss": self.criterion(chosen, y).mean()}
 
         return outputs
@@ -242,14 +250,16 @@ def predict(
     model: nn.Module, x: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
-    行の特徴を入力の名前でモデルに渡し, 2 つの群の予測を返す関数
+    行の特徴を入力の名前でモデルに渡し, 処置したときとしないときの予測を
+    返す関数
 
     Parameters
     ----------
     model: nn.Module
-        T-learner のモデル
+        効果のモデル (t_learner は 2 つの群の予測, s_learner は処置の列を
+        入力の最後に足した 1 つの予測)
     x: torch.Tensor
-        (件数, 学習に使う列の数) の行の特徴
+        (件数, 学習に使う列の数) の行の特徴 (処置の列は入れない)
 
     Returns
     ----------
@@ -257,12 +267,63 @@ def predict(
         処置したときとしないときの (件数,) の予測 (0 と 1 ならロジット,
         量なら標準化した値)
     """
-    # 出力が複数の定義と仮のモデルは辞書
-    outputs = model(**{FEATURE_INPUT: x})
-    predictions = (outputs[TREATED_OUTPUT].reshape(-1),
-                   outputs[CONTROL_OUTPUT].reshape(-1))
+    # t_learner の 2 つの出力 (出力が複数の定義と仮のモデルは辞書)
+    if LEARNER != "s_learner":
+        outputs = model(**{FEATURE_INPUT: x})
+        predictions = (outputs[TREATED_OUTPUT].reshape(-1),
+                       outputs[CONTROL_OUTPUT].reshape(-1))
+        return predictions
+
+    # s_learner は処置の列を 1 と 0 にした 2 回の予測 (出力が 1 つの定義は
+    # テンソル)
+    pair = []
+    for value in (1.0, 0.0):
+        treatment = torch.full((len(x), 1), value, dtype=x.dtype,
+                               device=x.device)
+        outputs = model(**{FEATURE_INPUT: torch.cat([x, treatment], dim=1)})
+        if isinstance(outputs, dict):
+            outputs = outputs[OUTCOME_OUTPUT]
+        pair.append(outputs.reshape(-1))
+    predictions = (pair[0], pair[1])
 
     return predictions
+
+
+def predict_chosen(
+    model: nn.Module, x: torch.Tensor, treatment: torch.Tensor
+) -> torch.Tensor:
+    """
+    行の処置の値のときの結果の予測を返す関数
+
+    Parameters
+    ----------
+    model: nn.Module
+        効果のモデル
+    x: torch.Tensor
+        (件数, 学習に使う列の数) の行の特徴 (処置の列は入れない)
+    treatment: torch.Tensor
+        (件数,) の行の処置 (1 か 0. ML-EDA の整数の列)
+
+    Returns
+    ----------
+    chosen: torch.Tensor
+        (件数,) の予測 (処置の群の行は処置したとき, 対照の群の行はしない
+        とき. 0 と 1 ならロジット, 量なら標準化した値)
+    """
+    # t_learner は 2 つの出力から行の処置の方
+    if LEARNER != "s_learner":
+        treated, control = predict(model, x)
+        chosen = torch.where(treatment == 1, treated, control)
+        return chosen
+
+    # s_learner は行の処置を float32 にして入力の最後に足した 1 回の予測
+    column = treatment.to(x.dtype).reshape(-1, 1)
+    outputs = model(**{FEATURE_INPUT: torch.cat([x, column], dim=1)})
+    if isinstance(outputs, dict):
+        outputs = outputs[OUTCOME_OUTPUT]
+    chosen = outputs.reshape(-1)
+
+    return chosen
 
 
 def estimate(
@@ -274,7 +335,7 @@ def estimate(
     Parameters
     ----------
     model: nn.Module
-        T-learner のモデル
+        効果のモデル
     x: torch.Tensor
         (件数, 学習に使う列の数) の行の特徴
     effect: dict
@@ -412,7 +473,7 @@ def check_splits(splits: dict) -> Optional[str]:
     message: Optional[str]
         誤りの文 (無ければ None)
     """
-    # 2 つの群の予測を学ぶ学習用と, 最も良いモデルを選ぶ検証用
+    # 処置したときとしないときを学ぶ学習用と, 最も良いモデルを選ぶ検証用
     message = None
     for split, title in (("train", "学習用"), ("valid", "検証用")):
         part = splits.get(split)
@@ -457,7 +518,8 @@ def spec_errors(spec: Optional[Path], width: int) -> list[str]:
     spec: Optional[Path]
         プロジェクトの定義 (無ければ None)
     width: int
-        学習に使う列の数
+        モデルの入力の幅 (学習に使う列の数. s_learner は処置の列の 1 を
+        足した数)
 
     Returns
     ----------
@@ -474,20 +536,24 @@ def spec_errors(spec: Optional[Path], width: int) -> list[str]:
     if errors:
         return errors
 
-    # 入力は行の特徴, 出力に 2 つの群の予測
+    # 入力は行の特徴, 出力に 2 つの群の予測 (s_learner は結果の予測)
     loaded = yaml.safe_load(spec.read_text(encoding="utf-8")) or {}
     inputs = loaded.get("inputs") or {}
     if list(inputs) != [FEATURE_INPUT]:
         errors.append(f"定義の入力は {FEATURE_INPUT} の 1 つにしてください "
                       f"(今は {list(inputs)})")
-    for name in (TREATED_OUTPUT, CONTROL_OUTPUT):
+    names = ([OUTCOME_OUTPUT] if LEARNER == "s_learner"
+             else [TREATED_OUTPUT, CONTROL_OUTPUT])
+    for name in names:
         if name not in (loaded.get("outputs") or {}):
             errors.append(f"定義の出力に {name} を入れてください")
     entry = inputs.get(FEATURE_INPUT)
     shape = entry.get("shape") if isinstance(entry, dict) else None
+    label = ("学習に使う列の数と処置の列の 1 の和" if LEARNER == "s_learner"
+             else "学習に使う列の数")
     if isinstance(shape, list) and shape and shape[-1] != width:
-        errors.append(f"入力 {FEATURE_INPUT} の最後の大きさを学習に使う列の"
-                      f"数 {width} にしてください (今は {shape[-1]})")
+        errors.append(f"入力 {FEATURE_INPUT} の最後の大きさを{label} "
+                      f"{width} にしてください (今は {shape[-1]})")
 
     return errors
 
@@ -545,7 +611,7 @@ def make_model(
     Parameters
     ----------
     width: int
-        学習に使う列の数
+        モデルの入力の幅
     cfg: Any
         config (仮のモデルの隠れ層の幅と乱数の種)
     spec: Optional[Path]
@@ -633,7 +699,7 @@ def train_uplift(
     experiment: Experiment
 ) -> tuple[nn.Module, str, Any]:
     """
-    学習用の行で, 処置の群と対照の群の結果の予測を学ぶ関数
+    学習用の行で, 処置したときとしないときの結果の予測を学ぶ関数
 
     Parameters
     ----------
@@ -673,7 +739,8 @@ def train_uplift(
             "仮のモデル (PlaceholderModel) で学習します. モデルの作成・選定の段階で組んだ定義を"
             "その場所に置くと, 定義のモデルで学習します"
         )
-    model = make_model(splits["train"]["x"].shape[1], cfg, spec, base_dir)
+    model = make_model(input_width(splits["train"]["x"].shape[1]), cfg,
+                       spec, base_dir)
     trainer = UpliftTrainer(model, experiment, valid, effect, cfg)
     trainer.fit(train_loader, valid_loader)
 
@@ -689,6 +756,26 @@ def train_uplift(
     model = trainer.model.cpu().eval()
 
     return model, weights, epoch
+
+
+def input_width(features: int) -> int:
+    """
+    モデルの入力の幅を返す関数
+
+    Parameters
+    ----------
+    features: int
+        学習に使う列の数
+
+    Returns
+    ----------
+    width: int
+        t_learner は学習に使う列の数, s_learner は処置の列の 1 を足した数
+    """
+    # s_learner は入力の最後に処置の列
+    width = features + 1 if LEARNER == "s_learner" else features
+
+    return width
 
 
 def effect_summary(effects: np.ndarray) -> dict:
@@ -858,6 +945,11 @@ def write_results(
     # レシピの前処理の後の features から)
     shutil.copy(dataset / "recipe.yaml", run_dir / RECIPE_FILE)
     budget = cfg.uplift.get("budget")
+    link = "sigmoid" if binary else "identity"
+    names = ({"input": FEATURE_INPUT, "outcome": OUTCOME_OUTPUT}
+             if LEARNER == "s_learner"
+             else {"input": FEATURE_INPUT, "treated": TREATED_OUTPUT,
+                   "control": CONTROL_OUTPUT})
     estimator = {
         "format_version": ESTIMATOR_VERSION, "learner": LEARNER,
         "outcome": effect["outcome"], "recipe": RECIPE_FILE,
@@ -865,9 +957,7 @@ def write_results(
         "id": info["id"], "treatment": info["treatment"],
         "budget": None if budget is None else int(budget),
         "k": float(cfg.uplift.k),
-        "model": {"input": FEATURE_INPUT, "treated": TREATED_OUTPUT,
-                  "control": CONTROL_OUTPUT,
-                  "link": "sigmoid" if binary else "identity"},
+        "model": {**names, "link": link},
         "scale": effect["scale"],
         "train": effect_summary(found["train"]["effect"]),
     }
@@ -896,6 +986,15 @@ def make_inference(
     ----------
     None
     """
+    # s_learner の一式の省略 (ML-Inference の効果の一式は t_learner だけ
+    # を読む)
+    if LEARNER == "s_learner":
+        experiment.logger.info(
+            "効果の決め方が s_learner なので, 推論の一式を作りません "
+            "(ML-Inference の効果の一式は t_learner の成果物を読みます)"
+        )
+        return
+
     # 定義が無い仮のモデルの一式の省略
     if spec is None:
         experiment.logger.info(
@@ -957,8 +1056,8 @@ def make_inference(
 
 def main() -> None:
     """
-    介入の記録の表で 2 つの群の予測を学び, 行ごとの効果と評価と成果物を
-    残す関数
+    介入の記録の表で効果の予測を学び, 行ごとの効果と評価と成果物を残す
+    関数
 
     Parameters
     ----------
@@ -1011,7 +1110,7 @@ def main() -> None:
 
     # モデルの定義の確かめ (誤りなら出力先を作る前の停止)
     spec = project_spec(cfg)
-    errors = spec_errors(spec, width)
+    errors = spec_errors(spec, input_width(width))
     if errors:
         print(f"{spec} の定義に誤りがあります. README の「次にすること」の "
               "2 で直してください")
@@ -1028,11 +1127,13 @@ def main() -> None:
                        for split, part in splits.items())
     experiment.logger.info(
         f"問題: {PROBLEM_NAME}. ${predict_log}結果の種類: "
-        f"{OUTCOME_NAMES[outcome]}. 行: {counts}. 学習に使う列: {width}. "
-        f"K: {cfg.uplift.k}. 配る数の上限: {cfg.uplift.get('budget')}"
+        f"{OUTCOME_NAMES[outcome]}. 効果の決め方: {LEARNER}. 行: "
+        f"{counts}. 学習に使う列: {width}. モデルの入力の幅: "
+        f"{input_width(width)}. K: {cfg.uplift.k}. 配る数の上限: "
+        f"{cfg.uplift.get('budget')}"
     )
 
-    # 2 つの群の予測の学習と, 全ての分割の行ごとの効果
+    # 効果の予測の学習と, 全ての分割の行ごとの効果
     model, weights, epoch = train_uplift(splits, effect, cfg, spec,
                                          experiment)
     found = {split: estimate(model, torch.tensor(part["x"]), effect,
@@ -1082,7 +1183,8 @@ trainer:
   grad_clip_norm: 1.0
   # 問題の「最良を選ぶ指標」(valid/qini は検証用の行の効果の見積もり
   # の Qini の係数で, 大きいほど良い. valid/loss は検証用の行の, 処置の群の
-  # 行は treated, 対照の群の行は control の予測の損失で, 小さいほど良い)
+  # 行は処置したとき, 対照の群の行はしないときの予測の損失で, 小さいほど
+  # 良い)
   monitor: $monitor
   mode: $mode
 $tiebreak
@@ -1104,12 +1206,30 @@ uplift:
 
 model:
   # ML-ModelControl の形のモデルの定義 (モデルの作成・選定の段階で組んで, この
-  # 場所に保存する. 入力は行の特徴 x, 出力に処置したときの予測 treated と
-  # しないときの予測 control)
+  # 場所に保存する. $model_comment)
   spec: models/model.yaml
 $placeholder  # 仮のモデルの隠れ層の幅
   width: 8
 ''')
+
+# 効果の決め方ごとの, 学習のスクリプトの説明で学ぶ予測
+LEARNER_DOCS = {
+    "t_learner": "処置の群と対照の群の結果の 2 つの予測 (T-learner)",
+    "s_learner": "処置の列を入力の終わりに足した結果の 1 つの予測 "
+                 "(S-learner)",
+}
+
+# 効果の決め方ごとの, config のモデルの定義の入力と出力の説明
+MODEL_COMMENTS = {
+    "t_learner": "入力は行の特徴 x, 出力に処置したときの予測\n  # treated と"
+                 "しないときの予測 control",
+    "s_learner": "入力は行の特徴と最後の列の処置の x, 出力に\n  # 結果の予測 "
+                 "outcome",
+}
+
+# 効果の決め方ごとの, モデルの作成の雛形 (ML-ModelControl の同梱の例)
+MODEL_NAMES = {"t_learner": "tabular_uplift",
+               "s_learner": "tabular_uplift_s"}
 
 # Qini の係数が並んだときに比べる指標
 UPLIFT_TIEBREAK = """  # Qini の係数が並んだときに比べる指標
@@ -1136,11 +1256,15 @@ def uplift_script(problem: dict, literal: Callable) -> str:
     """
     # 頭と学習の流れ
     names = {item["value"]: item["label"] for item in UPLIFT_OUTCOMES}
+    learner = uplift_learner(problem)
     options = get_value(problem, "data.options")
     head = Template(UPLIFT_HEAD).substitute(
         feature_input=literal(FEATURE_INPUT),
         treated_output=literal(TREATED_OUTPUT),
         control_output=literal(CONTROL_OUTPUT),
+        outcome_output=literal(OUTCOME_OUTPUT),
+        learner=literal(learner),
+        learner_doc=LEARNER_DOCS[learner],
         name=literal(str(problem.get("name", ""))),
         predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         method=literal(active_value(problem, f"{PART}.method")),
@@ -1202,6 +1326,7 @@ def uplift_config(
         source=json.dumps(source, ensure_ascii=False),
         k=json.dumps(stages["uplift"]["k"]), budget=json.dumps(budget),
         placeholder="" if spec_exists else UPLIFT_PLACEHOLDER,
+        model_comment=MODEL_COMMENTS[stages["uplift"]["learner"]],
     )
 
     return text
@@ -1254,6 +1379,7 @@ def uplift_readme(
     uplift = stages["uplift"]
     decision = stages["inference"]["decision"]
     names = {item["value"]: item["label"] for item in UPLIFT_OUTCOMES}
+    single = uplift["learner"] == "s_learner"
     lines = [f"# {problem.get('name', '')}", "",
              "ML-Quest で問題 (`problem.yaml`) から書き出した, "
              "ML-Found の学習のプロジェクトの骨組み (無作為に配った記録の表で, "
@@ -1270,8 +1396,10 @@ def uplift_readme(
         "", "## 次にすること", "",
         "学習する環境には ML-EDA, ML-Found, ML-ModelControl, ML-Inference "
         "を入れる (config の `requires` の機能. 足りなければ学習の前に入れ方"
-        "を示して止まる. ML-ModelControl と ML-Inference は定義を置くと"
-        "使う).", "",
+        + ("を示して止まる. ML-ModelControl は定義を置くと使う. "
+           "ML-Inference は `s_learner` では使わない)." if single else
+           "を示して止まる. ML-ModelControl と ML-Inference は定義を置くと"
+           "使う)."), "",
         "1. **データの分析** (ML-EDA): ML-EDA の介入の記録の表 "
         "(版 1 の `task: uplift`) を config の `data.dataset` の場所 "
         f"(`{dataset}`) に書き出す. データの分析の段階の「この問題から始める」か, "
@@ -1288,17 +1416,24 @@ def uplift_readme(
            else ""),
     ]
 
-    # 2. モデル
+    # 2. モデル (効果の決め方で入力と出力が変わる)
+    shape = (
+        "入力は行の特徴の終わりに処置の列 (1 か 0) を足した `x` ((件数, "
+        "学習に使う列の数 + 1) の float32) の 1 つ, 出力に結果の予測 "
+        "`outcome` ((件数, 1)" if single else
+        "入力は行の特徴 `x` ((件数, 学習に使う列の数) の float32. 処置の"
+        "列は入れない) の 1 つ, 出力に処置したときの結果の予測 `treated` "
+        "としないときの予測 `control` (どちらも (件数, 1)"
+    )
     lines.append(
         "2. **モデルの作成・選定** (ML-ModelControl): モデルの作成・選定の段階で組んだ定義を"
         ", config の `model.spec` の"
-        "場所 (`models/model.yaml`) に保存する. 入力は行の特徴 `x` ((件"
-        "数, 学習に使う列の数) の float32. 処置の列は入れない) の 1 つ, "
-        "出力に処置したときの結果の予測 `treated` としないときの予測 "
-        "`control` (どちらも (件数, 1). 結果が 0 と 1 ならロジット, 量なら"
-        "学習用の行の平均と標準偏差で標準化した値). 学習に使う列の数は "
-        "`train.log` の初めの行に出る. ML-ModelControl の同梱の例 "
-        "`tabular_uplift` の入力の幅を列の数に合わせて使える. 定義が無い"
+        f"場所 (`models/model.yaml`) に保存する. {shape}. 結果が 0 と 1 "
+        "ならロジット, 量なら学習用の行の平均と標準偏差で標準化した値). "
+        "学習に使う列の数とモデルの入力の幅は `train.log` の初めの行に"
+        "出る. ML-ModelControl の同梱の例 "
+        f"`{MODEL_NAMES[uplift['learner']]}`"
+        " の入力の幅をモデルの入力の幅に合わせて使える. 定義が無い"
         "うちは, `train.py` の `PlaceholderModel` (印 TODO. 動くことを確か"
         "めるだけの小さなモデル) で学習する (config の "
         "`model.placeholder: true` がその目印)"
@@ -1306,14 +1441,21 @@ def uplift_readme(
 
     # 3. 学習と評価
     monitor = stages["training"]["monitor"]
+    learn = (
+        "全ての行で, 行の処置の値を入れた `outcome` に損失" if single else
+        "処置の群の行は `treated`, 対照の群の行は `control` だけに損失"
+    )
+    difference = (
+        "処置の列を 1 にした `outcome` から 0 にした `outcome` を引いた値"
+        if single else "`treated` から `control` を引いた値"
+    )
     lines.append(
-        "3. **学習・評価** (ML-Found): `python train.py`. "
-        "処置の群の行は `treated`, 対照の群の行は `control` だけに損失 "
+        f"3. **学習・評価** (ML-Found): `python train.py`. {learn} "
         "(0 と 1 はロジットの二値の交差エントロピー, 量は標準化した値の"
         "二乗誤差) を付けて学び, 検証のたびに検証用の行の効果の見積もりの "
         f"Qini の係数を `valid/qini` に記録する. 検証用の `{monitor}` が最も"
-        "良いモデルを選ぶ. 行ごとの効果は `treated` から `control` を引いた"
-        "値 (0 と 1 はシグモイドで確率にしてから. 量は元の単位に戻してから)"
+        f"良いモデルを選ぶ. 行ごとの効果は{difference}"
+        " (0 と 1 はシグモイドで確率にしてから. 量は元の単位に戻してから)"
         ". 学習の後に, 検証用とテスト用の分割ごとに, Qini の係数と上位 K "
         f"割 (K = {uplift['k']} で上位 {uplift['k'] * 100:g} %. config の "
         "`uplift.k`) の効果の差 (上位の行"
@@ -1326,9 +1468,13 @@ def uplift_readme(
         "`uplift_recipe.yaml`)"
     )
 
-    # 4. 推論
+    # 4. 推論 (s_learner は一式を作らない)
     budget = (f"{decision['budget']} 件. config の `uplift.budget`"
               if decision else "損得と制約に直すところが残っているので空")
+    if single:
+        lines += s_learner_lines(budget)
+        text = "\n".join(lines)
+        return text
     lines += [
         "4. **推論** (ML-Inference): 学習の後に, 実験の効果の"
         "決め方 `uplift_estimator.json`, 前処理のレシピの写し "
@@ -1347,3 +1493,32 @@ def uplift_readme(
     text = "\n".join(lines)
 
     return text
+
+
+def s_learner_lines(budget: str) -> list[str]:
+    """
+    効果の決め方が s_learner の README の推論の案内を作る関数
+
+    Parameters
+    ----------
+    budget: str
+        配る数の上限の文
+
+    Returns
+    ----------
+    lines: list[str]
+        推論の案内と, 終わりの書き足す所の案内の行
+    """
+    # t_learner だけを読む ML-Inference の効果の一式の案内
+    lines = [
+        "4. **推論** (ML-Inference): ML-Inference の効果の一式は 2 つの予測 "
+        "(`t_learner`) の成果物を読むので, 1 つの予測 (`s_learner`) では"
+        "学習の後に一式を作らない (理由を `train.log` に書く). 行ごとの"
+        "効果 `uplift_effects.csv` を効果の高い順に並べ, 配る数の上限 "
+        f"({budget}) まで配る. 効果は見積もりで, 無作為に配った記録を前提"
+        "にする. 配った効果は, 配る相手を無作為に分けて試して確かめる",
+        "", "`train.py` の印 (TODO) の所 (モデル) は書き足す. 問題を変えた"
+        "ら, 書き出し直すか手で直す.", "",
+    ]
+
+    return lines

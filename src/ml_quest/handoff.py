@@ -34,7 +34,8 @@ DEFAULT_SAFETY_KEY = "cost"
 # (ML-ModelControl の同梱の例の名前. 並べる, まとめる, 効果を見積もるは
 # 正解の種類を問わないので None. 異常は度合いの決め方が自己符号化器の
 # ときだけ. 効果を見積もるは方策でない効果の見積もりのときだけで, 記録で
-# 変えたものが値段の値段を変える判断は正解の種類の代わりに price)
+# 変えたものが値段の値段を変える判断は正解の種類の代わりに price, 効果の
+# 決め方が S-learner の効果の見積もりは s_learner)
 MODEL_EXAMPLES = {
     ("predict", "mask"): "unet_segmentation",
     ("predict", "anomaly"): "tabular_autoencoder",
@@ -44,6 +45,7 @@ MODEL_EXAMPLES = {
     ("group", None): "contrastive_encoder",
     ("effect", None): "tabular_uplift",
     ("effect", "price"): "tabular_price",
+    ("effect", "s_learner"): "tabular_uplift_s",
     ("predict", "demand"): "tabular_demand",
 }
 
@@ -110,6 +112,7 @@ def model_example(problem: dict) -> Optional[str]:
         return None
     key = (active_value(problem, f"{PART}.role"),
            "price" if is_price_part(problem)
+           else "s_learner" if uplift_learner(problem) == "s_learner"
            else active_value(problem, f"{PART}.target.kind"))
     example = MODEL_EXAMPLES.get(key)
 
@@ -226,10 +229,10 @@ def handoff(problem: dict) -> dict:
         並べるで学習しなければ None), group (群を作る列, 群の数, 安定性の
         数え方. まとめるで学習しなければ None), anomaly (異常の検知の度合いの
         決め方, 列, 人が確かめる件数の上限. 異常の検知でなければ None),
-        uplift (効果の見積もりの処置, 結果, 列と上位の割合. 効果の見積もり
-        でなければ None), price (値段を変える判断の値段, 売れた数, 原価,
-        商品の id, 行の id の列と予測に使う列. 値段を変える判断でなければ
-        None), demand (時間をまたぐ量の判断の商品の id, 日付, 売れた数,
+        uplift (効果の見積もりの処置, 結果, 列, 上位の割合と効果の決め方.
+        効果の見積もりでなければ None), price (値段を変える判断の値段,
+        売れた数, 原価, 商品の id, 行の id の列と予測に使う列. 値段を変える
+        判断でなければ None), demand (時間をまたぐ量の判断の商品の id, 日付, 売れた数,
         在庫の数, 行の id の列, 商品の特徴の列, 先の期間の日数と学ぶ水準.
         時間をまたぐ量の判断でなければ None), project (書き出したプロジェクトの
         path. データセットとモデルの定義の場所は data の project_dataset
@@ -826,7 +829,8 @@ def uplift_of(problem: dict) -> Optional[dict]:
     uplift: Optional[dict]
         treatment (処置の列), outcome (結果の列), outcome_kind (binary か
         amount), id (行の id の列. 無ければ None), columns (見積もりに使う
-        列), k (上位 K 割の K) (効果の見積もりでなければ None)
+        列), k (上位 K 割の K), learner (効果の決め方. t_learner か
+        s_learner) (効果の見積もりでなければ None)
     """
     # 効果の見積もりのときだけ (要らなくなった問いの古い答えは除外)
     if not is_uplift_part(problem):
@@ -839,9 +843,33 @@ def uplift_of(problem: dict) -> Optional[dict]:
         "columns": list(active_value(problem, f"{PART}.uplift.columns")
                         or []),
         "k": active_value(problem, f"{PART}.uplift.k"),
+        "learner": uplift_learner(problem),
     }
 
     return uplift
+
+
+def uplift_learner(problem: dict) -> Optional[str]:
+    """
+    効果の見積もりの効果の決め方を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    learner: Optional[str]
+        t_learner か s_learner (答えなければ t_learner. 効果の見積もりで
+        なければ None)
+    """
+    # 答えの無い効果の見積もりは 2 つの予測
+    if not is_uplift_part(problem):
+        return None
+    learner = active_value(problem, f"{PART}.uplift.learner") or "t_learner"
+
+    return learner
 
 
 def uplift_data(problem: dict) -> dict:

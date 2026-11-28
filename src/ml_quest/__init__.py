@@ -21,7 +21,7 @@ from ml_quest.questions import (
     DEMAND_LEVELS, GROUP_ASSIGNED, GROUP_TAKEN, GUARD_COUNTS, METHODS,
     METRICS, OUTPUTS, PART, PRICE_ASSIGNED, QUESTIONS, ROLES, SECTIONS,
     SPLITS, TARGET_KINDS, TARGET_SOURCES, TASKS, UNITS, UPLIFT_ASSIGNED,
-    UPLIFT_OUTCOMES, VARIED
+    UPLIFT_LEARNERS, UPLIFT_OUTCOMES, VARIED
 )
 from ml_quest.requirements import FEATURES, required_features
 from ml_quest.sensitivity import SENSITIVITY_FIELDS, decision_sensitivity
@@ -41,7 +41,7 @@ __all__ = [
     "PRICE_ASSIGNED", "QUESTIONS",
     "ROLES", "SECTIONS", "SENSITIVITY_FIELDS", "SKELETON_TYPES", "SPLITS",
     "TARGET_KINDS", "TARGET_SOURCES", "TASKS", "UNITS", "UPLIFT_ASSIGNED",
-    "UPLIFT_OUTCOMES", "VARIED", "active_value",
+    "UPLIFT_LEARNERS", "UPLIFT_OUTCOMES", "VARIED", "active_value",
     "answer", "apply_group", "apply_recipe", "attach_data", "check",
     "check_model_contract",
     "decision_sensitivity", "decision_text", "describe", "example_problem",
