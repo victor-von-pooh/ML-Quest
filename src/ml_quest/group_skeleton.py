@@ -25,7 +25,7 @@ GROUP_VALID = 0.2
 # spec のファイルが無いときの, 仮のモデルで学習することの目印 (config の
 # model.placeholder)
 GROUP_PLACEHOLDER = """  # spec のファイルが無いうちは train.py の仮のモデルで学習することの目印
-  # (ML-Dashboard の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
+  # (学習・評価の段階の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
   # は spec のファイルがあるかで決まる)
   placeholder: true
 """
@@ -71,7 +71,7 @@ ROLE = "group"
 OUTPUT = "cluster"
 METHOD = $method
 
-# 表の読み方 (問題の設定の手元のデータの読み方. ML-EDA の load_data に
+# 表の読み方 (問題の手元のデータの読み方. ML-EDA の load_data に
 # 渡す. None は ML-EDA の推定)
 LOADER = $loader
 OPTIONS = $options
@@ -1015,7 +1015,7 @@ def spec_file(
 
     # 写しが無ければ理由を知らせて, プロジェクトの定義
     experiment.logger.warning(
-        "モデルの定義を実験に写せなかったので, プロジェクトの定義から"
+        "モデルの定義を実験に写せなかったので, 学習のプロジェクトの定義から"
         "組み立てます (理由は source.yaml の model_spec の status)"
     )
     path = spec
@@ -1293,14 +1293,14 @@ def main() -> None:
     if spec is None:
         experiment.logger.info(
             f"モデルの定義 ({cfg.model.spec or '場所なし'}) が無いので, "
-            "仮のモデル (PlaceholderModel) で学習します. ML-CreateArchitecture"
-            " で組んだ定義をその場所に置くと, 定義のモデルで学習します"
+            "仮のモデル (PlaceholderModel) で学習します. モデルの作成・選定の段階で組んだ定義を"
+            "その場所に置くと, 定義のモデルで学習します"
         )
     model = make_model(width, cfg, spec, base_dir)
     trainer = GroupTrainer(model, experiment, train_x, valid_x, cfg)
     trainer.fit(train_loader, valid_loader)
 
-    # 実験だけで見直せるように, 問題の設定の写し (元の問題の設定の場所
+    # 実験だけで見直せるように, 問題の設定の写し (元の問題の場所
     # origin も残る. モデルの定義は ML-Found が start_experiment で写す)
     run_dir = Path(experiment.run_dir)
     shutil.copy(PROJECT_DIR / "problem.yaml", run_dir / "problem.yaml")
@@ -1375,7 +1375,7 @@ if __name__ == "__main__":
 '''
 
 # config の基準 (ML-Found のプロジェクトの形)
-GROUP_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題の設定から書き出した骨組み)
+GROUP_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題から書き出した骨組み)
 $requires
 experiment:
   name: $experiment
@@ -1389,7 +1389,7 @@ optimizer:
 trainer:
   epochs: 30
   grad_clip_norm: 1.0
-  # 問題の設定の「最良を選ぶ指標」(valid/silhouette は検証用の行の埋め込みの
+  # 問題の「最良を選ぶ指標」(valid/silhouette は検証用の行の埋め込みの
   # 群のシルエット係数で, 大きいほど良い. valid/loss は検証用の行の対照学習の
   # 損失で, 小さいほど良い)
   monitor: $monitor
@@ -1397,8 +1397,8 @@ trainer:
 
 # プロジェクト固有の設定
 data:
-  # 群を作る表 (1 行が 1 つの対象. プロジェクトのディレクトリから. 問題の
-  # 設定の手元のデータの読み方で読む)
+  # 群を作る表 (1 行が 1 つの対象. プロジェクトのディレクトリから.
+  # 問題の手元のデータの読み方で読む)
   dataset: $dataset
   # 行のバッチの大きさ (バッチの中の他の行が対照学習の負例)
   batch_size: 128
@@ -1427,7 +1427,7 @@ group:
   sample: 2000
 
 model:
-  # ML-ModelControl の形のモデルの定義 (ML-CreateArchitecture で組んで, この
+  # ML-ModelControl の形のモデルの定義 (モデルの作成・選定の段階で組んで, この
   # 場所に保存する. 入力は行の特徴 x, 出力に埋め込み embedding と類似度の表
   # similarity)
   spec: models/model.yaml
@@ -1452,7 +1452,7 @@ def group_script(problem: dict, literal: Callable) -> str:
     script: str
         train.py の中身
     """
-    # 頭 (表の読み方は問題の設定の手元のデータの読み方) と学習の流れ
+    # 頭 (表の読み方は問題の手元のデータの読み方) と学習の流れ
     options = get_value(problem, "data.options")
     head = Template(GROUP_HEAD).substitute(
         feature_input=literal(FEATURE_INPUT),
@@ -1564,8 +1564,8 @@ def group_readme(
     # 筋道の要約
     group = stages["group"]
     lines = [f"# {problem.get('name', '')}", "",
-             "ML-Quest の問題の設定 (`problem.yaml`) から書き出した, "
-             "ML-Found のプロジェクトの骨組み (1 行が 1 つの対象の表で, 行の"
+             "ML-Quest で問題 (`problem.yaml`) から書き出した, "
+             "ML-Found の学習のプロジェクトの骨組み (1 行が 1 つの対象の表で, 行の"
              "埋め込みを学び, 群に分けて, 群の安定性と群の要約を残す).", "",
              "## 課題から行動まで", ""]
     lines += [f"- {sentence}" for sentence in describe(problem)]
@@ -1587,11 +1587,11 @@ def group_readme(
         " (config の `group.columns`) で, 他の列は読まない (群の割り当てには"
         f"{key}). 数の列は標準化して欠けた値を 0 に, 他の列は値ごとに 0 と "
         "1 の列 (欠けた値も 1 つの値) にする (学習用の行で決める). 読み方は"
-        "問題の設定の手元のデータの読み方 (ML-EDA の `load_data`)"
+        "問題の手元のデータの読み方 (ML-EDA の `load_data`)"
         + (f". 入れた表はこのディレクトリの `{raw}` に写した" if raw
            else ""),
-        "2. **モデルの作成** (ML-ModelControl, ML-CreateArchitecture): "
-        "ML-CreateArchitecture で組んだ定義を, config の `model.spec` の場所"
+        "2. **モデルの作成・選定** (ML-ModelControl): モデルの作成・選定の段階で組んだ定義を"
+        ", config の `model.spec` の場所"
         " (`models/model.yaml`) に保存する. 入力は行の特徴 `x` ((件数, 符号"
         "化した行の幅) の float32) の 1 つ, 出力に埋め込み `embedding` と, "
         "全ての組の類似度の表 `similarity` ((件数, 件数)). 符号化した行の幅"
@@ -1600,7 +1600,7 @@ def group_readme(
         "`in_features` を幅に合わせて使える. 定義が無いうちは, `train.py` "
         "の `PlaceholderModel` (印 TODO. 動くことを確かめるだけの小さな"
         "モデル) で学習する (config の `model.placeholder: true` がその目印)",
-        "3. **学習** (ML-Found, ML-Dashboard): `python train.py`. 行を無作為"
+        "3. **学習・評価** (ML-Found): `python train.py`. 行を無作為"
         "に学習用と検証用 (config の `data.valid` の割合) に分ける. 学習は, "
         "行の特徴の一部 (config の `group.corruption` の割合) を他の行の値に"
         "置き換えた 2 通りの崩し方を, 同じ行どうしで近い埋め込みにする対照"
@@ -1620,15 +1620,15 @@ def group_readme(
         "安定性 `stability` と, 数の列の平均, 種類の列の最も多い値. 最後の"
         "行は全ての行), 行ごとの群の割り当て `group_assignments.csv`, 列の"
         "符号化と群の中心 `group_centers.json`)",
-        "4. **推論** (ML-Inference, ML-Provide): 定義を置いて学習すると, "
+        "4. **推論** (ML-Inference): 定義を置いて学習すると, "
         "`train.py` が学習の後に実験の中の `inference/` に ML-Inference の"
         "群分けの一式 (列の符号化と群の中心, 学習の群の安定性と群の要約を"
         "持つ) を作り, 学習の表を割り当て直して実験の割り当てと比べる. "
-        "ML-Provide でその `inference/` を登録する. 新しい行の表を推論すると,"
+        "推論の段階でその `inference/` を登録する. 新しい行の表を推論すると,"
         " 行ごとに最も近い群の番号 `group` とその中心までの距離 `distance` "
         "が返り, 群の要約も返る. 仮のモデルでは一式を作らない",
         "", "`train.py` の印 (TODO) の所 (モデル, 特徴, 崩し方) は書き足す. "
-        "問題の設定を変えたら, 書き出し直すか手で直す.", "",
+        "問題を変えたら, 書き出し直すか手で直す.", "",
     ]
     text = "\n".join(lines)
 

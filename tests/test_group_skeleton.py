@@ -530,7 +530,7 @@ def test_group_project(tmp_path: Path) -> None:
     for words in ("outputs/rows.csv", "`spend`", "`region`", "`customer`",
                   "contrastive_encoder", "調整ランド指数",
                   "group_stability.json", "group_summary.json",
-                  "group_assignments.csv", "inference/", "ML-Provide",
+                  "group_assignments.csv", "inference/", "推論の段階",
                   "仮のモデルでは一式を作らない",
                   "種を変えて作り直す"):
         assert words in readme, words

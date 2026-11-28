@@ -56,7 +56,7 @@ ROLE = "rank"
 OUTPUT = "ranking"
 METHOD = $method
 
-# 反応の表の読み方 (問題の設定の手元のデータの読み方. ML-EDA の load_data
+# 反応の表の読み方 (問題の手元のデータの読み方. ML-EDA の load_data
 # に渡す. None は ML-EDA の推定)
 LOADER = $loader
 OPTIONS = $options
@@ -798,7 +798,7 @@ def spec_file(
 
     # 写しが無ければ理由を知らせて, プロジェクトの定義
     experiment.logger.warning(
-        "モデルの定義を実験に写せなかったので, プロジェクトの定義から"
+        "モデルの定義を実験に写せなかったので, 学習のプロジェクトの定義から"
         "組み立てます (理由は source.yaml の model_spec の status)"
     )
     path = spec
@@ -1102,14 +1102,14 @@ def main() -> None:
     if spec is None:
         experiment.logger.info(
             f"モデルの定義 ({cfg.model.spec or '場所なし'}) が無いので, "
-            "仮のモデル (PlaceholderModel) で学習します. ML-CreateArchitecture"
-            " で組んだ定義をその場所に置くと, 定義のモデルで学習します"
+            "仮のモデル (PlaceholderModel) で学習します. モデルの作成・選定の段階で組んだ定義を"
+            "その場所に置くと, 定義のモデルで学習します"
         )
     model = make_model(sizes, cfg, spec, base_dir)
     trainer = RankTrainer(model, experiment, sizes, targets["valid"], cfg)
     trainer.fit(train_loader, valid_loader)
 
-    # 実験だけで見直せるように, 問題の設定の写し (元の問題の設定の場所
+    # 実験だけで見直せるように, 問題の設定の写し (元の問題の場所
     # origin も残る. モデルの定義は ML-Found が start_experiment で写す) と
     # 利用者と品物の番号の表
     run_dir = Path(experiment.run_dir)
@@ -1154,7 +1154,7 @@ if __name__ == "__main__":
 '''
 
 # config の基準 (ML-Found のプロジェクトの形)
-RANK_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題の設定から書き出した骨組み)
+RANK_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題から書き出した骨組み)
 $requires
 experiment:
   name: $experiment
@@ -1168,7 +1168,7 @@ optimizer:
 trainer:
   epochs: 20
   grad_clip_norm: 1.0
-  # 問題の設定の「最良を選ぶ指標」(valid/recall_at_k と valid/ndcg は検証用
+  # 問題の「最良を選ぶ指標」(valid/recall_at_k と valid/ndcg は検証用
   # の反応で数えた上位 rank.k 件の値で, 大きいほど良い. valid/loss は検証用の
   # 反応の組の交差エントロピーで, 小さいほど良い)
   monitor: $monitor
@@ -1176,8 +1176,8 @@ trainer:
 
 # プロジェクト固有の設定
 data:
-  # 反応の表 (1 行が 1 つの反応. プロジェクトのディレクトリから. 問題の
-  # 設定の手元のデータの読み方で読む)
+  # 反応の表 (1 行が 1 つの反応. プロジェクトのディレクトリから.
+  # 問題の手元のデータの読み方で読む)
   dataset: $dataset
   # 反応の組のバッチの大きさ (バッチの中の他の品物が負例)
   batch_size: 256
@@ -1197,12 +1197,12 @@ rank:
   k: $k
 
 model:
-  # ML-ModelControl の形のモデルの定義 (ML-CreateArchitecture で組んで, この
+  # ML-ModelControl の形のモデルの定義 (モデルの作成・選定の段階で組んで, この
   # 場所に保存する. 入力は利用者と品物の番号のワンホットの user と item,
   # 出力に点数の表 score)
   spec: models/model.yaml
   # spec のファイルが無いうちは train.py の仮のモデルで学習することの目印
-  # (ML-Dashboard の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
+  # (学習・評価の段階の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
   # は spec のファイルがあるかで決まる)
   placeholder: true
   # 仮のモデルの埋め込みの幅
@@ -1226,7 +1226,7 @@ def rank_script(problem: dict, literal: Callable) -> str:
     script: str
         train.py の中身
     """
-    # 頭 (反応の表の読み方は問題の設定の手元のデータの読み方) と学習の流れ
+    # 頭 (反応の表の読み方は問題の手元のデータの読み方) と学習の流れ
     options = get_value(problem, "data.options")
     head = Template(RANK_HEAD).substitute(
         user_input=literal(USER_INPUT),
@@ -1331,8 +1331,8 @@ def rank_readme(
     # 筋道の要約
     rank = stages["rank"]
     lines = [f"# {problem.get('name', '')}", "",
-             "ML-Quest の問題の設定 (`problem.yaml`) から書き出した, "
-             "ML-Found のプロジェクトの骨組み (利用者と品物の反応の表で, "
+             "ML-Quest で問題 (`problem.yaml`) から書き出した, "
+             "ML-Found の学習のプロジェクトの骨組み (利用者と品物の反応の表で, "
              "2 塔のモデルを学び, 利用者ごとに上位 K の品物を並べる).", "",
              "## 課題から行動まで", ""]
     lines += [f"- {sentence}" for sentence in describe(problem)]
@@ -1351,12 +1351,12 @@ def rank_readme(
         f"`data.dataset` の場所 (`{dataset}`) に置く. 列は利用者 "
         f"`{rank['user']}`, 品物 `{rank['item']}`, 時刻 `{rank['time']}` "
         f"(数か日時) で, {reaction}. 他の列は読まない. 利用者, 品物か時刻の"
-        "欠けた行は除く. 読み方は問題の設定の手元のデータの読み方 (ML-EDA "
+        "欠けた行は除く. 読み方は問題の手元のデータの読み方 (ML-EDA "
         "の `load_data`)"
         + (f". 入れた表はこのディレクトリの `{raw}` に写した" if raw
            else ""),
-        "2. **モデルの作成** (ML-ModelControl, ML-CreateArchitecture): "
-        "ML-CreateArchitecture で組んだ定義を, config の `model.spec` の場所"
+        "2. **モデルの作成・選定** (ML-ModelControl): モデルの作成・選定の段階で組んだ定義を"
+        ", config の `model.spec` の場所"
         " (`models/model.yaml`) に保存する. 入力は利用者の番号のワンホット "
         "`user` ((件数, 利用者の数) の float32) と品物の番号のワンホット "
         "`item` ((件数, 品物の数)) の 2 つ, 出力に全ての組の点数の表 "
@@ -1367,7 +1367,7 @@ def rank_readme(
         "`train.py` の `PlaceholderModel` (印 TODO. 動くことを確かめるだけの"
         "小さなモデル) で学習する (config の `model.placeholder: true` が"
         "その目印)",
-        "3. **学習** (ML-Found, ML-Dashboard): `python train.py`. 反応を"
+        "3. **学習・評価** (ML-Found): `python train.py`. 反応を"
         "時刻の順に並べ, 古い反応を学習用, 新しい反応を検証用とテスト用 "
         "(config の `data.valid` と `data.test` の行の割合. 同じ時刻の反応は"
         "同じ分割) に分ける. 番号を持つのは学習用にいる利用者と品物だけで, "
@@ -1396,8 +1396,8 @@ def rank_readme(
         "`user`, `rank`, `item`, `score` の表が返る (前に反応した品物の表を"
         "渡すと除く). 仮のモデル (`PlaceholderModel`) は定義が無いので一式を"
         "作らない",
-        "", "`train.py` の印 (TODO) の所 (モデルなど) は書き足す. 問題の"
-        "設定を変えたら, 書き出し直すか手で直す.", "",
+        "", "`train.py` の印 (TODO) の所 (モデルなど) は書き足す. 問題を"
+        "変えたら, 書き出し直すか手で直す.", "",
     ]
     text = "\n".join(lines)
 

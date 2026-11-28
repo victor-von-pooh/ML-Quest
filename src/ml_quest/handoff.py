@@ -21,7 +21,7 @@ from ml_quest.questions import (
 from ml_quest.requirements import required_features
 
 # 機械学習を使わないと答えた問題の設定を渡せない理由の文
-NO_ML = "機械学習を使わない問題の設定は, 後ろの段階に渡すものがありません"
+NO_ML = "機械学習を使わない問題は, 後ろの段階に渡すものがありません"
 
 # 方策の守りの項目 (ML-Found の make_guards と safety_key に渡す答え)
 POLICY_KEYS = ["action_limits", "stop", "fallback", "fallback_action",
@@ -330,7 +330,7 @@ def errors_text(errors: list[dict]) -> str:
         誤りの文 (初めの 3 つ)
     """
     # 初めの 3 つの文
-    message = ("問題の設定に直すところがあります: "
+    message = ("問題に直すところがあります: "
                + " / ".join(item["message"] for item in errors[:3]))
 
     return message

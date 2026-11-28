@@ -109,7 +109,7 @@ POLICY_ENV = Template('''"""
 
 問題の設定で Gymnasium の環境の登録名を答えていないので, train.py はこの
 ProjectEnv で方策を学ぶ. 今は動くことを確かめるための小さな環境 (台の上の
-点を 0 に寄せる) なので, 印 (TODO) の所を課題の環境 (自作のシミュレータ,
+点を 0 に寄せる) なので, 印 (TODO) の所を実際の環境 (自作のシミュレータ,
 実機とのつなぎ) に書き換える. 実機につなぐ場合は, 外れたときの損に気を
 付ける (学習は環境で行動を試す)
 """
@@ -241,7 +241,7 @@ METHOD = $method
 # 方策を使ってよいかと守りの範囲を決める人 (問題の設定の答え)
 APPROVER = $approver
 
-# 問題の設定の守りの文 (行動の上限と止める条件. config の guards に数で
+# 問題の守りの文 (行動の上限と止める条件. config の guards に数で
 # 書く元)
 ACTION_LIMITS = $action_limits
 STOP = $stop
@@ -264,7 +264,7 @@ POLICY_SPEC = "model.yaml"
 # 守りの数が無いことの知らせ
 NO_LIMITS = ("config の guards に行動の範囲も止める条件も数で書いていない"
              "ので, 外れたときの動きは観測やモデルの出力が読めないときだけ"
-             "です. 問題の設定の守り (ACTION_LIMITS と STOP) を観測と行動"
+             "です. 問題の守り (ACTION_LIMITS と STOP) を観測と行動"
              "の空間に合わせて数にしてください")
 '''
 
@@ -524,7 +524,7 @@ def policy_definition(cfg: Any, args: dict) -> Optional[Path]:
     errors = definition_errors(spec, args)
     if errors:
         print(f"{spec} の定義に誤りがあります. README の「次にすること」"
-              "の 3 のとおり, ML-CreateArchitecture で開いて直してください "
+              "の 3 のとおり, モデルの作成・選定の段階で開いて直してください "
               "(ファイルを消すと次の学習で既定の定義を書き直します)")
         for message in errors:
             print(f"- {message}")
@@ -565,7 +565,7 @@ def model_file(
 
     # 写しが無ければ理由を知らせて, プロジェクトの定義
     experiment.logger.warning(
-        "モデルの定義を実験に写せなかったので, プロジェクトの定義から"
+        "モデルの定義を実験に写せなかったので, 学習のプロジェクトの定義から"
         "組み立てます (理由は source.yaml の model_spec の status)"
     )
     path = spec
@@ -936,7 +936,7 @@ def main() -> None:
     trainer = Trainer(model, experiment, make_step(algorithm, cfg))
     trainer.fit(train_loader, valid_loader)
 
-    # 実験だけで見直せるように, 問題の設定の写し (元の問題の設定の場所
+    # 実験だけで見直せるように, 問題の設定の写し (元の問題の場所
     # origin も残る)
     run_dir = Path(experiment.run_dir)
     shutil.copy(PROJECT_DIR / "problem.yaml", run_dir / "problem.yaml")
@@ -951,7 +951,7 @@ def main() -> None:
 
     # 守りと一緒に方策の一式 (policy/) に書き出し, 読み直して守り付きで
     # 動かした結果を守る指標の表に
-    # metadata には, 守りを数にしたか (guards_set) と問題の設定の守りの
+    # metadata には, 守りを数にしたか (guards_set) と問題の守りの
     # 文も残す (数が無いまま書き出した一式と分かるように)
     metadata = {
         "env_id": cfg.env.id or None, "algorithm": algorithm,
@@ -983,7 +983,7 @@ if __name__ == "__main__":
 '''
 
 # config の基準 (ML-Found のプロジェクトの形)
-POLICY_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題の設定から書き出した骨組み)
+POLICY_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題から書き出した骨組み)
 $requires
 experiment:
   name: $experiment
@@ -997,7 +997,7 @@ optimizer:
 
 trainer:
   epochs: 20
-  # 問題の設定の「最良を選ぶ指標」. 強化学習の valid/reward は評価の
+  # 問題の「最良を選ぶ指標」. 強化学習の valid/reward は評価の
   # エピソードの報酬の和の平均 (大きいほど良い. max), valid/loss はその
   # 符号を反転した値 (小さいほど報酬が大きい. min)
   monitor: $monitor
@@ -1008,7 +1008,7 @@ trainer:
 
 # プロジェクト固有の設定
 env:
-  # Gymnasium の環境の登録名 (問題の設定の答え). null なら env.py の
+  # Gymnasium の環境の登録名 (問題の答え). null なら env.py の
   # ProjectEnv
   id: $env_id
   # 検証 (評価のエピソード) の乱数の種と, 1 エピソードの歩数の上限 (null
@@ -1043,14 +1043,14 @@ loss:
 
 model:
   # 方策の頭 (観測から行動のスコアか平均) の ML-ModelControl の形のモデルの
-  # 定義 (ML-CreateArchitecture で組む). 無ければ train.py が観測と行動の
+  # 定義 (モデルの作成・選定の段階で組む). 無ければ train.py が観測と行動の
   # 空間から既定の定義を書く. 方策の一式に写す
   spec: models/policy.yaml
   # 価値の関数と既定の定義の隠れ層の次元数 (定義を書いた後に変えても方策
   # の頭の大きさは変わらない. 価値の関数だけ)
   hidden_dim: 64
 
-# 安全の違反を知らせる info の名前 (問題の設定の答え. 無ければ cost)
+# 安全の違反を知らせる info の名前 (問題の答え. 無ければ cost)
 safety_key: $safety_key
 
 # 書き出す方策の守り (policy/). 範囲は$approver決めて承認する. 問題の
@@ -1064,7 +1064,7 @@ $limits_comment
 $stop_comment
   observation_low: null
   observation_high: null
-  # 外れたときの動き (stop, handover, action. 問題の設定の答え) と, action
+  # 外れたときの動き (stop, handover, action. 問題の答え) と, action
   # の場合の行動 (番号で選ぶ行動なら要る)$fallback_comment
   fallback: $fallback
   fallback_action: $fallback_action
@@ -1147,7 +1147,7 @@ def yaml_comment(title: str, text: Optional[str]) -> str:
     """
     # 改行は空白にし, 70 文字ほどで折り返す
     flat = " ".join(str(text).split()) if text else "答えなし"
-    body = f"{title} (問題の設定): {flat}"
+    body = f"{title} (問題): {flat}"
     width = 70
     lines = "\n".join(f"  # {body[start:start + width]}"
                       for start in range(0, len(body), width))
@@ -1311,20 +1311,20 @@ def policy_readme(problem: dict, stages: dict) -> str:
     monitor = stages["training"]["monitor"]
     names = {item["value"]: item["label"] for item in FALLBACKS}
     lines = [f"# {problem.get('name', '')}", "",
-             "ML-Quest の問題の設定 (`problem.yaml`) から書き出した, "
-             "ML-Found のプロジェクトの骨組み (Gymnasium の形の環境で方策を"
+             "ML-Quest で問題 (`problem.yaml`) から書き出した, "
+             "ML-Found の学習のプロジェクトの骨組み (Gymnasium の形の環境で方策を"
              "学び, 守りと一緒に書き出す).", "", "## 課題から行動まで", ""]
     lines += [f"- {one_line(sentence)}" for sentence in describe(problem)]
 
     # 1 から 4. 環境, 守り, 学習, 推論
     environment = (
-        f"1. **環境**: Gymnasium の `{policy['env_id']}` (問題の設定の答え."
-        " config の `env.id`). 学習用, 検証用, 守り付きの評価用に別々に作る"
+        f"1. **環境**: Gymnasium の `{policy['env_id']}` (問題の答え. co"
+        "nfig の `env.id`). 学習用, 検証用, 守り付きの評価用に別々に作る"
         if policy["env_id"] else
-        "1. **環境**: 問題の設定で Gymnasium の環境の登録名を答えていないの"
-        "で, 自作の環境の雛形 `env.py` (`ProjectEnv`. 印 TODO) を書き出した. "
+        "1. **環境**: 問題に Gymnasium の環境の登録名が無いので, "
+        "自作の環境の雛形 `env.py` (`ProjectEnv`. 印 TODO) を書き出した. "
         "今は動くことを確かめるだけの小さな環境なので, 観測と行動の空間, "
-        "初めの状態, 動き, 報酬を課題の環境 (自作のシミュレータ, 実機との"
+        "初めの状態, 動き, 報酬を実際の環境 (自作のシミュレータ, 実機との"
         "つなぎ) に書き換える. 実機につなぐなら, 学習は行動を試すので外れた"
         "ときの損に気を付ける. Gymnasium に登録した環境なら, config の "
         "`env.id` にその名前を書けば `env.py` は使わない"
@@ -1337,7 +1337,7 @@ def policy_readme(problem: dict, stages: dict) -> str:
         "で足りなければ入れ方を示して止まる). データの分析の段階は無い (行動の結果は環境とのやり取りで集める).",
         "",
         environment,
-        "2. **守り**: config の `guards` に, 問題の設定の守り (文) を観測と"
+        "2. **守り**: config の `guards` に, 問題の守り (文) を観測と"
         "行動の空間に合わせた数の並びで書く (行動の上限: "
         f"{one_line(policy['action_limits']) or '答えなし'}. 止める条件: "
         f"{one_line(policy['stop']) or '答えなし'}). 外れたときの動きは "
@@ -1345,12 +1345,12 @@ def policy_readme(problem: dict, stages: dict) -> str:
         f"({names.get(str(policy['fallback']), '止める')}). 範囲と方策を"
         f"使ってよいかは {approver} が決める. 安全の違反は環境が info の "
         f"`{policy['safety_key']}` に 0 より大きい値を入れた歩で数える",
-        "3. **学習** (ML-Found, ML-Dashboard): `python train.py`. 方策の"
+        "3. **学習・評価** (ML-Found): `python train.py`. 方策の"
         "頭 (観測から行動のスコアか平均) は ML-ModelControl の定義 "
         "`models/policy.yaml` (config の `model.spec`) から組み立てる. 1 回"
         "目の `python train.py` で, 定義が無ければ観測と行動の空間から既定の"
         "定義 (全結合と Tanh を 2 段と, 行動の数の全結合) を書く. 直すなら "
-        "ML-CreateArchitecture で開いて同じ場所に保存し, もう一度学習する "
+        "モデルの作成・選定の段階で開いて同じ場所に保存し, もう一度学習する "
         "(既にある定義は書き直さない. 消すと次の学習で既定の定義を書き直す)"
         ". 定義は入力 (観測) と出力 (行動) を 1 つずつにし, (1, 観測の要素の"
         "数) の観測から (1, 行動の数) の出力を出す (違えば学習の前に止まる)"
@@ -1358,23 +1358,23 @@ def policy_readme(problem: dict, stages: dict) -> str:
         "の `PolicyNet` (印 TODO). 学習の方法は config "
         "の `algorithm` (`auto` は番号で選ぶ行動なら REINFORCE の "
         "`ReinforceStep`, 連続の行動なら `ActorCriticStep`). 検証用の "
-        f"`{monitor}` ({MONITOR_NAMES.get(monitor, '問題の設定で書いた指標')}"
+        f"`{monitor}` ({MONITOR_NAMES.get(monitor, '問題で書いた指標')}"
         ") が最も良いモデルを選ぶ. 結果は "
         "`outputs/<実験の名前>/<日付>/<時刻>/` に残る (`task.yaml`, 学習の"
         "記録)",
-        "4. **方策の一式と守り付きの評価** (ML-Inference, ML-Provide): 学習"
+        "4. **方策の一式と守り付きの評価** (ML-Inference): 学習"
         "の後に, 守りと一緒に実験の中の `policy/` に方策の一式を書き出し, "
         "読み直して守りを当てたまま環境で動かした結果を守る指標の表 "
         "`evaluations/guarded_episodes.json` に書く. 一式には方策の頭の重み"
         "と定義の写し (`policy/model.yaml`. `policy.json` の "
         "`metadata.model.spec`) が入り, ML-Inference の `load_policy(<policy/"
-        ">)` (ML-Provide の画面) がモデルを渡さずに定義から組み立てて読み, "
+        ">)` (推論の段階の画面) がモデルを渡さずに定義から組み立てて読み, "
         "観測から守りを当てた行動を返す. 守りを数にしていない (`metadata` の "
         "`guards_set` が false) 一式は, 範囲の守りが入っていない. "
         "実機での実行は道具の外で, 環境での結果は実機での結果と別に確かめる",
         "", "`train.py`, `model.py`"
         + (", `env.py`" if not policy["env_id"] else "")
-        + " の印 (TODO) の所は書き足す. 問題の設定を変えたら, 書き出し直す"
+        + " の印 (TODO) の所は書き足す. 問題を変えたら, 書き出し直す"
         "か手で直す.", "",
     ]
     text = "\n".join(lines)

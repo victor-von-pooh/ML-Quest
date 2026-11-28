@@ -235,7 +235,7 @@ def test_ready_project(tmp_path: Path) -> None:
     assert max(len(line) for line in script.splitlines()) <= 79
     readme = (project / "README.md").read_text("utf-8")
     assert "python bundle.py" in readme
-    assert "学習の段階は通らない" in readme
+    assert "学習・評価の段階は通らない" in readme
 
     # 記録はデータセットとモデルの定義の無いプロジェクト
     recorded = record_project(problem, project)

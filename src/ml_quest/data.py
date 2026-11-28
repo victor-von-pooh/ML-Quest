@@ -79,7 +79,7 @@ STAT_FILES = 10000
 
 def import_eda() -> Any:
     """
-    任意の依存の ML-EDA を読み込む関数
+    追加の依存の ML-EDA を読み込む関数
 
     Parameters
     ----------
@@ -283,7 +283,7 @@ def items_message(problem: dict) -> Optional[str]:
                    "書き出し) を入れてください")
     elif info.get("role") != role or target.get("kind") != kind:
         message = (f"入れたデータセットは受け持ち {info.get('role')}, 正解の"
-                   f"種類 {target.get('kind')} ですが, 問題の設定は受け持ち "
+                   f"種類 {target.get('kind')} ですが, 問題は受け持ち "
                    f"{role}, 正解の種類 {kind} です (データを入れ直すか, "
                    "答えを直してください)")
 
@@ -581,7 +581,7 @@ def given_options(options: Optional[dict]) -> dict:
         yaml.safe_dump(options)
     except yaml.YAMLError as error:
         raise ValueError(
-            f"読み方の設定に問題の設定のファイルに書けない値があります: "
+            f"読み方の設定に問題のファイルに書けない値があります: "
             f"{error}"
         ) from error
     given = copy.deepcopy(options)

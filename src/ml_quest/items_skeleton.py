@@ -1222,7 +1222,7 @@ def spec_file(
 
     # 写しが無ければ理由を知らせて, プロジェクトの定義
     experiment.logger.warning(
-        "モデルの定義を実験に写せなかったので, プロジェクトの定義から"
+        "モデルの定義を実験に写せなかったので, 学習のプロジェクトの定義から"
         "組み立てます (理由は source.yaml の model_spec の status)"
     )
     path = spec
@@ -1388,14 +1388,14 @@ def main() -> None:
     if spec is None:
         experiment.logger.info(
             f"モデルの定義 ({cfg.model.spec or '場所なし'}) が無いので, "
-            "仮のモデル (PlaceholderModel) で学習します. ML-CreateArchitecture"
-            " で組んだ定義をその場所に置くと, 定義のモデルで学習します"
+            "仮のモデル (PlaceholderModel) で学習します. モデルの作成・選定の段階で組んだ定義を"
+            "その場所に置くと, 定義のモデルで学習します"
         )
     model = make_model(dataset, cfg, spec, base_dir)
     trainer = make_trainer(model, experiment, dataset)
     trainer.fit(loaders["train"], loaders["valid"])
 
-    # 実験だけで見直せるように, 問題の設定の写し (元の問題の設定の場所
+    # 実験だけで見直せるように, 問題の設定の写し (元の問題の場所
     # origin も残る. モデルの定義は ML-Found が start_experiment で写す)
     run_dir = Path(experiment.run_dir)
     shutil.copy(PROJECT_DIR / "problem.yaml", run_dir / "problem.yaml")
@@ -1458,7 +1458,7 @@ EXPORTERS = {
 }
 
 # config の基準 (ML-Found のプロジェクトの形)
-ITEMS_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題の設定から書き出した骨組み)
+ITEMS_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題から書き出した骨組み)
 $requires
 experiment:
   name: $experiment
@@ -1471,7 +1471,7 @@ optimizer:
 
 trainer:
   epochs: 30$every
-  # 問題の設定の「最良を選ぶ指標」
+  # 問題の「最良を選ぶ指標」
   monitor: $monitor
   mode: $mode
   early_stopping:
@@ -1485,11 +1485,11 @@ data:
   batch_size: 8$cloud_data
 
 model:
-  # ML-ModelControl の形のモデルの定義 (ML-CreateArchitecture で組んで, この
+  # ML-ModelControl の形のモデルの定義 (モデルの作成・選定の段階で組んで, この
   # 場所に保存する)
   spec: models/model.yaml
   # spec のファイルが無いうちは train.py の仮のモデルで学習することの目印
-  # (ML-Dashboard の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
+  # (学習・評価の段階の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
   # は spec のファイルがあるかで決まる)
   placeholder: true$cloud_model
 ''')
@@ -1638,7 +1638,7 @@ def origin_lines(problem: dict, info: Optional[dict]) -> list[str]:
             "超えられない (評価と結論でもそう書く)."
         )
     else:
-        lines.append(f"正解の出どころ (問題の設定): `{source}`.")
+        lines.append(f"正解の出どころ (問題): `{source}`.")
     target = (info or {}).get("target")
     origin = target.get("origin") if isinstance(target, dict) else None
     if isinstance(origin, dict):
@@ -1651,7 +1651,7 @@ def origin_lines(problem: dict, info: Optional[dict]) -> list[str]:
         origin.get("type") != "process"
     ):
         lines.append(
-            "問題の設定では今の処理の出力だが, データセットの出どころは "
+            "問題では今の処理の出力だが, データセットの出どころは "
             "process でない. 書き出し直すときに `origin` に処理の名前と設定を"
             "渡すと, `task.yaml` と評価に正しく残る."
         )
@@ -1692,8 +1692,8 @@ def items_readme(
     """
     # 筋道の要約と, 正解の出どころ
     lines = [f"# {problem.get('name', '')}", "",
-             "ML-Quest の問題の設定 (`problem.yaml`) から書き出した, "
-             "ML-Found のプロジェクトの骨組み (ML-EDA のファイルの組のデータセット"
+             "ML-Quest で問題 (`problem.yaml`) から書き出した, "
+             "ML-Found の学習のプロジェクトの骨組み (ML-EDA のファイルの組のデータセット"
              "で学習する).", "", "## 課題から行動まで", ""]
     lines += [f"- {sentence}" for sentence in describe(problem)]
     lines += origin_lines(problem, info)
@@ -1728,7 +1728,7 @@ def items_readme(
         lines += export_lines(problem, dataset)
     if process and info is None:
         lines.append("    - 正解の出どころ `origin` に今の処理の名前と設定を"
-                     "渡す (ML-EDA の `settings` は辞書. 問題の設定の文は "
+                     "渡す (ML-EDA の `settings` は辞書. 問題の文は "
                      "`{\"note\": ...}` で). `task.yaml` に写り, 指標が何と"
                      "の一致かが実験に残る")
 
@@ -1736,12 +1736,12 @@ def items_readme(
     every = ("検証 (Chamfer 距離) は `trainer.valid_every_n_epochs` ごとと"
              "最後のエポックだけ. " if kind == "point_cloud" else "")
     lines += [
-        "2. **モデルの作成** (ML-ModelControl, ML-CreateArchitecture): "
-        "ML-CreateArchitecture で組んだ定義を, config の `model.spec` の場所"
+        "2. **モデルの作成・選定** (ML-ModelControl): モデルの作成・選定の段階で組んだ定義を"
+        ", config の `model.spec` の場所"
         " (`models/model.yaml`) に保存する. 定義が無いうちは, `train.py` の "
         "`PlaceholderModel` (印 TODO. 動くことを確かめるだけの小さなモデル)"
         " で学習する (config の `model.placeholder: true` がその目印で, "
-        "ML-Dashboard の学習の準備は定義が無いことを知らせるだけにする)"
+        "学習・評価の段階の学習の準備は定義が無いことを知らせるだけにする)"
         + (". 入力は (バッチ, チャンネル, 高さ, 幅) の 0 から 1 の画像, 出力は"
            " (バッチ, クラス数, 高さ, 幅) のスコア. クラスは `dataset.yaml` の"
            " `classes` (無ければ `values`). 名前の無い値 0 は背景 "
@@ -1749,7 +1749,7 @@ def items_readme(
            "から除いて `train.log` に警告を出す" if kind == "mask" else
            ". 入力は (バッチ, 点の数, 3) の点, 出力は (バッチ, 点の数, 3) の"
            "点"),
-        "3. **学習** (ML-Found, ML-Dashboard): `python train.py`. 結果は "
+        "3. **学習・評価** (ML-Found): `python train.py`. 結果は "
         "`outputs/<実験の名前>/<日付>/<時刻>/` に残る (`task.yaml`, テスト用の"
         "分割があれば `evaluations/`, 検証用の 3 件の入力と予測と正解の見本 "
         "`samples/`" + (". 領域は値の名前の凡例付き" if kind == "mask" else
@@ -1762,20 +1762,20 @@ def items_readme(
             problem, "iou (IoU)" if kind == "mask"
             else "chamfer (Chamfer 距離)"
         )),
-        "4. **推論** (ML-Inference, ML-Provide): `model.spec` の場所に定義を"
+        "4. **推論** (ML-Inference): `model.spec` の場所に定義を"
         "置いて学習すると, `train.py` が学習の後に実験の中の "
         "`inference/` に推論の一式 (出力の形 `" + kind + "`) を作る. 1 件"
         "の扱いは学習と同じもの "
         + ("(選ぶ点の数と検証用の分割と同じ乱数の種)" if kind ==
            "point_cloud" else "(クラスの番号ごとの領域の値)")
         + "を一式に書くので, 一式の確かめ (`train.log` の「推論の一式」) が"
-        "学習の記録と合う. ML-Provide でその `inference/` を登録し, 新しい"
+        "学習の記録と合う. 推論の段階でその `inference/` を登録し, 新しい"
         + ("撮影を推論すると, 元の撮影の座標の点群が返る (学習と同じ正規化"
            "を推論でかけて戻す)" if kind == "point_cloud" else
            "画像を推論すると, データセットと同じ領域の値の画像が返る")
         + ". 仮のモデル (`PlaceholderModel`) は定義が無いので一式を作らない",
-        "", "`train.py` の印 (TODO) の所 (モデルなど) は書き足す. 問題の"
-        "設定を変えたら, 書き出し直すか手で直す.", "",
+        "", "`train.py` の印 (TODO) の所 (モデルなど) は書き足す. 問題を"
+        "変えたら, 書き出し直すか手で直す.", "",
     ]
     text = "\n".join(lines)
 
@@ -1812,14 +1812,14 @@ def export_lines(problem: dict, dataset: str) -> list[str]:
     options = saved.get("options")
     steps = options.get("item_steps") if isinstance(options, dict) else None
     lines = [
-        "    - データの分析 (ML-Fathom) で書き戻した設定: "
+        "    - データの分析の段階で書き戻した設定: "
         f"`{saved['function']}({place_text(saved.get('inputs'), '入力')}, "
         f"{place_text(saved.get('targets'), '正解')}, \"{dataset}\", "
         f"split={json.dumps(split, ensure_ascii=False)}"
         + (f", item_steps={json.dumps(steps, ensure_ascii=False)}"
            if steps else "") + ")`"
         + (f" (グループは {len(groups)} 件の対応)" if groups else ""),
-        "    - ML-Fathom の「問題の設定から始める」で書き出していれば, "
+        "    - データの分析の段階の「この問題から始める」で書き出していれば, "
         f"`{dataset}` に入っている",
     ]
 

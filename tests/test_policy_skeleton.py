@@ -231,7 +231,7 @@ def test_policy_env_template(tmp_path: Path) -> None:
     text = (project / "configs" / "default" / "train.yaml").read_text(
         encoding="utf-8"
     )
-    assert "決めた行動 (問題の設定): 止める" in text
+    assert "決めた行動 (問題): 止める" in text
     readme = (project / "README.md").read_text(encoding="utf-8")
     assert "env.py" in readme and "ProjectEnv" in readme
 
