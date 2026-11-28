@@ -1035,7 +1035,7 @@ def load_problem(path: Union[str, Path]) -> dict:
     return problem
 
 
-def upgrade_problem(problem: dict, name: str = "問題") -> dict:
+def upgrade_problem(problem: dict, name: str = "") -> dict:
     """
     版 1 の問題の設定を版 2 に移す関数
 
@@ -1046,8 +1046,8 @@ def upgrade_problem(problem: dict, name: str = "問題") -> dict:
     ----------
     problem: dict
         問題の設定
-    name: str = "問題"
-        誤りの文に使う名前
+    name: str = ""
+        誤りの文に使うファイルの名前 (空なら名前を出さない)
 
     Returns
     ----------
@@ -1141,8 +1141,9 @@ def version_message(problem: Any, name: str) -> Optional[str]:
     if not isinstance(version, int) or isinstance(version, bool) or (
         version < 1
     ):
-        message = (f"問題のファイルではありません ({name}. format_version が"
-                   " 1 以上の整数でありません)")
+        where = f"{name} は" if name else ""
+        message = (f"{where}問題のファイルではありません (format_version "
+                   "が 1 以上の整数でありません)")
     elif version > FORMAT_VERSION:
         message = newer_message(version, name)
 
@@ -1167,7 +1168,8 @@ def newer_message(version: int, name: str) -> str:
     """
     # 読める版と, 直し方
     message = (
-        f"新しい版 (format_version: {version}) の問題です ({name}). "
+        f"新しい版 (format_version: {version}) の問題のファイルです"
+        f"{f' ({name})' if name else ''}. "
         f"この ML-Quest が読めるのは版 {FORMAT_VERSION} までです. ML-Quest "
         "を新しくしてください"
     )

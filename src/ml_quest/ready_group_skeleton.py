@@ -669,7 +669,7 @@ if __name__ == "__main__":
 
 # 群分けと一式づくりの設定
 READY_GROUP_CONFIG = Template('''# 既製のモデルの埋め込みで写真を群に分け, 推論の一式を作る設定 (ML-Quest が
-# 問題の設定から書き出した骨組み). bundle.py が読む. 学習はしない
+# 問題から書き出した骨組み). bundle.py が読む. 学習はしない
 
 # 埋め込みに使う既製のモデル (問題の既製のモデルの答え)
 ready:
@@ -903,7 +903,7 @@ def ready_group_readme(
         "", "## 次にすること", "",
         "データの分析, モデルの作成・選定, 学習・評価の段階は通らない. 動かす環境には "
         "ML-Inference (ML-EDA と PyTorch も入る) と, torchvision の重みを"
-        "読む ML-ModelControl の任意の依存 (`ml-modelcontrol[torchvision]`)"
+        "読む ML-ModelControl の追加の依存 (`ml-modelcontrol[torchvision]`)"
         " を入れる.", "",
         "1. **写真**: 群に分ける写真のディレクトリを config の "
         f"`data.photos` の場所 (`{photos}`) に置く (ML-EDA の画像の読み込み"
@@ -931,7 +931,7 @@ def ready_group_readme(
         + READY_BUNDLE + "`) に ML-Inference の既製の埋め込みの群分けの一式 "
         "(版 10. 群の中心から遠い行の閾値を持てば版 17) を作り, 写真を割り"
         "当て直して成果物の割り当てと比べる",
-        "3. **推論** (ML-Inference): 推論の段階で作った一式を"
+        "3. **推論** (ML-Inference): 作った一式を推論の段階で"
         "登録し, 写真のファイルかディレクトリを渡すと, 写真ごとに最も近い群"
         "の番号 `group` とその中心までの距離 `distance` が返り, 群の要約と"
         "群の中心に近い写真も返る. 一式を作るときに重みのライセンスの注意が"

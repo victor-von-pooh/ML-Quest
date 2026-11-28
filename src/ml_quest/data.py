@@ -79,7 +79,7 @@ STAT_FILES = 10000
 
 def import_eda() -> Any:
     """
-    任意の依存の ML-EDA を読み込む関数
+    追加の依存の ML-EDA を読み込む関数
 
     Parameters
     ----------

@@ -19,7 +19,7 @@ PRICE_DATASET = "outputs/dataset"
 # spec のファイルが無いときの, 仮のモデルで学習することの目印 (config の
 # model.placeholder)
 PRICE_PLACEHOLDER = """  # spec のファイルが無いうちは train.py の仮のモデルで学習することの目印
-  # (ML-Dashboard の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
+  # (学習・評価の段階の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
   # は spec のファイルがあるかで決まる)
   placeholder: true
 """
@@ -1164,7 +1164,7 @@ if __name__ == "__main__":
 '''
 
 # config の基準 (ML-Found のプロジェクトの形)
-PRICE_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題の設定から書き出した骨組み)
+PRICE_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題から書き出した骨組み)
 $requires
 experiment:
   name: $experiment
@@ -1178,7 +1178,7 @@ optimizer:
 trainer:
   epochs: 30
   grad_clip_norm: 1.0
-  # 問題の設定の「最良を選ぶ指標」(valid/mae は検証用の行の, 記録の値段での
+  # 問題の「最良を選ぶ指標」(valid/mae は検証用の行の, 記録の値段での
   # 売れた数の平均絶対誤差 (売れた数の単位). valid/loss は検証用の行の,
   # 売れた数と予測を学習用の行の売れた数の平均で割った値の二乗誤差. どちらも
   # 小さいほど良い)
@@ -1202,7 +1202,7 @@ price:
   max_change: $max_change
 
 model:
-  # ML-ModelControl の形のモデルの定義 (ML-CreateArchitecture で組んで, この
+  # ML-ModelControl の形のモデルの定義 (モデルの作成・選定の段階で組んで, この
   # 場所に保存する. 入力は行 x (最後の列が値段), 出力に売れた数の予測
   # units)
   spec: models/model.yaml

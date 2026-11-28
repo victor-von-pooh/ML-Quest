@@ -250,7 +250,7 @@ if __name__ == "__main__":
 '''
 
 # 一式づくりの設定
-READY_CONFIG_TEXT = Template('''# 既製のモデルの推論の一式づくりの設定 (ML-Quest が問題の設定から書き出した
+READY_CONFIG_TEXT = Template('''# 既製のモデルの推論の一式づくりの設定 (ML-Quest が問題から書き出した
 # 骨組み). bundle.py が読み, ML-Inference の make_ready_bundle に渡す.
 # 学習はしない
 
@@ -478,7 +478,7 @@ def ready_readme(problem: dict, stages: dict, raw: Optional[str]) -> str:
         "", "## 次にすること", "",
         "データの分析, モデルの作成・選定, 学習・評価の段階は通らない. 一式を作る環境"
         "には ML-Inference と, torchvision の重みを読む ML-ModelControl の"
-        "任意の依存 (`ml-modelcontrol[torchvision]`) を入れる.", "",
+        "追加の依存 (`ml-modelcontrol[torchvision]`) を入れる.", "",
         "1. **一式づくり** (ML-Inference): `python bundle.py`. config "
         f"(`{READY_CONFIG}`) の `ready` の値 (出どころ `{ready['library']}`, "
         f"モデル `{ready['model']}`, 重み `{ready['weights']}`) を "
@@ -488,7 +488,7 @@ def ready_readme(problem: dict, stages: dict, raw: Optional[str]) -> str:
         "`torch.hub.get_dir()` の `checkpoints` に置く. ネットワークを使え"
         f"ない場所では, そこに重みのファイルを置く). {pinned}. 種類の名前"
         "の表と前処理は重みの説明から読む",
-        "2. **推論** (ML-Inference): 推論の段階で作った一式を"
+        "2. **推論** (ML-Inference): 作った一式を推論の段階で"
         "登録し, 画像のファイルかディレクトリを渡すと, 種類の名前と確信の"
         "度合いが返る"
         + (f" (入れたデータはこのディレクトリの `{raw}` に写した)" if raw

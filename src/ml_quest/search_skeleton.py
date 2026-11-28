@@ -735,7 +735,7 @@ if __name__ == "__main__":
 
 # 索引と一式づくりの設定
 SEARCH_CONFIG = Template('''# 既製のモデルの埋め込みで写真の索引を作り, 似た写真を探す推論の一式を作る
-# 設定 (ML-Quest が問題の設定から書き出した骨組み). bundle.py が読む. 学習は
+# 設定 (ML-Quest が問題から書き出した骨組み). bundle.py が読む. 学習は
 # しない
 
 # 埋め込みに使う既製のモデル (問題の既製のモデルの答え)
@@ -991,7 +991,7 @@ def search_readme(
         "", "## 次にすること", "",
         "データの分析, モデルの作成・選定, 学習・評価の段階は通らない. 動かす環境には "
         "ML-Inference (ML-EDA と PyTorch も入る) と, torchvision の重みを"
-        "読む ML-ModelControl の任意の依存 (`ml-modelcontrol[torchvision]`)"
+        "読む ML-ModelControl の追加の依存 (`ml-modelcontrol[torchvision]`)"
         " を入れる.", "",
         "1. **写真**: 索引にする写真のディレクトリを config の `data.photos`"
         f" の場所 (`{photos}`) に置く (ML-EDA の画像の読み込みで読む. 読め"
@@ -1016,7 +1016,7 @@ def search_readme(
         "`search_embeddings.npy`, 種類があれば評価の "
         "`evaluations/search_valid.json`) に残る. 続けて `bundle.path` (`"
         + READY_BUNDLE + "`) に ML-Inference の検索の一式 (版 15) を作る",
-        "3. **推論** (ML-Inference): 推論の段階で作った一式を"
+        "3. **推論** (ML-Inference): 作った一式を推論の段階で"
         "登録し, 問いの写真のファイルかディレクトリを渡すと, 問いごとに索引"
         f"の写真から見た目の近い順に {k} 件 (場所, 種類, 余弦の近さ) と, 1 "
         f"件の問いの待ち時間が返る. {guard}. 一式を作るときに重みのライセンス"

@@ -86,7 +86,7 @@ from ml_quest.uplift_skeleton import (
 HEAD = '''"""
 問題の設定 (problem.yaml) から ML-Quest が書き出した学習のスクリプト
 
-骨組みなので, 課題に合わせて書き足す
+骨組みなので, 問題に合わせて書き足す
 """
 from pathlib import Path
 import shutil
@@ -475,7 +475,7 @@ CONTENT_DATA = {
               "まま ML-EDA は書き出さない). 読めない件 (`error` の列に理由"
               "のある件) は表の手順 `filter_rows` で除く. WAVE の他の形式 "
               "(FLAC, MP3, Ogg, AIFF) を読むには soundfile が要る (ML-EDA "
-              "の任意の依存 `ml-eda[audio]`. `ml-quest[data]` でも入る)"),
+              "の追加の依存 `ml-eda[audio]`. `ml-quest[data]` でも入る)"),
 }
 
 # README のモデルの作成の, 入力の形の案内 (データの種類ごと. None は表と
@@ -515,7 +515,7 @@ REGRESSION_METRICS = {
 }
 
 # config の基準 (ML-Found のプロジェクトの形)
-CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題の設定から書き出した骨組み)
+CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題から書き出した骨組み)
 $requires
 experiment:
   name: $experiment
@@ -528,7 +528,7 @@ optimizer:
 
 trainer:
   epochs: 50
-  # 問題の設定の「学習で見る指標」$monitor_note
+  # 問題の「学習で見る指標」$monitor_note
   monitor: $monitor
   mode: $mode$tiebreak
   early_stopping:
@@ -537,12 +537,12 @@ trainer:
 
 # プロジェクト固有の設定
 data:
-  # ML-EDA (ML-Fathom) で書き出すデータセット (プロジェクトのディレクトリから)
+  # データの分析の段階 (ML-EDA) で書き出すデータセット (プロジェクトのディレクトリから)
   dataset: outputs/dataset
   batch_size: 64
 
 model:
-  # ML-ModelControl の形のモデルの定義 (ML-CreateArchitecture で組む)
+  # ML-ModelControl の形のモデルの定義 (モデルの作成・選定の段階で組む)
   spec: models/model.yaml
 ''')
 

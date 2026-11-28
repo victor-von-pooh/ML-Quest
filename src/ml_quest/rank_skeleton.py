@@ -1154,7 +1154,7 @@ if __name__ == "__main__":
 '''
 
 # config の基準 (ML-Found のプロジェクトの形)
-RANK_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題の設定から書き出した骨組み)
+RANK_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題から書き出した骨組み)
 $requires
 experiment:
   name: $experiment
@@ -1168,7 +1168,7 @@ optimizer:
 trainer:
   epochs: 20
   grad_clip_norm: 1.0
-  # 問題の設定の「最良を選ぶ指標」(valid/recall_at_k と valid/ndcg は検証用
+  # 問題の「最良を選ぶ指標」(valid/recall_at_k と valid/ndcg は検証用
   # の反応で数えた上位 rank.k 件の値で, 大きいほど良い. valid/loss は検証用の
   # 反応の組の交差エントロピーで, 小さいほど良い)
   monitor: $monitor
@@ -1176,8 +1176,8 @@ trainer:
 
 # プロジェクト固有の設定
 data:
-  # 反応の表 (1 行が 1 つの反応. プロジェクトのディレクトリから. 問題の
-  # 設定の手元のデータの読み方で読む)
+  # 反応の表 (1 行が 1 つの反応. プロジェクトのディレクトリから.
+  # 問題の手元のデータの読み方で読む)
   dataset: $dataset
   # 反応の組のバッチの大きさ (バッチの中の他の品物が負例)
   batch_size: 256
@@ -1197,12 +1197,12 @@ rank:
   k: $k
 
 model:
-  # ML-ModelControl の形のモデルの定義 (ML-CreateArchitecture で組んで, この
+  # ML-ModelControl の形のモデルの定義 (モデルの作成・選定の段階で組んで, この
   # 場所に保存する. 入力は利用者と品物の番号のワンホットの user と item,
   # 出力に点数の表 score)
   spec: models/model.yaml
   # spec のファイルが無いうちは train.py の仮のモデルで学習することの目印
-  # (ML-Dashboard の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
+  # (学習・評価の段階の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
   # は spec のファイルがあるかで決まる)
   placeholder: true
   # 仮のモデルの埋め込みの幅

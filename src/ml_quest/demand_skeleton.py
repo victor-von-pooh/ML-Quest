@@ -19,7 +19,7 @@ DEMAND_DATASET = "outputs/dataset"
 # spec のファイルが無いときの, 仮のモデルで学習することの目印 (config の
 # model.placeholder)
 DEMAND_PLACEHOLDER = """  # spec のファイルが無いうちは train.py の仮のモデルで学習することの目印
-  # (ML-Dashboard の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
+  # (学習・評価の段階の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
   # は spec のファイルがあるかで決まる)
   placeholder: true
 """
@@ -1284,7 +1284,7 @@ if __name__ == "__main__":
 '''
 
 # config の基準 (ML-Found のプロジェクトの形)
-DEMAND_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題の設定から書き出した骨組み)
+DEMAND_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題から書き出した骨組み)
 $requires
 experiment:
   name: $experiment
@@ -1298,7 +1298,7 @@ optimizer:
 trainer:
   epochs: 30
   grad_clip_norm: 1.0
-  # 問題の設定の「最良を選ぶ指標」(valid/loss は検証用の行の, 学んだ水準の
+  # 問題の「最良を選ぶ指標」(valid/loss は検証用の行の, 学んだ水準の
   # 分位点の損失の平均. valid/mae は検証用の行の, 0.5 の分位点の平均絶対
   # 誤差 (先の期間の需要の単位). どちらも小さいほど良い)
   monitor: $monitor
@@ -1328,7 +1328,7 @@ order:
   max_order: $max_order
 
 model:
-  # ML-ModelControl の形のモデルの定義 (ML-CreateArchitecture で組んで, この
+  # ML-ModelControl の形のモデルの定義 (モデルの作成・選定の段階で組んで, この
   # 場所に保存する. 入力は行 x, 出力に水準の小さい順の分位点 quantiles)
   spec: models/model.yaml
 $placeholder  # 仮のモデルの隠れ層の幅

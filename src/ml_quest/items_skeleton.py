@@ -1458,7 +1458,7 @@ EXPORTERS = {
 }
 
 # config の基準 (ML-Found のプロジェクトの形)
-ITEMS_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題の設定から書き出した骨組み)
+ITEMS_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題から書き出した骨組み)
 $requires
 experiment:
   name: $experiment
@@ -1471,7 +1471,7 @@ optimizer:
 
 trainer:
   epochs: 30$every
-  # 問題の設定の「最良を選ぶ指標」
+  # 問題の「最良を選ぶ指標」
   monitor: $monitor
   mode: $mode
   early_stopping:
@@ -1485,11 +1485,11 @@ data:
   batch_size: 8$cloud_data
 
 model:
-  # ML-ModelControl の形のモデルの定義 (ML-CreateArchitecture で組んで, この
+  # ML-ModelControl の形のモデルの定義 (モデルの作成・選定の段階で組んで, この
   # 場所に保存する)
   spec: models/model.yaml
   # spec のファイルが無いうちは train.py の仮のモデルで学習することの目印
-  # (ML-Dashboard の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
+  # (学習・評価の段階の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
   # は spec のファイルがあるかで決まる)
   placeholder: true$cloud_model
 ''')

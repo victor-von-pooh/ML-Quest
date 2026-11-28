@@ -886,7 +886,7 @@ if __name__ == "__main__":
 '''
 
 # config の基準 (ML-Found のプロジェクトの形)
-GENERATE_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題の設定から書き出した骨組み)
+GENERATE_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題から書き出した骨組み)
 $requires
 experiment:
   name: $experiment
@@ -900,7 +900,7 @@ optimizer:
 trainer:
   epochs: 30
   grad_clip_norm: 1.0
-  # 問題の設定の「最良を選ぶ指標」(valid/loss は雑音の予測の損失. 検証は
+  # 問題の「最良を選ぶ指標」(valid/loss は雑音の予測の損失. 検証は
   # 毎回同じ時刻と雑音で数える. valid/fid は作った画像の FID. どちらも
   # 小さいほど良い)
   monitor: $monitor
@@ -918,11 +918,11 @@ data:
   batch_size: 32
 
 model:
-  # ML-ModelControl の形のモデルの定義 (ML-CreateArchitecture で組んで, この
+  # ML-ModelControl の形のモデルの定義 (モデルの作成・選定の段階で組んで, この
   # 場所に保存する. 入力は雑音を加えた画像と int64 の時刻の 2 つ)
   spec: models/model.yaml
   # spec のファイルが無いうちは train.py の仮のモデルで学習することの目印
-  # (ML-Dashboard の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
+  # (学習・評価の段階の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
   # は spec のファイルがあるかで決まる)
   placeholder: true
   # 仮のモデルの中の幅 (時刻の正弦波の埋め込みの幅にも使うので偶数)
@@ -1068,7 +1068,7 @@ def generate_readme(
         "で, 損失 (`valid/loss`. 毎回同じ時刻と雑音で数える) と, 見本と同じ"
         "種と回数で検証用の画像と同じ件数を作った FID (`valid/fid`. 作った"
         "画像と検証用の画像の分布の近さ. 小さいほど良い) を `history.csv` "
-        "に残す. FID の特徴は ML-Found の任意の依存 `fid` (pytorch-fid) の "
+        "に残す. FID の特徴は ML-Found の追加の依存 `fid` (pytorch-fid) の "
         "Inception で, 初めて使うときに学習済みの重み (約 91 MB) を取る "
         "(ネットワークの無い計算機には, 一度取った PyTorch のキャッシュを"
         "写す). FID は件数で偏るので, 比べる FID は同じ件数で数え, 件数は"

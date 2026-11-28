@@ -1254,7 +1254,7 @@ if __name__ == "__main__":
 '''
 
 # config の基準 (ML-Found のプロジェクトの形)
-TABLE_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題の設定から書き出した骨組み)
+TABLE_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題から書き出した骨組み)
 $requires
 experiment:
   name: $experiment
@@ -1268,7 +1268,7 @@ optimizer:
 trainer:
   epochs: 100
   grad_clip_norm: 1.0
-  # 問題の設定の「最良を選ぶ指標」(valid/loss は雑音の予測の損失. 検証は
+  # 問題の「最良を選ぶ指標」(valid/loss は雑音の予測の損失. 検証は
   # 毎回同じ時刻と雑音で数える. valid/column_distance は作った表と検証用の
   # 表の列ごとの分布の近さ. どちらも小さいほど良い)
   monitor: $monitor
@@ -1286,11 +1286,11 @@ data:
   batch_size: 64
 
 model:
-  # ML-ModelControl の形のモデルの定義 (ML-CreateArchitecture で組んで, この
+  # ML-ModelControl の形のモデルの定義 (モデルの作成・選定の段階で組んで, この
   # 場所に保存する. 入力は雑音を加えた行と int64 の時刻の 2 つ)
   spec: models/model.yaml
   # spec のファイルが無いうちは train.py の仮のモデルで学習することの目印
-  # (ML-Dashboard の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
+  # (学習・評価の段階の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
   # は spec のファイルがあるかで決まる)
   placeholder: true
   # 仮のモデルの中の幅 (時刻の正弦波の埋め込みの幅にも使うので偶数)

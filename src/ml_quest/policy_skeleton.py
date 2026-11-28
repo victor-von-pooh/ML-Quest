@@ -109,7 +109,7 @@ POLICY_ENV = Template('''"""
 
 問題の設定で Gymnasium の環境の登録名を答えていないので, train.py はこの
 ProjectEnv で方策を学ぶ. 今は動くことを確かめるための小さな環境 (台の上の
-点を 0 に寄せる) なので, 印 (TODO) の所を課題の環境 (自作のシミュレータ,
+点を 0 に寄せる) なので, 印 (TODO) の所を実際の環境 (自作のシミュレータ,
 実機とのつなぎ) に書き換える. 実機につなぐ場合は, 外れたときの損に気を
 付ける (学習は環境で行動を試す)
 """
@@ -983,7 +983,7 @@ if __name__ == "__main__":
 '''
 
 # config の基準 (ML-Found のプロジェクトの形)
-POLICY_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題の設定から書き出した骨組み)
+POLICY_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題から書き出した骨組み)
 $requires
 experiment:
   name: $experiment
@@ -997,7 +997,7 @@ optimizer:
 
 trainer:
   epochs: 20
-  # 問題の設定の「最良を選ぶ指標」. 強化学習の valid/reward は評価の
+  # 問題の「最良を選ぶ指標」. 強化学習の valid/reward は評価の
   # エピソードの報酬の和の平均 (大きいほど良い. max), valid/loss はその
   # 符号を反転した値 (小さいほど報酬が大きい. min)
   monitor: $monitor
@@ -1008,7 +1008,7 @@ trainer:
 
 # プロジェクト固有の設定
 env:
-  # Gymnasium の環境の登録名 (問題の設定の答え). null なら env.py の
+  # Gymnasium の環境の登録名 (問題の答え). null なら env.py の
   # ProjectEnv
   id: $env_id
   # 検証 (評価のエピソード) の乱数の種と, 1 エピソードの歩数の上限 (null
@@ -1043,14 +1043,14 @@ loss:
 
 model:
   # 方策の頭 (観測から行動のスコアか平均) の ML-ModelControl の形のモデルの
-  # 定義 (ML-CreateArchitecture で組む). 無ければ train.py が観測と行動の
+  # 定義 (モデルの作成・選定の段階で組む). 無ければ train.py が観測と行動の
   # 空間から既定の定義を書く. 方策の一式に写す
   spec: models/policy.yaml
   # 価値の関数と既定の定義の隠れ層の次元数 (定義を書いた後に変えても方策
   # の頭の大きさは変わらない. 価値の関数だけ)
   hidden_dim: 64
 
-# 安全の違反を知らせる info の名前 (問題の設定の答え. 無ければ cost)
+# 安全の違反を知らせる info の名前 (問題の答え. 無ければ cost)
 safety_key: $safety_key
 
 # 書き出す方策の守り (policy/). 範囲は$approver決めて承認する. 問題の
@@ -1064,7 +1064,7 @@ $limits_comment
 $stop_comment
   observation_low: null
   observation_high: null
-  # 外れたときの動き (stop, handover, action. 問題の設定の答え) と, action
+  # 外れたときの動き (stop, handover, action. 問題の答え) と, action
   # の場合の行動 (番号で選ぶ行動なら要る)$fallback_comment
   fallback: $fallback
   fallback_action: $fallback_action
@@ -1147,7 +1147,7 @@ def yaml_comment(title: str, text: Optional[str]) -> str:
     """
     # 改行は空白にし, 70 文字ほどで折り返す
     flat = " ".join(str(text).split()) if text else "答えなし"
-    body = f"{title} (問題の設定): {flat}"
+    body = f"{title} (問題): {flat}"
     width = 70
     lines = "\n".join(f"  # {body[start:start + width]}"
                       for start in range(0, len(body), width))
@@ -1324,7 +1324,7 @@ def policy_readme(problem: dict, stages: dict) -> str:
         "1. **環境**: 問題に Gymnasium の環境の登録名が無いので, "
         "自作の環境の雛形 `env.py` (`ProjectEnv`. 印 TODO) を書き出した. "
         "今は動くことを確かめるだけの小さな環境なので, 観測と行動の空間, "
-        "初めの状態, 動き, 報酬を問題の環境 (自作のシミュレータ, 実機との"
+        "初めの状態, 動き, 報酬を実際の環境 (自作のシミュレータ, 実機との"
         "つなぎ) に書き換える. 実機につなぐなら, 学習は行動を試すので外れた"
         "ときの損に気を付ける. Gymnasium に登録した環境なら, config の "
         "`env.id` にその名前を書けば `env.py` は使わない"
@@ -1332,7 +1332,7 @@ def policy_readme(problem: dict, stages: dict) -> str:
     approver = one_line(policy["approver"]) or "承認する人"
     lines += [
         "", "## 次にすること", "",
-        "学習する環境には ML-Found, Gymnasium (ML-Found の任意の依存 `rl`)"
+        "学習する環境には ML-Found, Gymnasium (ML-Found の追加の依存 `rl`)"
         ", ML-ModelControl (`modelcontrol`) を入れる (config の `requires` "
         "で足りなければ入れ方を示して止まる). データの分析の段階は無い (行動の結果は環境とのやり取りで集める).",
         "",

@@ -25,7 +25,7 @@ GROUP_VALID = 0.2
 # spec のファイルが無いときの, 仮のモデルで学習することの目印 (config の
 # model.placeholder)
 GROUP_PLACEHOLDER = """  # spec のファイルが無いうちは train.py の仮のモデルで学習することの目印
-  # (ML-Dashboard の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
+  # (学習・評価の段階の学習の準備が読む. train.py は読まず, 仮のモデルを使うか
   # は spec のファイルがあるかで決まる)
   placeholder: true
 """
@@ -1375,7 +1375,7 @@ if __name__ == "__main__":
 '''
 
 # config の基準 (ML-Found のプロジェクトの形)
-GROUP_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題の設定から書き出した骨組み)
+GROUP_CONFIG = Template('''# ML-Found が使う設定 (ML-Quest が問題から書き出した骨組み)
 $requires
 experiment:
   name: $experiment
@@ -1389,7 +1389,7 @@ optimizer:
 trainer:
   epochs: 30
   grad_clip_norm: 1.0
-  # 問題の設定の「最良を選ぶ指標」(valid/silhouette は検証用の行の埋め込みの
+  # 問題の「最良を選ぶ指標」(valid/silhouette は検証用の行の埋め込みの
   # 群のシルエット係数で, 大きいほど良い. valid/loss は検証用の行の対照学習の
   # 損失で, 小さいほど良い)
   monitor: $monitor
@@ -1397,8 +1397,8 @@ trainer:
 
 # プロジェクト固有の設定
 data:
-  # 群を作る表 (1 行が 1 つの対象. プロジェクトのディレクトリから. 問題の
-  # 設定の手元のデータの読み方で読む)
+  # 群を作る表 (1 行が 1 つの対象. プロジェクトのディレクトリから.
+  # 問題の手元のデータの読み方で読む)
   dataset: $dataset
   # 行のバッチの大きさ (バッチの中の他の行が対照学習の負例)
   batch_size: 128
@@ -1427,7 +1427,7 @@ group:
   sample: 2000
 
 model:
-  # ML-ModelControl の形のモデルの定義 (ML-CreateArchitecture で組んで, この
+  # ML-ModelControl の形のモデルの定義 (モデルの作成・選定の段階で組んで, この
   # 場所に保存する. 入力は行の特徴 x, 出力に埋め込み embedding と類似度の表
   # similarity)
   spec: models/model.yaml
