@@ -55,10 +55,10 @@ ROLE = "generate"
 OUTPUT = "image"
 METHOD = $method
 
-# task.yaml の正解の種類と出どころの種類 (問題の設定の正解の出どころ
-# から. 自分自身なら学んだ画像が正解で measurement, 他は unknown)
+# task.yaml の正解の種類と出どころの種類 (ML-Found の出どころの値に,
+# 学んだデータそのものが正解に当たるものが無いので unknown)
 TARGET_KIND = "image"
-ORIGIN_TYPE = $origin_type
+ORIGIN_TYPE = "unknown"
 
 # テスト用の評価の名前, 説明, 指標の向き (evaluations/<名前>.json)
 EVALUATION = "test_loss"
@@ -817,8 +817,8 @@ def main() -> None:
         print("\\n".join(f"- {message}" for message in errors))
         sys.exit(1)
 
-    # 何の実験か (受け持ち, 出力の形, 作るもの, 作り方, 正解の出どころは
-    # 問題の設定から. 学習に使ったデータセットは場所と dataset.yaml の名前.
+    # 何の実験か (受け持ち, 出力の形, 作るもの, 作り方は問題の設定から.
+    # 学習に使ったデータセットは場所と dataset.yaml の名前.
     # 版 1 のデータセットなので版は書かない).
     # TODO: 既製のモデルを元にするなら, 元にした実験か重みを task["base"]
     experiment = start_experiment(cfg, diff, str(PROJECT_DIR))
@@ -970,28 +970,6 @@ fid:
 '''
 
 
-def generation_origin(problem: dict) -> str:
-    """
-    条件の無い生成の task.yaml に書く, 正解の出どころの種類を返す関数
-
-    Parameters
-    ----------
-    problem: dict
-        問題の設定 (版 2)
-
-    Returns
-    ----------
-    origin: str
-        ML-Found の正解の出どころの種類. 正解の出どころが自分自身 (self)
-        なら学んだデータそのものが正解なので measurement, 他は unknown
-    """
-    # 自分自身だけ ML-Found の種類に写せる (他は骨組みでは決められない)
-    source = active_value(problem, f"{PART}.target.source")
-    origin = "measurement" if source == "self" else "unknown"
-
-    return origin
-
-
 def generate_script(problem: dict, literal: Callable) -> str:
     """
     問題の設定から, 画像の生成の拡散のモデルを学ぶスクリプトを作る関数
@@ -1013,7 +991,6 @@ def generate_script(problem: dict, literal: Callable) -> str:
         name=literal(str(problem.get("name", ""))),
         predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         method=literal(active_value(problem, f"{PART}.method")),
-        origin_type=literal(generation_origin(problem)),
         count_fid=literal(
             active_value(problem, f"{PART}.evaluation.metric") == "fid"
         ),

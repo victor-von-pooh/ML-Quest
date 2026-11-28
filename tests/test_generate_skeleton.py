@@ -268,26 +268,6 @@ def test_generate_handoff() -> None:
             handoff(fid)["training"]["mode"]) == ("valid/fid", "min")
 
 
-def test_generate_origin() -> None:
-    """
-    task.yaml の正解の出どころの種類が, 問題の設定の正解の出どころが自分
-    自身なら measurement, 他なら unknown になることを確かめる関数
-
-    Parameters
-    ----------
-    None
-
-    Returns
-    ----------
-    None
-    """
-    from ml_quest.generate_skeleton import generation_origin
-    problem = generate_problem()
-    assert generation_origin(problem) == "measurement"
-    problem = answer(problem, f"{PART}.target.source", "none")
-    assert generation_origin(problem) == "unknown"
-
-
 def test_generate_errors(tmp_path: Path) -> None:
     """
     画像の生成で書き出せない場合が, make_project と同じ文になることを
@@ -388,7 +368,7 @@ def test_generate_project(tmp_path: Path) -> None:
     assert 'ROLE = "generate"' in script and "PlaceholderModel" in script
     assert 'PREDICT = "丸の画像"' in script
     assert 'TARGET_KIND = "image"' in script
-    assert 'ORIGIN_TYPE = "measurement"' in script
+    assert 'ORIGIN_TYPE = "unknown"' in script
 
     # config: 要る機能, 監視, 検証の間隔, EMA, データセットとモデルの定義の
     # 場所, FID の特徴
@@ -579,7 +559,7 @@ def test_generate_training(tmp_path: Path) -> None:
                      encoding="utf-8")
     run, _ = train(project)
 
-    # 何の実験か (正解は学んだ画像で出どころは測った値, データセットは
+    # 何の実験か (正解は学んだ画像で出どころは分からない, データセットは
     # 書き出した場所と名前), EMA の重み, テスト用の損失
     task = yaml.safe_load((run / "task.yaml").read_text(encoding="utf-8"))
     assert (task["role"], task["output"], task["what"]) == (
@@ -589,12 +569,12 @@ def test_generate_training(tmp_path: Path) -> None:
                           .read_text(encoding="utf-8"))["name"]
     assert task["target"] == {
         "kind": "image",
-        "origin": {"type": "measurement", "name": None, "settings": None},
+        "origin": {"type": "unknown", "name": None, "settings": None},
     }
     assert task["dataset"] == {"path": "outputs/dataset", "name": name,
                                "format_version": None}
     log = (run / "train.log").read_text(encoding="utf-8")
-    assert "正解は測った値" in log and "出どころは分からない" not in log
+    assert "正解の出どころは分からない" in log
     assert "EMA" in log and "テスト用の損失" in log
     assert "作るもの: 丸の画像" in log and "予測すること" not in log
     table = json.loads((run / "evaluations" / "test_loss.json")
