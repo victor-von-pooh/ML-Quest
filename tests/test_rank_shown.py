@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import re
 import sys
 
 import pytest
@@ -85,6 +86,28 @@ def write_shown(root: Path) -> Path:
     return path
 
 
+def negative_rows(log: str) -> dict:
+    """
+    train.log の学習の負の例の行の数を, 分割ごとに読む関数
+
+    Parameters
+    ----------
+    log: str
+        train.log の中身
+
+    Returns
+    ----------
+    rows: dict
+        分割の名前から負の例のある反応の行の数
+    """
+    # 「学習の負の例: train 12 行, valid 3 行」の形
+    line = re.search(r"学習の負の例: (.*)", log).group(1)
+    rows = {name: int(count)
+            for name, count in re.findall(r"(\w+) (\d+) 行", line)}
+
+    return rows
+
+
 def test_shown_questions() -> None:
     """
     見せただけの印と提示の列の問いが任意で, 受け渡しと確かめに入ることを
@@ -153,6 +176,7 @@ def test_shown_training(tmp_path: Path) -> None:
     run, _ = train(project)
     log = (run / "train.log").read_text(encoding="utf-8")
     assert "見せただけの記録: train" in log and "学習の負の例: train" in log
+    assert negative_rows(log)["train"] > 0
     assert "の提示の中の順位" in log
 
     # 反応は選んだ行だけ (学習の前に求めた数と同じ)
@@ -201,6 +225,24 @@ def test_shown_by_time(tmp_path: Path) -> None:
                           copy_to=str(tmp_path / "copies"))
     encoding = rank_encoding(problem, source)
     assert sum(encoding["rows"].values()) == SHOWS
+
+    # 提示の列無しで最後まで学び, 利用者と時刻の組で負の例と評価 (同じ
+    # 提示の行は同じ時刻なので, 分割に合わせて動かす行は無い)
+    for name in ("torch", "ml_found"):
+        pytest.importorskip(name)
+    project = tmp_path / "project"
+    make_project(problem, project)
+    config = (project / "configs" / "default" / "train.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "presentation: null" in config
+    run, _ = train(project)
+    log = (run / "train.log").read_text(encoding="utf-8")
+    assert "同じ提示の分割に合わせた行 0 行" in log
+    assert negative_rows(log)["train"] > 0
+    table = json.loads((run / "evaluations" / "ranking_test.json")
+                       .read_text(encoding="utf-8"))
+    assert table["rows"][0]["presentations"] > 0
 
     # 印に答えなければ, 見せただけの行も反応の強さの決まりで読む (今どおり)
     plain = answer(rank_problem(), "information.columns", COLUMNS)
@@ -259,3 +301,51 @@ def test_shown_functions(tmp_path: Path) -> None:
     assert score.shape == (2, 4)
     assert torch.isinf(score[1, 2]) and not torch.isinf(score[0, 2])
     assert not torch.isinf(score[:, 3]).any()
+
+
+def test_shown_split(tmp_path: Path) -> None:
+    """
+    見せただけの記録を, 同じ提示の選んだ行の分割に合わせ, 選んだ行の無い
+    提示の行は自分の時刻で分けることを確かめる関数 (PyTorch と段階の
+    ライブラリが無ければ飛ばす)
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # 検証用は時刻 10 から, テスト用は 20 から
+    module = script_module(tmp_path)
+    pd = pytest.importorskip("pandas")
+    splits = {
+        "train": pd.DataFrame({"user": ["a"], "item": ["x"], "time": [1],
+                               "key": [("a", "p1")]}),
+        "valid": pd.DataFrame({"user": ["a"], "item": ["y"], "time": [12],
+                               "key": [("a", "p2")]}),
+        "test": pd.DataFrame({"user": ["b"], "item": ["z"], "time": [25],
+                              "key": [("b", "p3")]}),
+    }
+
+    # p2 は見せた時刻 (9) が学習用でも選んだ行の検証用に, p3 も同じく
+    # テスト用に. 選んだ行の無い p4 は自分の時刻 (15) の検証用
+    shown = pd.DataFrame({
+        "user": ["a", "a", "b", "c"], "item": ["w", "v", "u", "t"],
+        "time": [0, 9, 19, 15],
+        "key": [("a", "p1"), ("a", "p2"), ("b", "p3"), ("c", "p4")],
+    })
+    parts, moved = module.split_shown(shown, splits, (10, 20))
+    assert list(parts["train"]["item"]) == ["w"]
+    assert list(parts["valid"]["item"]) == ["v", "t"]
+    assert list(parts["test"]["item"]) == ["u"]
+    assert moved == 2
+
+    # テスト用の無い分け方
+    two = {"train": splits["train"], "valid": splits["valid"]}
+    parts, moved = module.split_shown(shown, two, (10, None))
+    assert set(parts) == {"train", "valid"}
+    assert list(parts["valid"]["item"]) == ["v", "u", "t"]
+    assert moved == 1

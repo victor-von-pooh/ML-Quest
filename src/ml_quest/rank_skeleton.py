@@ -736,6 +736,53 @@ def split_by_cuts(frame: pd.DataFrame, cuts: tuple) -> dict:
     return splits
 
 
+def split_shown(
+    shown: pd.DataFrame, splits: dict, cuts: tuple
+) -> tuple[dict, int]:
+    """
+    見せただけの記録を, 同じ提示の選んだ行の分割に合わせて分ける関数
+
+    Parameters
+    ----------
+    shown: pd.DataFrame
+        見せただけの記録 (time と key の列. 時刻の順)
+    splits: dict
+        反応の分割 (split_by_time の結果. key の列がある)
+    cuts: tuple
+        cut_times の検証用とテスト用の始まりの時刻
+
+    Returns
+    ----------
+    parts: dict
+        反応と同じ分割の名前から見せただけの記録の表. 選んだ行のある提示
+        の行はその提示の選んだ行の最初の分割に, 無い提示の行は自分の時刻
+        の分割に入れる
+    moved: int
+        自分の時刻の分割と違う分割に入れた行の数
+    """
+    # 提示ごとの選んだ行の最初の分割 (学習用, 検証用, テスト用の順)
+    owner: dict = {}
+    for name, frame in splits.items():
+        for key in frame["key"]:
+            owner.setdefault(key, name)
+
+    # 自分の時刻の分割と, 提示に合わせた分割
+    times = shown["time"]
+    valid_from, test_from = cuts
+    own = pd.Series("train", index=shown.index)
+    own[times >= valid_from] = "valid"
+    if test_from is not None:
+        own[times >= test_from] = "test"
+    placed = pd.Series([owner.get(key, name)
+                        for key, name in zip(shown["key"], own)],
+                       index=shown.index)
+    parts = {name: shown[placed == name].reset_index(drop=True)
+             for name in splits}
+    moved = int((placed != own).sum())
+
+    return parts, moved
+
+
 def split_by_time(reactions: pd.DataFrame, cfg: Any) -> dict:
     """
     反応を時刻の順に学習用, 検証用, テスト用に分ける関数
@@ -1400,7 +1447,8 @@ def main() -> None:
     # 見せただけの記録の負の例と, 提示の中の順位を数える組
     pairs: dict = {}
     if shown is not None:
-        shown_splits = split_by_cuts(shown, cut_times(reactions, cfg))
+        shown_splits, moved = split_shown(shown, splits,
+                                          cut_times(reactions, cfg))
         shown_numbered = {name: to_numbers(frame, index)
                           for name, frame in shown_splits.items()}
         pairs = {name: presentation_pairs(numbered[name],
@@ -1440,6 +1488,7 @@ def main() -> None:
             "見せただけの記録: "
             + ", ".join(f"{name} {len(frame)} 行"
                         for name, frame in shown_splits.items())
+            + f" (選んだ行と同じ提示の分割に合わせた行 {moved} 行)"
             + ". 学習の負の例: "
             + ", ".join(f"{name} {int((frame['negative'] >= 0).sum())} 行"
                         for name, frame in numbered.items())
