@@ -115,6 +115,15 @@ UPLIFT_OUTCOMES = [
     {"value": "amount", "label": "量 (買った額. 効果は値の差)"},
 ]
 
+# 効果の見積もりの効果の決め方 (答えなければ t_learner. 名前は成果物の
+# learner と同じ)
+UPLIFT_LEARNERS = [
+    {"value": "t_learner", "label": "処置の群と対照の群で 2 つの予測を別々"
+     "に学ぶ (T-learner)"},
+    {"value": "s_learner", "label": "処置の列を入力の終わりに足して 1 つの"
+     "予測で学ぶ (S-learner)"},
+]
+
 # 効果の見積もりの行の id の列にできない名前 (行ごとの効果の表の他の列)
 UPLIFT_ASSIGNED = ("split", "effect", "treated", "control", "treatment",
                    "outcome")
@@ -919,6 +928,14 @@ QUESTIONS: list[dict[str, Any]] = [
      "help": "配る前に分かっている顧客の特徴の列 (年齢, 来店の回数など). 処置"
              "の列, 結果の列, 行の id の列と, 配った後に決まる列 (クーポンを"
              "使ったかなど) は入れない"},
+    {"id": f"{PART}.uplift.learner", "section": 5, "kind": "choice",
+     "required": False, "when": UPLIFT, "choices": UPLIFT_LEARNERS,
+     "title": "効果を, どう学びますか (答えなければ 2 つの予測)",
+     "help": "2 つの予測は処置の群と対照の群の結果を別々に学び, 差を効果に"
+             "する. 1 つの予測は処置の列 (1 か 0) を入力の終わりに足して"
+             "学び, 処置を 1 にした予測から 0 にした予測を引いて効果にする "
+             "(片方の群の行が少なく, 2 つの予測が揺れる記録で合うことが"
+             "ある)"},
     {"id": f"{PART}.price.price", "section": 5, "kind": "column",
      "required": True, "when": PRICE, "title": "値段の列は",
      "help": "売ったときの値段の列 (0 より大きい数). 試しに値段を変えた記録 "

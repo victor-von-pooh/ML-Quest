@@ -1,11 +1,11 @@
 from typing import Any, Optional
 
 from ml_quest.check import finding
-from ml_quest.handoff import learned_levels
+from ml_quest.handoff import learned_levels, uplift_learner
 from ml_quest.model_names import (
     CONTROL_OUTPUT, EMBEDDING_OUTPUT, FEATURE_INPUT, ITEM_INPUT,
-    QUANTILES_OUTPUT, RECON_OUTPUT, SCORE_OUTPUT, SIMILARITY_OUTPUT,
-    TREATED_OUTPUT, UNITS_OUTPUT, USER_INPUT
+    OUTCOME_OUTPUT, QUANTILES_OUTPUT, RECON_OUTPUT, SCORE_OUTPUT,
+    SIMILARITY_OUTPUT, TREATED_OUTPUT, UNITS_OUTPUT, USER_INPUT
 )
 from ml_quest.problem import active_value, upgrade_problem
 from ml_quest.questions import PART
@@ -30,7 +30,7 @@ WIDTH_LABELS = {
 def entry(
     name: Optional[str], text: str, width: Optional[str] = None,
     size: Optional[int] = None, label: Optional[str] = None,
-    dtype: Optional[str] = None
+    dtype: Optional[str] = None, offset: int = 0
 ) -> dict:
     """
     骨組みの約束の入力か出力の 1 項目を作る関数
@@ -49,17 +49,19 @@ def entry(
         最後の大きさの説明 (None なら鍵の説明. 鍵が無ければ None)
     dtype: Optional[str] = None
         骨組みが型で入力を見分ける場合の型 (他は None)
+    offset: int = 0
+        渡した鍵の数に足す数 (効果の見積もりの s_learner の処置の列の 1)
 
     Returns
     ----------
     item: dict
-        name, dtype, width, size, label, text
+        name, dtype, width, size, label, text, offset
     """
     # 説明は鍵の説明を既定に
     if label is None and width is not None:
         label = WIDTH_LABELS[width]
     item = {"name": name, "dtype": dtype, "width": width, "size": size,
-            "label": label, "text": text}
+            "label": label, "text": text, "offset": offset}
 
     return item
 
@@ -123,6 +125,12 @@ def named_contract(problem: dict, kind: str) -> Optional[dict]:
         inputs = [entry(FEATURE_INPUT, row, "features", label=encoded)]
         outputs = [entry(EMBEDDING_OUTPUT, "行の埋め込み"),
                    entry(SIMILARITY_OUTPUT, "全ての組の類似度の表")]
+    elif kind == "uplift" and uplift_learner(problem) == "s_learner":
+        inputs = [entry(FEATURE_INPUT, "行の特徴と, 最後の列の処置 (1 か 0)",
+                        "features",
+                        label="特徴の列と処置の列の数 (学習に使う列の数 + 1)",
+                        offset=1)]
+        outputs = [entry(OUTCOME_OUTPUT, "結果の予測", size=1)]
     elif kind == "uplift":
         inputs = [entry(FEATURE_INPUT, "行の特徴 (処置の列は入れない)",
                         "features", label="処置の列を除いた学習に使う列の数")]
@@ -192,7 +200,7 @@ def model_contract(problem: dict) -> Optional[dict]:
     ----------
     contract: Optional[dict]
         skeleton (骨組みの型), inputs と outputs (name, dtype, width, size,
-        label, text の項目の並び), extra_outputs (約束に無い出力を持って
+        label, text, offset の項目の並び), extra_outputs (約束に無い出力を持って
         よいか). 約束の無い骨組み (定義を持たないか, 入力の形をデータ
         セットの model_inputs で決める) と
         機械学習を使わない場合は None
@@ -312,10 +320,11 @@ def width_findings(
     found: list[dict]
         確かめ (数の分からない鍵と形の無い入力は見ない)
     """
-    # 渡した数を, 問題の設定か骨組みで決まる数より先に
+    # 渡した数 (足す数を足す) を, 問題の設定か骨組みで決まる数より先に
     found = []
     for item, name in matched:
-        expected = widths.get(item["width"], item["size"])
+        expected = (widths[item["width"]] + item["offset"]
+                    if item["width"] in widths else item["size"])
         value = inputs[name]
         shape = value.get("shape") if isinstance(value, dict) else None
         if expected is None or not isinstance(shape, list) or not shape:

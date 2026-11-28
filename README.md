@@ -52,7 +52,7 @@ for item in check(problem):
 
 # 課題から行動までの要約, 後ろの段階ごとの値
 print("\n".join(describe(problem)))
-stages = handoff(problem)   # part, data, model (雛形の名前 example も), training (監視する指標 monitor と向き mode), inference (たどり直しで数える守る指標 guard も. 数える量は counted) と, 要る機能 (requires), 方策の守り (policy), 並べるの反応の表の列と件数 (rank), まとめるの群を作る列, 群の数と安定性の数え方 (group), 効果の見積もりの処置, 結果, 列と上位の割合 (uplift. 推論の意思決定は効果の上位から配る判断 {"type": "treat", "budget": ...}), 値段を変える判断の値段, 売れた数, 原価, 商品の id の列と予測に使う列 (price. 推論の意思決定は利益が最も大きい値段を選ぶ判断 {"type": "price", "candidates": [...], "max_change": ...}), 時間をまたぐ量の判断の商品の id, 日付, 売れた数, 在庫の数の列, 先の期間の日数と学ぶ水準 (demand. 推論の意思決定は損の比で発注の数を決める判断 {"type": "order", "shortage_cost": ..., "holding_cost": ..., "max_order": ...}), プロジェクト (project)
+stages = handoff(problem)   # part, data, model (雛形の名前 example も), training (監視する指標 monitor と向き mode), inference (たどり直しで数える守る指標 guard も. 数える量は counted) と, 要る機能 (requires), 方策の守り (policy), 並べるの反応の表の列と件数 (rank), まとめるの群を作る列, 群の数と安定性の数え方 (group), 効果の見積もりの処置, 結果, 列, 上位の割合と効果の決め方 (uplift. 決め方は T-learner か S-learner で, 既定は T-learner. 推論の意思決定は効果の上位から配る判断 {"type": "treat", "budget": ...}), 値段を変える判断の値段, 売れた数, 原価, 商品の id の列と予測に使う列 (price. 推論の意思決定は利益が最も大きい値段を選ぶ判断 {"type": "price", "candidates": [...], "max_change": ...}), 時間をまたぐ量の判断の商品の id, 日付, 売れた数, 在庫の数の列, 先の期間の日数と学ぶ水準 (demand. 推論の意思決定は損の比で発注の数を決める判断 {"type": "order", "shortage_cost": ..., "holding_cost": ..., "max_order": ...}), プロジェクト (project)
 
 # 学習のプロジェクト (ML-Found の骨組み) の書き出しと, その場所の記録 (データセットとモデルの定義の置き場も) の保存
 save_problem(problem, "/work/problem.yaml")

@@ -22,6 +22,9 @@ SIMILARITY_OUTPUT = "similarity"
 TREATED_OUTPUT = "treated"
 CONTROL_OUTPUT = "control"
 
+# 効果の見積もりの S-learner の, 処置の列を入力に足した結果の予測の出力
+OUTCOME_OUTPUT = "outcome"
+
 # 値段を変える判断の売れた数の予測の出力
 UNITS_OUTPUT = "units"
 

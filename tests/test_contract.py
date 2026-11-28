@@ -146,7 +146,7 @@ def test_model_contract_every_type() -> None:
         assert contract["skeleton"] == kind
         assert [item["name"] for item in contract["inputs"]] == names[0]
         assert [item["name"] for item in contract["outputs"]] == names[1]
-        keys = {"name", "dtype", "width", "size", "label", "text"}
+        keys = {"name", "dtype", "width", "size", "label", "text", "offset"}
         for item in contract["inputs"] + contract["outputs"]:
             assert set(item) == keys
             assert (item["label"] is None) == (item["width"] is None)
@@ -186,6 +186,18 @@ def test_model_contract_widths() -> None:
     uplift = model_contract(problem_of("uplift"))
     assert "処置の列を除いた" in uplift["inputs"][0]["label"]
     assert [item["size"] for item in uplift["outputs"]] == [1, 1]
+    single = model_contract(problem_of(
+        "uplift", {f"{PART}.uplift.learner": "s_learner"}
+    ))
+    assert single["skeleton"] == "uplift"
+    assert [item["name"] for item in single["inputs"]] == ["x"]
+    assert single["inputs"][0]["width"] == "features"
+    assert single["inputs"][0]["offset"] == 1
+    assert uplift["inputs"][0]["offset"] == 0
+    assert "学習に使う列の数 + 1" in single["inputs"][0]["label"]
+    assert [(item["name"], item["size"]) for item in single["outputs"]] == [
+        ("outcome", 1)
+    ]
     price = model_contract(problem_of("price"))
     assert price["inputs"][0]["label"] == "特徴の列と値段の列の数"
     assert price["outputs"][0]["size"] == 1
@@ -359,3 +371,18 @@ def test_contract_examples() -> None:
         if "features" in args:
             found = check_model_contract(problem, spec, changed)
             assert len(found) == 1, kind
+
+    # S-learner の雛形の入力の幅は, 渡した学習に使う列の数 + 処置の列の
+    # 1 で, 学習に使う列の数だけの幅の食い違い. T-learner の雛形の出力の
+    # 食い違い
+    single = problem_of("uplift", {f"{PART}.uplift.learner": "s_learner"})
+    name = model_example(single)
+    assert name == "tabular_uplift_s"
+    spec = modelcontrol.adapt_example(name, {"features": 3})
+    assert check_model_contract(single, spec, {"features": 2}) == []
+    narrow = modelcontrol.adapt_example(name, {"features": 2})
+    found = check_model_contract(single, narrow, {"features": 2})
+    assert [item["id"] for item in found] == ["inputs.x"]
+    assert "学習に使う列の数 + 1) 3" in found[0]["message"]
+    other = modelcontrol.adapt_example("tabular_uplift", {"features": 3})
+    assert ids_of(check_model_contract(single, other)) == ["outputs"]
