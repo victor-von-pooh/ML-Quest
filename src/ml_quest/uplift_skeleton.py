@@ -1025,9 +1025,15 @@ def make_inference(
             data=data, options=options if data is not None else None
         )
     except (ValueError, FileNotFoundError) as error:
+        # s_learner の一式 (版 18) を読めない古い ML-Inference の案内
+        upgrade = (
+            " (s_learner の一式は推論の一式の版 18 で, 古い ML-Inference "
+            "は読めません. ML-Inference が古ければ, git の main に上げて"
+            "ください)" if LEARNER == "s_learner" else ""
+        )
         experiment.logger.warning(
             "成果物か定義が効果の一式の約束に合わないので, 推論の一式を"
-            f"作れません: {error}"
+            f"作れません: {error}{upgrade}"
         )
         return
     check = info["uplift"]["check"]
