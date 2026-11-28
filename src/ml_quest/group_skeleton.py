@@ -767,21 +767,24 @@ def is_number(column: pd.Series) -> bool:
     return number
 
 
-def make_encoding(frame: pd.DataFrame) -> dict:
+def make_encoding(frame: pd.DataFrame, train: np.ndarray) -> dict:
     """
-    学習用の行から, 列の符号化を決める関数
+    列の符号化を決める関数
 
     Parameters
     ----------
     frame: pd.DataFrame
-        学習用の行の, 群を作る列
+        全ての行の, 群を作る列
+    train: np.ndarray
+        学習用の行の位置 (数の列の標準化に使う)
 
     Returns
     ----------
     encoding: dict
-        numeric (数の列ごとの mean と std. 標準化する) と categories
-        (種類の列ごとの値の並び. 学習用に初めて出た順. 値ごとに 0 と 1 の
-        列にする)
+        numeric (数の列ごとの学習用の行の mean と std. 標準化する) と
+        categories (種類の列ごとの値の並び. 全ての行で初めて出た順. 値ごと
+        に 0 と 1 の列にする. 幅を分割に依らず ML-EDA の群の要約の width
+        とそろえる)
     """
     # 散らばりの無い数の列は 1 で割る
     numeric: dict = {}
@@ -789,7 +792,7 @@ def make_encoding(frame: pd.DataFrame) -> dict:
     for name in frame.columns:
         column = frame[name]
         if is_number(column):
-            values = column.astype(float)
+            values = column.iloc[train].astype(float)
             std = float(values.std(ddof=0)) if values.notna().any() else 0.0
             numeric[name] = {
                 "mean": float(values.mean()) if values.notna().any() else 0.0,
@@ -817,7 +820,7 @@ def encode_rows(frame: pd.DataFrame, encoding: dict) -> np.ndarray:
     ----------
     features: np.ndarray
         (行の数, 符号化した行の幅) の float32 (数の列は標準化して欠けた
-        値は 0, 種類の列は値ごとの 0 と 1. 学習用に無い値は全て 0)
+        値は 0, 種類の列は値ごとの 0 と 1. 一覧に無い値は全て 0)
     """
     # TODO: 課題に合う特徴 (比の列, 対数など) を足せる
     parts = []
@@ -1280,14 +1283,15 @@ def main() -> None:
         print(message)
         sys.exit(1)
 
-    # 群を作る列を読み, 無作為に分け, 学習用の行で決めた符号化をかける
+    # 群を作る列を読み, 無作為に分け, 符号化をかける (種類の値は全ての行,
+    # 標準化は学習用の行で決める)
     try:
         frame, ids = read_rows(path, cfg)
         train, valid = split_rows(len(frame), cfg)
     except ValueError as error:
         print(error)
         sys.exit(1)
-    encoding = make_encoding(frame.iloc[train])
+    encoding = make_encoding(frame, train)
     features = encode_rows(frame, encoding)
     width = features.shape[1]
     columns = feature_columns(encoding)
@@ -1629,7 +1633,8 @@ def group_readme(
         f"`data.dataset` の場所 (`{dataset}`) に置く. 群を作る列は {columns}"
         " (config の `group.columns`) で, 他の列は読まない (群の割り当てには"
         f"{key}). 数の列は標準化して欠けた値を 0 に, 他の列は値ごとに 0 と "
-        "1 の列 (欠けた値も 1 つの値) にする (学習用の行で決める). 読み方は"
+        "1 の列 (欠けた値も 1 つの値) にする (標準化は学習用の行, 種類の"
+        "値の一覧は全ての行で決める). 読み方は"
         "問題の手元のデータの読み方 (ML-EDA の `load_data`)"
         + (f". 入れた表はこのディレクトリの `{raw}` に写した" if raw
            else ""),

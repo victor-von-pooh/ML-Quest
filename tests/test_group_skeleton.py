@@ -590,23 +590,32 @@ def test_group_functions(tmp_path: Path) -> None:
     jaccard = names["group_jaccard"](labels, 1 - labels, 2)
     assert jaccard.tolist() == [1.0, 1.0]
 
-    # 符号化: 数の列は学習用で標準化して欠けた値は 0, 種類の列は値ごと.
-    # 学習用に無い値は全て 0
+    # 符号化: 数の列は学習用で標準化して欠けた値は 0, 種類の列は全ての行の
+    # 値ごと (検証用の行にだけ出る c も列になり, 幅は ML-EDA の群の要約の
+    # 符号化と同じ). 一覧に無い値は全て 0
     frame = pd.DataFrame({"spend": [1.0, 3.0, None],
                           "region": ["a", "b", "c"]})
-    encoding = names["make_encoding"](frame.iloc[:2])
+    encoding = names["make_encoding"](frame, np.array([0, 1]))
     assert encoding["numeric"]["spend"] == {"mean": 2.0, "std": 1.0}
-    assert encoding["categories"]["region"] == ["a", "b"]
+    assert encoding["categories"]["region"] == ["a", "b", "c"]
+    groups = pytest.importorskip("ml_eda.groups")
+    assert (encoding["categories"]
+            == groups.make_encoding(frame)["categories"])
     features = names["encode_rows"](frame, encoding)
-    assert features.tolist() == [[-1.0, 1.0, 0.0], [1.0, 0.0, 1.0],
-                                 [0.0, 0.0, 0.0]]
+    assert features.tolist() == [[-1.0, 1.0, 0.0, 0.0],
+                                 [1.0, 0.0, 1.0, 0.0],
+                                 [0.0, 0.0, 0.0, 1.0]]
+    unseen = pd.DataFrame({"spend": [2.0], "region": ["d"]})
+    assert names["encode_rows"](unseen, encoding).tolist() == [
+        [0.0, 0.0, 0.0, 0.0]
+    ]
 
     # 崩し方: 特徴ごとの元の列の番号は符号化と同じ並びで, 種類の列の 0 と 1
     # の列の組は同じ行から借りる (崩しても 1 がちょうど 1 つ)
     torch = pytest.importorskip("torch")
     wide = pd.DataFrame({"spend": rng.normal(0, 1, 200),
                          "region": rng.choice(["a", "b", "c"], 200)})
-    encoding = names["make_encoding"](wide)
+    encoding = names["make_encoding"](wide, np.arange(200))
     columns = names["feature_columns"](encoding)
     assert columns.tolist() == [0, 1, 1, 1]
     pool = torch.tensor(names["encode_rows"](wide, encoding))
