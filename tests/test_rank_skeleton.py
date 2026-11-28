@@ -307,7 +307,8 @@ def test_rank_handoff() -> None:
     assert stages["data"]["time_column"] == "ts"
     assert stages["data"]["target"] is None and stages["data"]["task"] is None
     assert stages["rank"] == {"user": "member", "item": "item_id",
-                              "time": "ts", "reaction": "qty", "k": 10}
+                              "time": "ts", "reaction": "qty", "k": 10,
+                              "shown": None, "presentation": None}
     assert (stages["training"]["monitor"], stages["training"]["mode"]) == (
         "valid/ndcg", "max"
     )
@@ -398,7 +399,8 @@ def test_rank_project(tmp_path: Path) -> None:
     assert config["data"]["dataset"] == "outputs/interactions.csv"
     assert (config["data"]["valid"], config["data"]["test"]) == (0.1, 0.1)
     assert config["rank"] == {"user": "member", "item": "item_id",
-                              "time": "ts", "reaction": "qty", "k": 10}
+                              "time": "ts", "reaction": "qty", "k": 10,
+                              "shown": None, "presentation": None}
     assert config["model"]["spec"] == "models/model.yaml"
     assert config["model"]["placeholder"] is True
     assert config["experiment"]["name"] == "item_id_rank"
@@ -473,6 +475,7 @@ def test_rank_placeholder(tmp_path: Path) -> None:
         assert table["better"]["recall_at_k_diff"] == "higher"
         row = table["rows"][0]
         assert row["k"] == 10 and row["users"] > 0
+        assert "presentation_auc" not in row
         for name in ("recall_at_k", "ndcg"):
             assert 0 <= row[name] <= 1 and 0 <= row[f"{name}_baseline"] <= 1
             assert row[f"{name}_diff"] == pytest.approx(

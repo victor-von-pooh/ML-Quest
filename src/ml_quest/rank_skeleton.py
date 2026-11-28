@@ -23,7 +23,8 @@ RANK_HEAD = '''"""
 
 利用者と品物の反応の表で, 2 塔のモデル (利用者と品物を別の塔で埋め込みに
 し, 内積を点数にする) を学び, 利用者ごとに上位 K の品物を並べて Recall@K
-と NDCG で確かめる骨組みなので, 印 (TODO) の所を書き足す
+と NDCG で確かめる骨組みなので, 印 (TODO) の所を書き足す. 見せただけの印の
+列があれば, 見せただけの品物を負の例にし, 1 回の提示の中の順位も確かめる
 """
 import json
 import math
@@ -32,13 +33,14 @@ import shutil
 import sys
 from typing import Any, Optional
 
+import numpy as np
 import pandas as pd
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 import yaml
 
-from ml_eda import load_data
+from ml_eda import load_data, load_reactions
 from ml_found import (
     Experiment, Trainer, load_project_config, ndcg_at_k, recall_at_k,
     save_evaluation, start_experiment, write_task
@@ -86,6 +88,15 @@ EVALUATION_TEXT = (
     "モデル − 人気順で, 大きいほど良い"
 )
 EVALUATION_BETTER = {"recall_at_k": "higher", "ndcg": "higher"}
+
+# 見せただけの記録があるときの, 1 回の提示の中の順位の評価の説明と向き
+PRESENTATION_TEXT = (
+    " presentation_auc は, 選んだ品物と見せただけの品物の両方が学習用に"
+    "いる{split}の提示 (presentations 回) ごとに, 選んだ品物を見せただけ"
+    "の品物より上に並べた組の割合 (同じ点数は半分) の平均で, 大きいほど"
+    "良い"
+)
+PRESENTATION_BETTER = {"presentation_auc": "higher"}
 
 # 比べる相手の名前
 BASELINE_NAME = "人気順 (学習用の反応の多い順)"
@@ -169,19 +180,26 @@ class RankTrainer(Trainer):
         Parameters
         ----------
         batch: tuple
-            (利用者の番号, 品物の番号)
+            (利用者の番号, 品物の番号) か, 見せただけの記録があれば
+            (利用者の番号, 品物の番号, 負の例の品物の番号. 無ければ -1)
         phase: str
             train, valid, train_eval のどれか
 
         Returns
         ----------
         outputs: dict
-            点数の表の対角を正解とする交差エントロピー (loss)
+            点数の表の対角を正解とする交差エントロピー (loss. 負の例は
+            バッチの品物の後ろの列に足す)
         """
         # 学習は学習しているモデル, 検証は評価のモデル (EMA があれば EMA)
-        users, items = batch
+        users, items = batch[0], batch[1]
+        negatives = batch[2][batch[2] >= 0] if len(batch) == 3 else None
         model = self.model if phase == "train" else self.eval_model()
-        score = pair_scores(model, users, items, self.sizes)
+        if negatives is None:
+            score = pair_scores(model, users, items, self.sizes)
+        else:
+            score = negative_scores(model, users, items, negatives,
+                                    self.sizes)
         target = torch.arange(len(users), device=score.device)
         outputs = {"loss": self.criterion(score, target)}
 
@@ -210,6 +228,42 @@ class RankTrainer(Trainer):
         metrics = rank_metrics(top, self.valid, self.k)
 
         return metrics
+
+
+def negative_scores(
+    model: nn.Module, users: torch.Tensor, items: torch.Tensor,
+    negatives: torch.Tensor, sizes: tuple
+) -> torch.Tensor:
+    """
+    バッチの品物の後ろに見せただけの品物の列を足した点数の表を返す関数
+
+    Parameters
+    ----------
+    model: nn.Module
+        2 塔のモデル
+    users: torch.Tensor
+        (件数,) の利用者の番号
+    items: torch.Tensor
+        (件数,) の正解の品物の番号
+    negatives: torch.Tensor
+        (負の例の数,) の見せただけの品物の番号
+    sizes: tuple
+        (利用者の数, 品物の数)
+
+    Returns
+    ----------
+    score: torch.Tensor
+        (件数, 件数 + 負の例の数) の点数 (行の正解と同じ品物の負の例の
+        列は -inf にして, 誤った負の例にしない)
+    """
+    # 負の例の列を足した点数と, 行の正解と同じ品物の負の例の隠し
+    score = pair_scores(model, users, torch.cat([items, negatives]), sizes)
+    same = negatives[None, :] == items[:, None]
+    hidden = torch.zeros_like(score, dtype=torch.bool)
+    hidden[:, len(items):] = same
+    score = score.masked_fill(hidden, -math.inf)
+
+    return score
 
 
 def one_hot(index: torch.Tensor, size: int) -> torch.Tensor:
@@ -565,6 +619,170 @@ def read_reactions(path: Path, cfg: Any) -> tuple[pd.DataFrame, list[str]]:
     return reactions, notes
 
 
+def read_shown(
+    path: Path, cfg: Any
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    """
+    見せただけの印の列のある反応の表を, ML-EDA の load_reactions で読む
+    関数
+
+    Parameters
+    ----------
+    path: Path
+        反応の表 (1 行が見せた品物 1 件)
+    cfg: Any
+        config (rank の列の名前)
+
+    Returns
+    ----------
+    reactions: pd.DataFrame
+        選んだ反応の user, item, time と提示の key (利用者と, 提示の列か
+        時刻の組) の列 (時刻の順)
+    shown: pd.DataFrame
+        見せただけの記録の user, item, time, key の列 (時刻の順)
+    notes: list[str]
+        除いた行の知らせ
+
+    Raises
+    ----------
+    ValueError
+        ML-EDA の load_reactions の誤り (列が無い, 印を読めないなど)
+    """
+    # ML-EDA と同じ除く行の決まり (選んだ行と重なる見せただけの行の除外も)
+    read = load_reactions(
+        path, cfg.rank.user, cfg.rank.item, cfg.rank.time, cfg.rank.reaction,
+        LOADER, shown=cfg.rank.shown,
+        presentation=cfg.rank.get("presentation"), **OPTIONS
+    )
+    frames = []
+    for frame in (read.frame, read.shown):
+        by = "presentation" if "presentation" in frame else "time"
+        frame = frame[["user", "item", "time"]].assign(
+            key=list(zip(frame["user"], frame[by]))
+        )
+        frames.append(frame.reset_index(drop=True))
+
+    return frames[0], frames[1], list(read.notes)
+
+
+def cut_times(reactions: pd.DataFrame, cfg: Any) -> tuple:
+    """
+    反応を時刻の順に分ける, 検証用とテスト用の始まりの時刻を求める関数
+
+    Parameters
+    ----------
+    reactions: pd.DataFrame
+        時刻の順の反応 (user, item, time)
+    cfg: Any
+        config (data.valid と data.test の割合)
+
+    Returns
+    ----------
+    cuts: tuple
+        検証用の始まりの時刻と, テスト用の始まりの時刻 (テスト用の割合が
+        0 なら None). 行の数の割合で決める
+
+    Raises
+    ----------
+    ValueError
+        割合の誤り
+    """
+    # 割合の確かめ
+    valid, test = cfg.data.valid, cfg.data.test
+    if not (0 < valid < 1 and 0 <= test < 1 and valid + test < 1):
+        raise ValueError("config の data.valid は 0 より大きく, data.test "
+                         "は 0 以上で, 2 つの和は 1 より小さくしてください")
+
+    # 切る時刻 (その時刻から先が次の分割)
+    times = reactions["time"]
+    count = len(reactions)
+    valid_from = times.iloc[min(int(count * (1 - valid - test)), count - 1)]
+    test_from = (times.iloc[min(int(count * (1 - test)), count - 1)]
+                 if test > 0 else None)
+    cuts = (valid_from, test_from)
+
+    return cuts
+
+
+def split_by_cuts(frame: pd.DataFrame, cuts: tuple) -> dict:
+    """
+    表を, 切る時刻で学習用, 検証用, テスト用に分ける関数
+
+    Parameters
+    ----------
+    frame: pd.DataFrame
+        time の列のある表 (反応か見せただけの記録)
+    cuts: tuple
+        cut_times の検証用とテスト用の始まりの時刻
+
+    Returns
+    ----------
+    splits: dict
+        train, valid と, テスト用の始まりがあれば test の表 (同じ時刻の
+        行は同じ分割)
+    """
+    # 始まりの時刻から先が次の分割
+    times = frame["time"]
+    valid_from, test_from = cuts
+    splits = {"train": frame[times < valid_from]}
+    if test_from is not None:
+        splits["valid"] = frame[(times >= valid_from) & (times < test_from)]
+        splits["test"] = frame[times >= test_from]
+    else:
+        splits["valid"] = frame[times >= valid_from]
+    splits = {name: part.reset_index(drop=True)
+              for name, part in splits.items()}
+
+    return splits
+
+
+def split_shown(
+    shown: pd.DataFrame, splits: dict, cuts: tuple
+) -> tuple[dict, int]:
+    """
+    見せただけの記録を, 同じ提示の選んだ行の分割に合わせて分ける関数
+
+    Parameters
+    ----------
+    shown: pd.DataFrame
+        見せただけの記録 (time と key の列. 時刻の順)
+    splits: dict
+        反応の分割 (split_by_time の結果. key の列がある)
+    cuts: tuple
+        cut_times の検証用とテスト用の始まりの時刻
+
+    Returns
+    ----------
+    parts: dict
+        反応と同じ分割の名前から見せただけの記録の表. 選んだ行のある提示
+        の行はその提示の選んだ行の最初の分割に, 無い提示の行は自分の時刻
+        の分割に入れる
+    moved: int
+        自分の時刻の分割と違う分割に入れた行の数
+    """
+    # 提示ごとの選んだ行の最初の分割 (学習用, 検証用, テスト用の順)
+    owner: dict = {}
+    for name, frame in splits.items():
+        for key in frame["key"]:
+            owner.setdefault(key, name)
+
+    # 自分の時刻の分割と, 提示に合わせた分割
+    times = shown["time"]
+    valid_from, test_from = cuts
+    own = pd.Series("train", index=shown.index)
+    own[times >= valid_from] = "valid"
+    if test_from is not None:
+        own[times >= test_from] = "test"
+    placed = pd.Series([owner.get(key, name)
+                        for key, name in zip(shown["key"], own)],
+                       index=shown.index)
+    parts = {name: shown[placed == name].reset_index(drop=True)
+             for name in splits}
+    moved = int((placed != own).sum())
+
+    return parts, moved
+
+
 def split_by_time(reactions: pd.DataFrame, cfg: Any) -> dict:
     """
     反応を時刻の順に学習用, 検証用, テスト用に分ける関数
@@ -587,30 +805,12 @@ def split_by_time(reactions: pd.DataFrame, cfg: Any) -> dict:
     ValueError
         割合の誤りと, 学習用か検証用が空になる場合
     """
-    # 割合の確かめ
-    valid, test = cfg.data.valid, cfg.data.test
-    if not (0 < valid < 1 and 0 <= test < 1 and valid + test < 1):
-        raise ValueError("config の data.valid は 0 より大きく, data.test "
-                         "は 0 以上で, 2 つの和は 1 より小さくしてください")
-
-    # 切る時刻 (その時刻から先が次の分割)
-    times = reactions["time"]
-    count = len(reactions)
-    valid_from = times.iloc[min(int(count * (1 - valid - test)), count - 1)]
-    splits = {"train": reactions[times < valid_from]}
-    if test > 0:
-        test_from = times.iloc[min(int(count * (1 - test)), count - 1)]
-        splits["valid"] = reactions[(times >= valid_from)
-                                    & (times < test_from)]
-        splits["test"] = reactions[times >= test_from]
-    else:
-        splits["valid"] = reactions[times >= valid_from]
+    # 切る時刻で分け, 学習用と検証用が空でないか
+    splits = split_by_cuts(reactions, cut_times(reactions, cfg))
     if splits["train"].empty or splits["valid"].empty:
         raise ValueError("時刻で分けると学習用か検証用の反応が空になります "
                          "(同じ時刻の反応が多いか, 反応が少ない). config の "
                          "data.valid と data.test を見直してください")
-    splits = {name: frame.reset_index(drop=True)
-              for name, frame in splits.items()}
 
     return splits
 
@@ -650,16 +850,118 @@ def to_numbers(frame: pd.DataFrame, index: dict) -> pd.DataFrame:
     Returns
     ----------
     numbered: pd.DataFrame
-        user と item の番号の列 (学習用にいない利用者か品物の行は除く)
+        user と item の番号の列と, 元の表にあれば提示の key の列 (学習用に
+        いない利用者か品物の行は除く)
     """
     # 番号の無い値は欠損にして除く
     users = {value: number for number, value in enumerate(index["users"])}
     items = {value: number for number, value in enumerate(index["items"])}
     numbered = pd.DataFrame({"user": frame["user"].map(users),
                              "item": frame["item"].map(items)}).dropna()
-    numbered = numbered.astype("int64").reset_index(drop=True)
+    numbered = numbered.astype("int64")
+    if "key" in frame:
+        numbered["key"] = frame["key"].loc[numbered.index]
+    numbered = numbered.reset_index(drop=True)
 
     return numbered
+
+
+def attach_negatives(
+    frame: pd.DataFrame, shown: pd.DataFrame, seed: int
+) -> pd.DataFrame:
+    """
+    選んだ反応の行ごとに, 同じ提示の見せただけの品物を 1 つ負の例に選ぶ
+    関数
+
+    Parameters
+    ----------
+    frame: pd.DataFrame
+        選んだ反応 (番号と key)
+    shown: pd.DataFrame
+        同じ分割の見せただけの記録 (番号と key)
+    seed: int
+        負の例を選ぶ乱数の種
+
+    Returns
+    ----------
+    paired: pd.DataFrame
+        user, item と negative (負の例の品物の番号. 同じ提示に見せただけの
+        品物が無ければ -1) の列
+    """
+    # 提示ごとの見せただけの品物から, 決まった種で 1 つ
+    rng = np.random.default_rng(seed)
+    pool: dict = {}
+    for key, item in zip(shown["key"], shown["item"]):
+        pool.setdefault(key, []).append(int(item))
+    negatives = [int(rng.choice(pool[key])) if key in pool else -1
+                 for key in frame["key"]]
+    paired = pd.DataFrame({"user": frame["user"], "item": frame["item"],
+                           "negative": negatives}).astype("int64")
+
+    return paired
+
+
+def presentation_pairs(frame: pd.DataFrame, shown: pd.DataFrame) -> list:
+    """
+    分割の提示ごとに, 選んだ品物と見せただけの品物の番号をまとめる関数
+
+    Parameters
+    ----------
+    frame: pd.DataFrame
+        分割の選んだ反応 (番号と key)
+    shown: pd.DataFrame
+        分割の見せただけの記録 (番号と key)
+
+    Returns
+    ----------
+    pairs: list
+        (利用者の番号, 選んだ品物の番号の並び, 見せただけの品物の番号の
+        並び) の並び (両方がある提示だけ. key を文字にした順)
+    """
+    # 提示ごとの選んだ品物と見せただけの品物 (学習用にいるものだけ)
+    chosen: dict = {}
+    for key, user, item in zip(frame["key"], frame["user"], frame["item"]):
+        chosen.setdefault(key, (int(user), set()))[1].add(int(item))
+    others: dict = {}
+    for key, item in zip(shown["key"], shown["item"]):
+        others.setdefault(key, set()).add(int(item))
+    pairs = [(chosen[key][0], sorted(chosen[key][1]),
+              sorted(others[key] - chosen[key][1]))
+             for key in sorted(chosen, key=str) if others.get(key)]
+    pairs = [pair for pair in pairs if pair[2]]
+
+    return pairs
+
+
+def presentation_auc(scores: dict, pairs: list) -> float:
+    """
+    提示ごとに, 選んだ品物を見せただけの品物より上に並べた組の割合を
+    平均する関数
+
+    Parameters
+    ----------
+    scores: dict
+        利用者の番号から, 全ての品物の点数の配列
+    pairs: list
+        presentation_pairs の並び
+
+    Returns
+    ----------
+    auc: float
+        提示ごとの割合 (同じ点数は半分) の平均 (提示が無ければ nan.
+        骨組みは提示のある分割だけで呼ぶ)
+    """
+    # 選んだ品物と見せただけの品物の全ての組の比べ
+    values = []
+    for user, chosen, others in pairs:
+        row = scores[user]
+        upper = row[chosen][:, None]
+        lower = row[others][None, :]
+        wins = (upper > lower).sum() + 0.5 * (upper == lower).sum()
+        values.append(float(wins) / (len(chosen) * len(others)))
+    auc = float(np.mean(values)) if values else math.nan
+
+    return auc
 
 
 def rank_target(frame: pd.DataFrame, before: list[pd.DataFrame]) -> dict:
@@ -849,7 +1151,7 @@ def pair_loader(
     Parameters
     ----------
     frame: pd.DataFrame
-        反応 (番号)
+        反応 (番号. 見せただけの記録があれば negative の列も)
     batch_size: int
         バッチの大きさ
     shuffle: bool
@@ -858,11 +1160,13 @@ def pair_loader(
     Returns
     ----------
     loader: DataLoader
-        (利用者の番号, 品物の番号) のバッチ
+        (利用者の番号, 品物の番号) か, 負の例の番号も足したバッチ
     """
-    # 番号は int64
-    pairs = TensorDataset(torch.tensor(frame["user"].to_numpy()),
-                          torch.tensor(frame["item"].to_numpy()))
+    # 番号は int64 (見せただけの記録があれば負の例の番号も)
+    columns = [name for name in ("user", "item", "negative")
+               if name in frame]
+    pairs = TensorDataset(*[torch.tensor(frame[name].to_numpy())
+                            for name in columns])
     loader = DataLoader(pairs, batch_size=batch_size, shuffle=shuffle)
 
     return loader
@@ -870,10 +1174,11 @@ def pair_loader(
 
 def evaluate_split(
     trainer: RankTrainer, target: dict, train: pd.DataFrame, split: str,
-    cfg: Any, experiment: Experiment
+    cfg: Any, experiment: Experiment, pairs: Optional[list] = None
 ) -> dict:
     """
-    学習した後の重みで, 分割の Recall@K と NDCG を人気順と並べて数える関数
+    学習した後の重みで, 分割の Recall@K と NDCG (見せただけの記録があれば
+    提示の中の順位も) を人気順と並べて数える関数
 
     Parameters
     ----------
@@ -889,11 +1194,15 @@ def evaluate_split(
         config (上位の件数と, 利用者のまとまりの大きさ)
     experiment: Experiment
         実験 (train.log に記録する)
+    pairs: Optional[list] = None
+        見せただけの記録があれば, 分割の presentation_pairs (無ければ
+        None)
 
     Returns
     ----------
     row: dict
-        users (数えた利用者の数), k, recall_at_k, ndcg と, 人気順の
+        users (数えた利用者の数), k, recall_at_k, ndcg と, 見せただけの
+        記録があれば presentations と presentation_auc. それぞれの人気順の
         _baseline と, 差の _diff
     """
     # モデルと人気順で同じ利用者を並べる (前の分割の品物は除く)
@@ -905,8 +1214,16 @@ def evaluate_split(
         popular_top(train, target, trainer.sizes[1], cfg.rank.k), target,
         cfg.rank.k
     )
+    names = ["recall_at_k", "ndcg"]
     row = {"users": len(target["users"]), "k": cfg.rank.k}
-    for name in ("recall_at_k", "ndcg"):
+    if pairs:
+        row["presentations"] = len(pairs)
+        found["presentation_auc"], popular["presentation_auc"] = (
+            presentation_scores(model, train, pairs, trainer.sizes,
+                                cfg.data.batch_size)
+        )
+        names.append("presentation_auc")
+    for name in names:
         row[name] = found[name]
         row[f"{name}_baseline"] = popular[name]
         row[f"{name}_diff"] = found[name] - popular[name]
@@ -916,8 +1233,68 @@ def evaluate_split(
         f"{popular['recall_at_k']:.4f}), NDCG {found['ndcg']:.4f} (人気順 "
         f"{popular['ndcg']:.4f})"
     )
+    if pairs is not None and not pairs:
+        experiment.logger.info(
+            f"{split} に, 選んだ品物と見せただけの品物の両方が学習用にいる"
+            "提示が無いので, 提示の中の順位は数えません"
+        )
+    if pairs:
+        experiment.logger.info(
+            f"{split} の提示の中の順位 ({len(pairs)} 回): "
+            f"{found['presentation_auc']:.4f} (人気順 "
+            f"{popular['presentation_auc']:.4f})"
+        )
 
     return row
+
+
+def presentation_scores(
+    model: nn.Module, train: pd.DataFrame, pairs: list, sizes: tuple,
+    batch_size: int
+) -> tuple[float, float]:
+    """
+    モデルと人気順で, 1 回の提示の中の順位の評価を数える関数
+
+    Parameters
+    ----------
+    model: nn.Module
+        学習した後のモデル (CPU)
+    train: pd.DataFrame
+        学習用の反応 (番号. 人気順を決める)
+    pairs: list
+        presentation_pairs の並び
+    sizes: tuple
+        (利用者の数, 品物の数)
+    batch_size: int
+        1 回に点数を求める利用者 (と, 2 塔でない定義の品物) の数
+
+    Returns
+    ----------
+    found: float
+        モデルの点数の presentation_auc
+    popular: float
+        学習用の反応の数を点数にした presentation_auc
+    """
+    # 提示のある利用者ごとの, 全ての品物の点数
+    users = sorted({user for user, _, _ in pairs})
+    scores: dict = {}
+    model.eval()
+    with torch.no_grad():
+        items = item_embeddings(model, sizes, batch_size, "cpu")
+        for start in range(0, len(users), batch_size):
+            chunk = users[start:start + batch_size]
+            rows = chunk_scores(model, torch.tensor(chunk), sizes,
+                                batch_size, items)
+            scores.update(zip(chunk, rows.numpy()))
+
+    # 人気順は全ての利用者で同じ点数
+    counts = train["item"].value_counts().reindex(range(sizes[1]),
+                                                   fill_value=0)
+    counts = counts.to_numpy().astype(float)
+    found = presentation_auc(scores, pairs)
+    popular = presentation_auc({user: counts for user in users}, pairs)
+
+    return found, popular
 
 
 def write_index(run_dir: Path, index: dict) -> None:
@@ -1039,9 +1416,14 @@ def main() -> None:
               f"{cfg.rank.k})")
         sys.exit(1)
 
-    # 利用者, 品物, 時刻の列にそろえ, 時刻の順に分ける
+    # 利用者, 品物, 時刻の列にそろえ, 時刻の順に分ける (見せただけの印の
+    # 列があれば, 見せただけの記録も同じ時刻で分ける)
+    shown = None
     try:
-        reactions, notes = read_reactions(path, cfg)
+        if cfg.rank.get("shown"):
+            reactions, shown, notes = read_shown(path, cfg)
+        else:
+            reactions, notes = read_reactions(path, cfg)
         splits = split_by_time(reactions, cfg)
     except ValueError as error:
         print(error)
@@ -1061,6 +1443,20 @@ def main() -> None:
               "反応した行がありません. 最も良いモデルを選ぶために, config の"
               " data.valid を大きくしてください")
         sys.exit(1)
+
+    # 見せただけの記録の負の例と, 提示の中の順位を数える組
+    pairs: dict = {}
+    if shown is not None:
+        shown_splits, moved = split_shown(shown, splits,
+                                          cut_times(reactions, cfg))
+        shown_numbered = {name: to_numbers(frame, index)
+                          for name, frame in shown_splits.items()}
+        pairs = {name: presentation_pairs(numbered[name],
+                                          shown_numbered[name])
+                 for name in targets}
+        numbered = {name: attach_negatives(frame, shown_numbered[name],
+                                           cfg.experiment.seed)
+                    for name, frame in numbered.items()}
 
     # モデルの定義の確かめ (誤りなら出力先を作る前に止まる)
     spec = project_spec(cfg)
@@ -1087,6 +1483,16 @@ def main() -> None:
     )
     for note in notes:
         experiment.logger.info(note)
+    if shown is not None:
+        experiment.logger.info(
+            "見せただけの記録: "
+            + ", ".join(f"{name} {len(frame)} 行"
+                        for name, frame in shown_splits.items())
+            + f" (選んだ行と同じ提示の分割に合わせた行 {moved} 行)"
+            + ". 学習の負の例: "
+            + ", ".join(f"{name} {int((frame['negative'] >= 0).sum())} 行"
+                        for name, frame in numbered.items())
+        )
     for name, frame in splits.items():
         dropped = len(frame) - len(numbered[name])
         if dropped:
@@ -1136,12 +1542,16 @@ def main() -> None:
             )
             continue
         row = evaluate_split(trainer, targets[split], numbered["train"],
-                             split, cfg, experiment)
+                             split, cfg, experiment, pairs.get(split))
+        extra = "presentation_auc" in row
+        text = EVALUATION_TEXT + (PRESENTATION_TEXT if extra else "")
         save_evaluation(
             experiment, f"{EVALUATION}_{split}", [row], split,
-            description=EVALUATION_TEXT.format(split=title, k=cfg.rank.k,
-                                               weights=weights),
-            baseline=BASELINE_NAME, epoch=epoch, better=EVALUATION_BETTER
+            description=text.format(split=title, k=cfg.rank.k,
+                                    weights=weights),
+            baseline=BASELINE_NAME, epoch=epoch,
+            better={**EVALUATION_BETTER,
+                    **(PRESENTATION_BETTER if extra else {})}
         )
 
     # 実験の中に並べるの推論の一式 (ML-ModelControl の定義がある場合だけ.
@@ -1193,6 +1603,11 @@ rank:
   item: $item
   time: $time
   reaction: $reaction
+  # 見せただけの印の列 (真の行は見せたが選ばれなかった品物で, 負の例と
+  # 提示の中の順位の評価に使う. null なら選んだ反応だけ) と, 提示の列
+  # (null なら利用者と時刻の組を 1 回の提示とみなす)
+  shown: $shown
+  presentation: $presentation
   # 利用者ごとに並べる品物の数 (Recall@K と NDCG の K)
   k: $k
 
@@ -1279,6 +1694,8 @@ def rank_config(
         item=json.dumps(rank["item"], ensure_ascii=False),
         time=json.dumps(rank["time"], ensure_ascii=False),
         reaction=json.dumps(rank["reaction"], ensure_ascii=False),
+        shown=json.dumps(rank["shown"], ensure_ascii=False),
+        presentation=json.dumps(rank["presentation"], ensure_ascii=False),
         k=json.dumps(rank["k"]), valid=RANK_VALID, test=RANK_TEST,
     )
 
@@ -1350,9 +1767,10 @@ def rank_readme(
         "1. **データ**: 反応の表 (1 行が 1 つの反応) を config の "
         f"`data.dataset` の場所 (`{dataset}`) に置く. 列は利用者 "
         f"`{rank['user']}`, 品物 `{rank['item']}`, 時刻 `{rank['time']}` "
-        f"(数か日時) で, {reaction}. 他の列は読まない. 利用者, 品物か時刻の"
+        f"(数か日時) で, {reaction}. 他の列は (見せただけの印と提示の列を"
+        "除いて) 読まない. 利用者, 品物か時刻の"
         "欠けた行は除く. 読み方は問題の手元のデータの読み方 (ML-EDA "
-        "の `load_data`)"
+        "の `load_data`)" + shown_text(rank)
         + (f". 入れた表はこのディレクトリの `{raw}` に写した" if raw
            else ""),
         "2. **モデルの作成・選定** (ML-ModelControl): モデルの作成・選定の段階で組んだ定義を"
@@ -1400,5 +1818,37 @@ def rank_readme(
         "変えたら, 書き出し直すか手で直す.", "",
     ]
     text = "\n".join(lines)
+
+    return text
+
+
+def shown_text(rank: dict) -> str:
+    """
+    README のデータの案内に足す, 見せただけの記録の文を作る関数
+
+    Parameters
+    ----------
+    rank: dict
+        受け渡しの rank (shown と presentation の列の名前)
+
+    Returns
+    ----------
+    text: str
+        見せただけの印の列があれば, 読み方と使い方の文 (無ければ空)
+    """
+    # 印の列が無ければ選んだ反応だけ
+    if not rank["shown"]:
+        text = ""
+        return text
+    by = (f"利用者と提示 `{rank['presentation']}` の組"
+          if rank["presentation"] else "利用者と時刻の組")
+    text = (
+        f". 見せただけの印の列 `{rank['shown']}` が真の行は, 見せたが"
+        "選ばれなかった品物 (1 行が見せた品物 1 件. 選んだ行の印は偽か空)"
+        " で, ML-EDA の `load_reactions` で読む. 見せただけの品物は同じ"
+        f"提示 ({by}) の反応の負の例にし, 検証用とテスト用で 1 回の提示の"
+        "中の順位 (`presentation_auc`. 選んだ品物を見せただけの品物より"
+        "上に並べた組の割合) を人気順と並べて評価の表に足す"
+    )
 
     return text

@@ -19,7 +19,7 @@ dependencies = [
 # 手元のデータから答えの候補を出す (ML-EDA の読み込みと分析. 画像と, WAVE
 # の他の音声も読む)
 data = [
-    "ml-eda[image,audio] @ git+https://github.com/victor-von-pooh/ML-EDA.git@2a7782f"
+    "ml-eda[image,audio] @ git+https://github.com/victor-von-pooh/ML-EDA.git@660ea3b"
 ]
 dev = [
     "pytest"

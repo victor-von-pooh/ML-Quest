@@ -601,15 +601,17 @@ def rank_of(problem: dict) -> Optional[dict]:
     Returns
     ----------
     rank: Optional[dict]
-        user, item, time, reaction (列の名前. 反応の強さは答えていなければ
-        None), k (並べる件数. 整数) (並べるで学習しなければ None)
+        user, item, time, reaction, shown, presentation (列の名前. 反応の
+        強さ, 見せただけの印と提示は答えていなければ None), k (並べる件数.
+        整数) (並べるで学習しなければ None)
     """
     # 並べるで学習するときだけ (要らなくなった問いの古い答えは除外)
     if not is_rank_part(problem):
         return None
     rank: dict[str, Any] = {
         key: active_value(problem, f"{PART}.rank.{key}")
-        for key in ("user", "item", "time", "reaction")
+        for key in ("user", "item", "time", "reaction", "shown",
+                    "presentation")
     }
     k = active_value(problem, f"{PART}.rank.k")
     rank["k"] = (int(k) if isinstance(k, (int, float))
