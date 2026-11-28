@@ -463,6 +463,7 @@ BLOCKING_IDS = {
     "ml.parts.0.uplift.treatment", "ml.parts.0.uplift.outcome",
     "ml.parts.0.uplift.outcome_kind", "ml.parts.0.uplift.id",
     "ml.parts.0.uplift.columns", "ml.parts.0.uplift.k",
+    "ml.parts.0.uplift.learner",
     "ml.parts.0.varied", "ml.parts.0.price.price", "ml.parts.0.price.units",
     "ml.parts.0.price.cost", "ml.parts.0.price.product",
     "ml.parts.0.price.id", "ml.parts.0.price.columns",

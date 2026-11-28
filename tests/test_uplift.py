@@ -93,8 +93,12 @@ def test_uplift_questions() -> None:
     problem = uplift_problem()
     items = {item["id"]: item for item in questions(problem)}
     for name in ("treatment", "outcome", "outcome_kind", "id", "columns",
-                 "k"):
+                 "k", "learner"):
         assert items[f"{PART}.uplift.{name}"]["applies"]
+    learner = items[f"{PART}.uplift.learner"]
+    assert not learner["required"]
+    assert [c["value"] for c in learner["choices"]] == ["t_learner",
+                                                        "s_learner"]
     assert items["information.columns"]["applies"]
     assert items["action.decision"]["applies"]
     assert [c["value"] for c in items["action.decision"]["choices"]] == [
@@ -133,9 +137,11 @@ def test_uplift_check() -> None:
     ----------
     None
     """
-    # 0 と 1 も額も通ることの確認
+    # 0 と 1 も額も, 2 つの効果の決め方も通ることの確認
     assert errors_of(uplift_problem()) == []
     assert errors_of(uplift_problem("amount")) == []
+    assert errors_of(answer(uplift_problem(), f"{PART}.uplift.learner",
+                            "s_learner")) == []
 
     # 列と上位の割合と正解の出どころ
     cases = [
@@ -149,6 +155,11 @@ def test_uplift_check() -> None:
     for key, value, place in cases:
         problem = answer(uplift_problem(), f"{PART}.{key}", value)
         assert place in errors_of(problem), (key, value)
+
+    # 手で書いた知らない効果の決め方
+    problem = uplift_problem()
+    problem["ml"]["parts"][0]["uplift"]["learner"] = "x_learner"
+    assert f"{PART}.uplift.learner" in errors_of(problem)
 
     # 列を答え直した後の古い名前
     problem = uplift_problem()
@@ -224,7 +235,7 @@ def test_uplift_handoff() -> None:
     assert stages["uplift"] == {
         "treatment": "coupon", "outcome": "purchased",
         "outcome_kind": "binary", "id": "customer_id",
-        "columns": ["age", "visits"], "k": 0.3,
+        "columns": ["age", "visits"], "k": 0.3, "learner": "t_learner",
     }
     assert stages["requires"] == []
 
@@ -246,6 +257,18 @@ def test_uplift_handoff() -> None:
     assert model_example(tuned) is None
     assert handoff(tuned)["model"]["example"] is None
     assert MODEL_EXAMPLES[("effect", None)] == "tabular_uplift"
+
+    # S-learner の雛形と効果の決め方 (データの分析の値は同じ)
+    single = answer(uplift_problem(), f"{PART}.uplift.learner", "s_learner")
+    stages = handoff(single)
+    assert stages["uplift"]["learner"] == "s_learner"
+    assert stages["model"]["example"] == "tabular_uplift_s"
+    assert stages["model"]["outputs"] == 1
+    assert stages["data"] == handoff(uplift_problem())["data"]
+    assert MODEL_EXAMPLES[("effect", "s_learner")] == "tabular_uplift_s"
+    explicit = answer(uplift_problem(), f"{PART}.uplift.learner",
+                      "t_learner")
+    assert handoff(explicit) == handoff(uplift_problem())
 
 
 def test_uplift_recipe() -> None:
