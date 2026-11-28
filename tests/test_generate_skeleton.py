@@ -268,6 +268,26 @@ def test_generate_handoff() -> None:
             handoff(fid)["training"]["mode"]) == ("valid/fid", "min")
 
 
+def test_generate_origin() -> None:
+    """
+    task.yaml の正解の出どころの種類が, 問題の設定の正解の出どころが自分
+    自身なら self, 他なら unknown になることを確かめる関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    None
+    """
+    from ml_quest.generate_skeleton import generation_origin
+    problem = generate_problem()
+    assert generation_origin(problem) == "self"
+    problem = answer(problem, f"{PART}.target.source", "none")
+    assert generation_origin(problem) == "unknown"
+
+
 def test_generate_errors(tmp_path: Path) -> None:
     """
     画像の生成で書き出せない場合が, make_project と同じ文になることを
@@ -367,6 +387,8 @@ def test_generate_project(tmp_path: Path) -> None:
     ast.parse(script)
     assert 'ROLE = "generate"' in script and "PlaceholderModel" in script
     assert 'PREDICT = "丸の画像"' in script
+    assert 'TARGET_KIND = "image"' in script
+    assert 'ORIGIN_TYPE = "self"' in script
 
     # config: 要る機能, 監視, 検証の間隔, EMA, データセットとモデルの定義の
     # 場所, FID の特徴
@@ -390,6 +412,7 @@ def test_generate_project(tmp_path: Path) -> None:
     for words in ("task: none", "data/images", "int64", "FID を選んで",
                   "版 5", "見本", "grayscale", "1 / (1 - decay)"):
         assert words in readme, words
+    assert "正解の出どころ `self` を持つもの" in readme
 
     # 案内どおりの書き出しで, 目的の列の無い画像のデータセット
     place = export(problem, project)
@@ -527,6 +550,45 @@ def test_generate_sample_steps(tmp_path: Path) -> None:
     )
 
 
+def test_generate_old_found(tmp_path: Path) -> None:
+    """
+    出どころ self を知らない ML-Found では, 出力先を作る前に分かる文で
+    止まることを確かめる関数 (PyTorch と段階のライブラリが無ければ飛ばす)
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # ML-Found の出どころの値から self を除いて, 書き出した train.py を動かす
+    for name in TRAINING:
+        pytest.importorskip(name)
+    problem = attached(tmp_path)
+    project = tmp_path / "project"
+    make_project(problem, project)
+    export(problem, project)
+    code = ("import runpy, sys\n"
+            "from ml_found.experiment import task\n"
+            "task.ORIGIN_TYPES = tuple(value for value in task.ORIGIN_TYPES"
+            " if value != 'self')\n"
+            "sys.argv = ['train.py', *sys.argv[1:]]\n"
+            "runpy.run_path('train.py', run_name='__main__')\n")
+    done = subprocess.run([sys.executable, "-c", code, *SHORT],
+                          cwd=project, capture_output=True, text=True,
+                          timeout=600)
+    assert done.returncode == 1, done.stderr[-2000:]
+    assert ("この骨組みは正解の出どころ self を持つ ML-Found が要ります. "
+            "ML-Found を git の main に上げてから学習し直してください"
+            in done.stdout)
+    assert not (project / "outputs").exists() or not any(
+        (project / "outputs").glob("*/*/*/train.log")
+    )
+
+
 def test_generate_training(tmp_path: Path) -> None:
     """
     画像の生成の骨組みを書き換えずに学び, 雑音だけの推論の一式が見本と
@@ -557,12 +619,22 @@ def test_generate_training(tmp_path: Path) -> None:
                      encoding="utf-8")
     run, _ = train(project)
 
-    # 何の実験か, EMA の重み, テスト用の損失
+    # 何の実験か (正解は学んだ画像そのもので出どころは self, データセットは
+    # 書き出した場所と名前), EMA の重み, テスト用の損失
     task = yaml.safe_load((run / "task.yaml").read_text(encoding="utf-8"))
     assert (task["role"], task["output"], task["what"]) == (
         "generate", "image", "丸の画像"
     )
+    name = yaml.safe_load((project / "outputs" / "dataset" / "dataset.yaml")
+                          .read_text(encoding="utf-8"))["name"]
+    assert task["target"] == {
+        "kind": "image",
+        "origin": {"type": "self", "name": None, "settings": None},
+    }
+    assert task["dataset"] == {"path": "outputs/dataset", "name": name,
+                               "format_version": None}
     log = (run / "train.log").read_text(encoding="utf-8")
+    assert "学んだデータそのものが正解" in log
     assert "EMA" in log and "テスト用の損失" in log
     assert "作るもの: 丸の画像" in log and "予測すること" not in log
     table = json.loads((run / "evaluations" / "test_loss.json")

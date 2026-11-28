@@ -382,6 +382,8 @@ def test_table_project(tmp_path: Path) -> None:
     ast.parse(script)
     assert 'ROLE = "generate"' in script and 'OUTPUT = "table"' in script
     assert 'PREDICT = "顧客の表に似た行"' in script
+    assert 'TARGET_KIND = "table"' in script
+    assert 'ORIGIN_TYPE = "self"' in script
     assert "PlaceholderModel" in script
 
     # config: 要る機能, 監視, EMA, データセットとモデルの定義の場所
@@ -404,6 +406,7 @@ def test_table_project(tmp_path: Path) -> None:
                   "Wasserstein", "column_distance_test.json", "版 7",
                   "`table`", "table_columns.json"):
         assert words in readme, words
+    assert "正解の出どころ `self` を持つもの" in readme
 
     # 案内どおりの書き出しで, 目的の列の無い表のデータセット
     place = export(problem, project)
@@ -483,6 +486,45 @@ def test_table_placeholder(tmp_path: Path) -> None:
     assert columns[3]["categories"] == ["a", "b", "c"]
 
 
+def test_table_old_found(tmp_path: Path) -> None:
+    """
+    出どころ self を知らない ML-Found では, 出力先を作る前に分かる文で
+    止まることを確かめる関数 (PyTorch と段階のライブラリが無ければ飛ばす)
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # ML-Found の出どころの値から self を除いて, 書き出した train.py を動かす
+    for name in TRAINING:
+        pytest.importorskip(name)
+    problem = attached(tmp_path)
+    project = tmp_path / "project"
+    make_project(problem, project)
+    export(problem, project)
+    code = ("import runpy, sys\n"
+            "from ml_found.experiment import task\n"
+            "task.ORIGIN_TYPES = tuple(value for value in task.ORIGIN_TYPES"
+            " if value != 'self')\n"
+            "sys.argv = ['train.py', *sys.argv[1:]]\n"
+            "runpy.run_path('train.py', run_name='__main__')\n")
+    done = subprocess.run([sys.executable, "-c", code, *SHORT],
+                          cwd=project, capture_output=True, text=True,
+                          timeout=600)
+    assert done.returncode == 1, done.stderr[-2000:]
+    assert ("この骨組みは正解の出どころ self を持つ ML-Found が要ります. "
+            "ML-Found を git の main に上げてから学習し直してください"
+            in done.stdout)
+    assert not (project / "outputs").exists() or not any(
+        (project / "outputs").glob("*/*/*/train.log")
+    )
+
+
 def test_table_training(tmp_path: Path) -> None:
     """
     表の生成の骨組みを書き換えずに同梱の例の幅を合わせた定義で学び, 雑音
@@ -514,11 +556,22 @@ def test_table_training(tmp_path: Path) -> None:
                      encoding="utf-8")
     run, _ = train(project)
 
-    # 何の実験か
+    # 何の実験か (正解は学んだ表そのもので出どころは self, データセットは
+    # 書き出した場所と名前)
     task = yaml.safe_load((run / "task.yaml").read_text(encoding="utf-8"))
     assert (task["role"], task["output"], task["what"]) == (
         "generate", "table", "顧客の表に似た行"
     )
+    name = yaml.safe_load((project / "outputs" / "dataset" / "dataset.yaml")
+                          .read_text(encoding="utf-8"))["name"]
+    assert task["target"] == {
+        "kind": "table",
+        "origin": {"type": "self", "name": None, "settings": None},
+    }
+    assert task["dataset"] == {"path": "outputs/dataset", "name": name,
+                               "format_version": None}
+    log = (run / "train.log").read_text(encoding="utf-8")
+    assert "学んだデータそのものが正解" in log
 
     # 雑音だけの一式 (版 7): 学習と同じ雑音の予定の ddim で, 列の符号化を
     # 写した表の出力

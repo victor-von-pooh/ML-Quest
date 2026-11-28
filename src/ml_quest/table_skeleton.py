@@ -2,6 +2,7 @@ import json
 from string import Template
 from typing import Callable, Optional
 
+from ml_quest.generate_skeleton import generation_origin, origin_readme
 from ml_quest.handoff import describe
 from ml_quest.problem import active_value
 from ml_quest.questions import PART
@@ -40,6 +41,7 @@ from ml_found import (
     Experiment, Trainer, load_project_config, save_evaluation, save_sample,
     start_experiment, write_task
 )
+from ml_found.experiment import task as found_task
 
 # このプロジェクトのディレクトリ (ML-Found のプロジェクト)
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -52,6 +54,11 @@ PREDICT = $predict
 ROLE = "generate"
 OUTPUT = "table"
 METHOD = $method
+
+# task.yaml の正解の種類と出どころの種類 (問題の設定の正解の出どころが
+# 自分自身なら, 学んだ表そのものが正解なので self. 他は unknown)
+TARGET_KIND = "table"
+ORIGIN_TYPE = $origin_type
 
 # 推論の一式の出力の形 (ML-Inference の表の出力の雑音だけの一式. 列の
 # 符号化を一式に写し, 列の名前と値の表を返す)
@@ -1045,6 +1052,33 @@ def write_columns(run_dir: Path, columns: list[dict]) -> None:
     (run_dir / COLUMNS_FILE).write_text(text + "\\n", encoding="utf-8")
 
 
+def origin_error() -> Optional[str]:
+    """
+    入れた ML-Found が task.yaml の正解の出どころの値を書けるかを確かめる
+    関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    message: Optional[str]
+        書けない場合の文, 書ける場合は None
+    """
+    # 出どころ self を知らない古い ML-Found では write_task が分かりにくい
+    # 誤りで止まるので, 出力先を作る前に確かめる
+    message = None
+    if ORIGIN_TYPE not in getattr(found_task, "ORIGIN_TYPES", ()):
+        message = (
+            f"この骨組みは正解の出どころ {ORIGIN_TYPE} を持つ ML-Found が"
+            "要ります. ML-Found を git の main に上げてから学習し直して"
+            "ください"
+        )
+
+    return message
+
+
 def make_inference(
     cfg: Any, spec: Optional[Path], run_dir: Path, experiment: Experiment
 ) -> None:
@@ -1171,11 +1205,23 @@ def main() -> None:
         print("\\n".join(f"- {message}" for message in errors))
         sys.exit(1)
 
-    # 何の実験か (受け持ち, 出力の形, 作るもの, 作り方は問題の設定から).
+    # 入れた ML-Found が正解の出どころを書けるか
+    origin = origin_error()
+    if origin is not None:
+        print(origin)
+        sys.exit(1)
+
+    # 何の実験か (受け持ち, 出力の形, 作るもの, 作り方は問題の設定から.
+    # 学習に使ったデータセットは場所と dataset.yaml の名前.
+    # 版 1 のデータセットなので版は書かない).
     # TODO: 既製のモデルを元にするなら, 元にした実験か重みを task["base"]
     experiment = start_experiment(cfg, diff, str(PROJECT_DIR))
-    write_task(experiment, {"role": ROLE, "output": OUTPUT,
-                            "what": PREDICT, "method": METHOD})
+    write_task(experiment, {
+        "role": ROLE, "output": OUTPUT, "what": PREDICT,
+        "target": {"kind": TARGET_KIND, "origin": {"type": ORIGIN_TYPE}},
+        "method": METHOD,
+        "dataset": {"path": str(path), "name": dataset.info.get("name")},
+    })
 
     # 列の数, 符号化した行の幅, 行の数と学習と検証の loader
     numbers = sum(column["type"] == "number" for column in columns)
@@ -1330,6 +1376,7 @@ def table_script(problem: dict, literal: Callable) -> str:
         name=literal(str(problem.get("name", ""))),
         predict=literal(str(active_value(problem, f"{PART}.what") or "")),
         method=literal(active_value(problem, f"{PART}.method")),
+        origin_type=literal(generation_origin(problem)),
     )
     # train.log の初めの行の作るもの (空なら省く)
     made = ("作るもの: {PREDICT}. "
@@ -1395,6 +1442,9 @@ def table_readme(
     text: str
         Markdown の文書
     """
+    # ML-Found の要件 (正解の出どころが self なら)
+    origin_note = origin_readme(problem)
+
     # 筋道の要約
     lines = [f"# {problem.get('name', '')}", "",
              "ML-Quest で問題 (`problem.yaml`) から書き出した, "
@@ -1409,7 +1459,8 @@ def table_readme(
         "", "## 次にすること", "",
         "学習する環境には ML-EDA, ML-Found, ML-ModelControl, ML-Inference を"
         " 入れる (config の `requires` の機能. 足りなければ学習の前に入れ方を"
-        "示して止まる. ML-ModelControl と ML-Inference は定義を置くと使う).", "",
+        "示して止まる. ML-ModelControl と ML-Inference は定義を置くと使う)."
+        + origin_note, "",
         "1. **データの分析** (ML-EDA): 表のファイルを ML-EDA で"
         "読み, 目的の列の無いレシピ (`task: none`. `recipe_from` の雛形) で"
         "このディレクトリの `" + dataset + "` に書き出す. 検証用の分割は"

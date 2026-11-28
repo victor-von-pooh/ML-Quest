@@ -388,7 +388,7 @@ SIMULATORS = [
 FALLBACKS = [
     {"value": "stop", "label": "その場で止める"},
     {"value": "handover", "label": "元の制御 (今のやり方) に戻す"},
-    {"value": "action", "label": "決めた行動にする (例: 動かさない)"},
+    {"value": "action", "label": "決めた行動にする"},
 ]
 
 # 意思決定の型と, 型ごとの欄 (画面はこれだけで描く. 項目は ML-Inference の
