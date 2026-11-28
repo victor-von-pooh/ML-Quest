@@ -406,6 +406,7 @@ def test_table_project(tmp_path: Path) -> None:
                   "Wasserstein", "column_distance_test.json", "版 7",
                   "`table`", "table_columns.json"):
         assert words in readme, words
+    assert "正解の出どころ `self` を持つもの" in readme
 
     # 案内どおりの書き出しで, 目的の列の無い表のデータセット
     place = export(problem, project)
@@ -483,6 +484,45 @@ def test_table_placeholder(tmp_path: Path) -> None:
     ]
     assert columns[2]["integer"] is True
     assert columns[3]["categories"] == ["a", "b", "c"]
+
+
+def test_table_old_found(tmp_path: Path) -> None:
+    """
+    出どころ self を知らない ML-Found では, 出力先を作る前に分かる文で
+    止まることを確かめる関数 (PyTorch と段階のライブラリが無ければ飛ばす)
+
+    Parameters
+    ----------
+    tmp_path: Path
+        一時ディレクトリ
+
+    Returns
+    ----------
+    None
+    """
+    # ML-Found の出どころの値から self を除いて, 書き出した train.py を動かす
+    for name in TRAINING:
+        pytest.importorskip(name)
+    problem = attached(tmp_path)
+    project = tmp_path / "project"
+    make_project(problem, project)
+    export(problem, project)
+    code = ("import runpy, sys\n"
+            "from ml_found.experiment import task\n"
+            "task.ORIGIN_TYPES = tuple(value for value in task.ORIGIN_TYPES"
+            " if value != 'self')\n"
+            "sys.argv = ['train.py', *sys.argv[1:]]\n"
+            "runpy.run_path('train.py', run_name='__main__')\n")
+    done = subprocess.run([sys.executable, "-c", code, *SHORT],
+                          cwd=project, capture_output=True, text=True,
+                          timeout=600)
+    assert done.returncode == 1, done.stderr[-2000:]
+    assert ("この骨組みは正解の出どころ self を持つ ML-Found が要ります. "
+            "ML-Found を git の main に上げてから学習し直してください"
+            in done.stdout)
+    assert not (project / "outputs").exists() or not any(
+        (project / "outputs").glob("*/*/*/train.log")
+    )
 
 
 def test_table_training(tmp_path: Path) -> None:

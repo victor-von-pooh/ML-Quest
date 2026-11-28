@@ -42,6 +42,7 @@ from ml_found import (
     Experiment, FrechetInceptionDistance, Trainer, load_project_config,
     save_evaluation, save_sample, start_experiment, write_task
 )
+from ml_found.experiment import task as found_task
 
 # このプロジェクトのディレクトリ (ML-Found のプロジェクト)
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -700,6 +701,33 @@ def save_samples(
                     caption=f"見比べる検証用の本物の画像 {index}")
 
 
+def origin_error() -> Optional[str]:
+    """
+    入れた ML-Found が task.yaml の正解の出どころの値を書けるかを確かめる
+    関数
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    ----------
+    message: Optional[str]
+        書けない場合の文, 書ける場合は None
+    """
+    # 出どころ self を知らない古い ML-Found では write_task が分かりにくい
+    # 誤りで止まるので, 出力先を作る前に確かめる
+    message = None
+    if ORIGIN_TYPE not in getattr(found_task, "ORIGIN_TYPES", ()):
+        message = (
+            f"この骨組みは正解の出どころ {ORIGIN_TYPE} を持つ ML-Found が"
+            "要ります. ML-Found を git の main に上げてから学習し直して"
+            "ください"
+        )
+
+    return message
+
+
 def make_inference(
     cfg: Any, spec: Optional[Path], shape: list, run_dir: Path,
     experiment: Experiment
@@ -815,6 +843,12 @@ def main() -> None:
         print(f"{spec} の定義に誤りがあります. README の「次にすること」の "
               "2 で直してください")
         print("\\n".join(f"- {message}" for message in errors))
+        sys.exit(1)
+
+    # 入れた ML-Found が正解の出どころを書けるか
+    origin = origin_error()
+    if origin is not None:
+        print(origin)
         sys.exit(1)
 
     # 何の実験か (受け持ち, 出力の形, 作るもの, 作り方は問題の設定から.
@@ -992,6 +1026,31 @@ def generation_origin(problem: dict) -> str:
     return origin
 
 
+def origin_readme(problem: dict) -> str:
+    """
+    条件の無い生成の README に書く, ML-Found の要件の文を返す関数
+
+    Parameters
+    ----------
+    problem: dict
+        問題の設定 (版 2)
+
+    Returns
+    ----------
+    note: str
+        出どころが self なら, その値を持つ ML-Found が要るという文 (頭に
+        空白). 他は空の文字
+    """
+    # self は新しい ML-Found だけが持つ値
+    note = ""
+    if generation_origin(problem) == "self":
+        note = (" ML-Found は task.yaml の正解の出どころ `self` を持つもの "
+                "(git の main) が要る (古ければ学習の前に上げ方を示して"
+                "止まる).")
+
+    return note
+
+
 def generate_script(problem: dict, literal: Callable) -> str:
     """
     問題の設定から, 画像の生成の拡散のモデルを学ぶスクリプトを作る関数
@@ -1086,6 +1145,9 @@ def generate_readme(
     text: str
         Markdown の文書
     """
+    # ML-Found の要件 (正解の出どころが self なら)
+    origin_note = origin_readme(problem)
+
     # 筋道の要約
     lines = [f"# {problem.get('name', '')}", "",
              "ML-Quest で問題 (`problem.yaml`) から書き出した, "
@@ -1115,7 +1177,8 @@ def generate_readme(
         "", "## 次にすること", "",
         "学習する環境には ML-EDA, ML-Found, ML-ModelControl, ML-Inference を"
         " 入れる (config の `requires` の機能. 足りなければ学習の前に入れ方を"
-        "示して止まる. ML-ModelControl と ML-Inference は定義を置くと使う).", "",
+        "示して止まる. ML-ModelControl と ML-Inference は定義を置くと使う)."
+        + origin_note, "",
         "1. **データの分析** (ML-EDA): 画像のディレクトリを "
         "ML-EDA の `image_folder` で読み, 目的の列の無いレシピ (`task: none`."
         " `recipe_from` の雛形) でこのディレクトリの `" + dataset + "` に"
