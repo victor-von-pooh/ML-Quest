@@ -111,7 +111,7 @@ PROJECT_DIR = Path(__file__).resolve().parent
 PROBLEM_NAME = $name
 PREDICT = $predict
 
-# 推論の一式の意思決定と結論の既定値 (問題の設定の損得と制約から)
+# 推論の一式の意思決定と結論の既定値 (問題の損得と制約から)
 DECISION = $decision
 CONCLUSION = $conclusion
 '''
@@ -322,7 +322,7 @@ def model_file(
 
     # 写しが無ければ理由を知らせて, プロジェクトの定義
     experiment.logger.warning(
-        "モデルの定義を実験に写せなかったので, プロジェクトの定義から"
+        "モデルの定義を実験に写せなかったので, 学習のプロジェクトの定義から"
         "組み立てます (理由は source.yaml の model_spec の status)"
     )
     path = spec
@@ -394,7 +394,7 @@ $scale_lines
     trainer = Trainer(model, experiment, Step(scale))
     trainer.fit(train_loader, valid_loader)
 
-    # 実験だけで見直せるように, 問題の設定の写し (元の問題の設定の場所
+    # 実験だけで見直せるように, 問題の設定の写し (元の問題の場所
     # origin も残る. モデルの定義は ML-Found が start_experiment で写す)
     run_dir = Path(experiment.run_dir)
     shutil.copy(PROJECT_DIR / "problem.yaml", run_dir / "problem.yaml")
@@ -434,7 +434,7 @@ if __name__ == "__main__":
 
 # 損得と制約に直すところが残り, 意思決定の既定値を付けないことの記録
 DECISION_LOG = (
-    "\n    experiment.logger.info(\n        \"問題の設定の損得と制約に直す"
+    "\n    experiment.logger.info(\n        \"問題の損得と制約に直す"
     "ところが残るので, 意思決定の\"\n        \"既定値は付けずに推論の一式を作り"
     "ました\"\n    )"
 )
@@ -496,7 +496,7 @@ CONTENT_INPUTS = {
              "`dtype`). 文は `[None, 長さ]` の int64 (語の番号). 埋め込み "
              "(`nn.Embedding`) の数 `num_embeddings` は語彙の大きさで, "
              "`model_inputs` の `inputs` の `vocabulary` (埋め草 `<pad>` と"
-             "語彙に無い語 `<unk>` を含む. ML-CreateArchitecture の「データ"
+             "語彙に無い語 `<unk>` を含む. モデルの作成・選定の段階の「データ"
              "セットから入力と出力を作る」は, 入力に直につながる埋め込みの数"
              "をこれにする)"),
     "audio": ("入力の形は書き出したデータセットから決まる (ML-EDA の "
@@ -964,8 +964,8 @@ def project_readme(
     data = stages["data"]
     source = (data.get("source") or {}).get("source")
     lines = [f"# {problem.get('name', '')}", "",
-             "ML-Quest の問題の設定 (`problem.yaml`) から書き出した, "
-             "ML-Found のプロジェクトの骨組み.", "", "## 課題から行動まで", ""]
+             "ML-Quest で問題 (`problem.yaml`) から書き出した, "
+             "ML-Found の学習のプロジェクトの骨組み.", "", "## 課題から行動まで", ""]
     lines += [f"- {sentence}" for sentence in describe(problem)]
 
     # 次にすること (受け渡しの値を各段階で選ぶ)
@@ -977,11 +977,11 @@ def project_readme(
     lines += [
         "", "## 次にすること", "",
         "学習に要るもの (ML-Found と, `configs/default/train.yaml` の "
-        "`requires` に書いた機能) は, ML-Dashboard の「学習の準備」で確かめて"
+        "`requires` に書いた機能) は, 学習・評価の段階の「学習の準備」で確かめて"
         "入れられる. `python train.py` も, 足りなければ入れ方を示して止まる.",
         "",
-        "1. **データの分析** (ML-Fathom. コードなら ML-EDA の "
-        "`export_dataset`): データを読み, 次の値でレシピを作り, このディレクトリ"
+        "1. **データの分析** (コードなら ML-EDA の `export_dat"
+        "aset`): データを読み, 次の値でレシピを作り, このディレクトリ"
         "の `outputs/dataset` に書き出す. 検証用の分割は必ず作る"
         + (f". データはこのディレクトリの `data/{Path(source).name}` に写した"
            if source and Path(source).exists() else ""),
@@ -1028,22 +1028,22 @@ def project_readme(
     else:
         compare = f"今のやり方とは比べない ({reason}ため)"
     lines += [
-        "2. **モデルの作成** (ML-CreateArchitecture): 入力 1 つと出力 1 つの"
+        "2. **モデルの作成・選定**: 入力 1 つと出力 1 つの"
         f"モデルを組み, `models/model.yaml` に置く. {CONTENT_INPUTS[kind]}. "
         f"出力の大きさは {outputs}. 回帰の目的の値は train.py が標準化する",
-        "3. **学習** (ML-Found, ML-Dashboard): `python train.py` "
+        "3. **学習・評価** (ML-Found): `python train.py` "
         "(`python train.py trainer.epochs=10` のように「項目=値」で上書き"
         "できる). 結果は `outputs/<実験の名前>/<日付>/<時刻>/` に残る. "
         f"検証用の `{stages['training']['monitor']}` が最も良いモデルを選ぶ. "
         + compare,
-        "4. **推論** (ML-Provide): 実験の中の `inference/` を登録する. "
+        "4. **推論**: 実験の中の `inference/` を登録する. "
         + ("意思決定の既定値は付けない (損得と制約に直すところが残るため. 下"
            "の「書き出した時点で残っていた直すところ」)" if dropped else
-           "意思決定の既定値は問題の設定の損得と制約")
+           "意思決定の既定値は問題の損得と制約")
         + (f". {horizon} 期先まで予測するなら「何段も先まで予測する」を使う"
            if horizon and horizon > 1 else ""),
-        "", "`train.py` は出発点なので, 課題に合わせて書き足す. 問題の設定を"
-        "変えたら, 書き出し直すか手で直す.", "",
+        "", "`train.py` は出発点なので, 問題に合わせて書き足す. 問題を変えた"
+        "ら, 書き出し直すか手で直す.", "",
     ]
     text = "\n".join(lines)
 
@@ -1607,11 +1607,11 @@ def errors_section(
     if not errors:
         return ""
     lines = ["", "## 書き出した時点で残っていた直すところ", "",
-             "問題の設定と入れたデータの確かめで直すところ (error) が残った"
+             "問題と入れたデータの確かめで直すところ (error) が残った"
              "まま, 「それでも書き出す」と指定して書き出した. 学習が失敗したり"
              "結果がおかしかったりしたときは, まずこれを見る. 直したら書き出し"
-             "直す. 直すまで, 推論の段階 (ML-Provide) で問題の設定につなげない"
-             + (" (推論の段階に渡す値は, 問題の設定の確かめの直すところが残る"
+             "直す. 直すまで, 推論の段階で問題につなげない"
+             + (" (推論の段階に渡す値は, 問題の確かめの直すところが残る"
                 "と作れないため)." if checked else
                 " (入れたデータの確かめの直すところは, 推論の段階に渡す値を作る"
                 "ときには確かめないので, つなぐと同じ誤りのまま使われるため)."
@@ -1959,7 +1959,7 @@ def project_files(
 
 def origin_file(origin: Union[str, Path], path: Path) -> str:
     """
-    元の問題の設定の場所を, problem.yaml の絶対パスにする関数
+    元の問題の場所を, problem.yaml の絶対パスにする関数
 
     Parameters
     ----------
@@ -1981,15 +1981,15 @@ def origin_file(origin: Union[str, Path], path: Path) -> str:
     # ディレクトリ (YAML のファイルの名前でない場所) なら中の
     # problem.yaml. 写しが自分を指さないように
     if not str(origin).strip():
-        raise ValueError("元の問題の設定の場所が空です")
+        raise ValueError("元の問題の場所が空です")
     target = Path(origin).expanduser().resolve()
     if (target.is_dir() or target == path.resolve()
             or target.suffix.lower() not in (".yaml", ".yml")):
         target = target / "problem.yaml"
     if target == (path / "problem.yaml").resolve():
         raise ValueError(
-            f"{target} は書き出すプロジェクトの写しです. 元の問題の設定の"
-            "場所を渡してください"
+            f"{target} は書き出す学習のプロジェクトの写しです. 元の問題の場所"
+            "を渡してください"
         )
     place = str(target)
 
@@ -2002,7 +2002,7 @@ def make_project(
     accept_errors: bool = False, inspected: Optional[dict] = None
 ) -> list[str]:
     """
-    問題の設定から, ML-Found のプロジェクトの骨組みを書き出す関数
+    問題の設定から, ML-Found の学習のプロジェクトの骨組みを書き出す関数
 
     Parameters
     ----------
@@ -2041,7 +2041,7 @@ def make_project(
     # 書き出せるか (project_error と同じ決まり). 受け渡しの値 (版 1 は先に
     # 版 2 へ移行). データはプロジェクトの data に写し, 写した問題の設定は
     # その場所を指す. プロジェクトの記録は写しに持たせない (プロジェクトを
-    # 動かしても古い場所を指さないように). 元の問題の設定の場所は写しの
+    # 動かしても古い場所を指さないように). 元の問題の場所は写しの
     # origin に (推論の段階が元の今の値を読めるように)
     error, exportable = project_check(problem)
     if error is not None:

@@ -891,7 +891,7 @@ def spec_file(
 
     # 写しが無ければ理由を知らせて, プロジェクトの定義
     experiment.logger.warning(
-        "モデルの定義を実験に写せなかったので, プロジェクトの定義から"
+        "モデルの定義を実験に写せなかったので, 学習のプロジェクトの定義から"
         "組み立てます (理由は source.yaml の model_spec の status)"
     )
     path = spec
@@ -1195,8 +1195,8 @@ def main() -> None:
     if spec is None:
         experiment.logger.info(
             f"モデルの定義 ({cfg.model.spec or '場所なし'}) が無いので, "
-            "仮のモデル (PlaceholderModel) で学習します. ML-CreateArchitecture"
-            " で組んだ定義をその場所に置くと, 定義のモデルで学習します"
+            "仮のモデル (PlaceholderModel) で学習します. モデルの作成・選定の段階で組んだ定義を"
+            "その場所に置くと, 定義のモデルで学習します"
         )
     model = make_model(width, cfg, spec, base_dir)
     trainer = TableDiffusionTrainer(model, experiment, noise_inputs(spec),
@@ -1204,7 +1204,7 @@ def main() -> None:
                                     frames["valid"], cfg)
     trainer.fit(train_loader, valid_loader)
 
-    # 実験だけで見直せるように, 問題の設定の写し (元の問題の設定の場所
+    # 実験だけで見直せるように, 問題の設定の写し (元の問題の場所
     # origin も残る. モデルの定義は ML-Found が start_experiment で写す) と
     # 列の符号化
     run_dir = Path(experiment.run_dir)
@@ -1397,8 +1397,8 @@ def table_readme(
     """
     # 筋道の要約
     lines = [f"# {problem.get('name', '')}", "",
-             "ML-Quest の問題の設定 (`problem.yaml`) から書き出した, "
-             "ML-Found のプロジェクトの骨組み (ML-EDA の表のデータセットで, "
+             "ML-Quest で問題 (`problem.yaml`) から書き出した, "
+             "ML-Found の学習のプロジェクトの骨組み (ML-EDA の表のデータセットで, "
              "条件の無い拡散のモデルを学び, 元の表に似た行を作る).", "",
              "## 課題から行動まで", ""]
     lines += [f"- {sentence}" for sentence in describe(problem)]
@@ -1410,7 +1410,7 @@ def table_readme(
         "学習する環境には ML-EDA, ML-Found, ML-ModelControl, ML-Inference を"
         " 入れる (config の `requires` の機能. 足りなければ学習の前に入れ方を"
         "示して止まる. ML-ModelControl と ML-Inference は定義を置くと使う).", "",
-        "1. **データの分析** (ML-EDA, ML-Fathom): 表のファイルを ML-EDA で"
+        "1. **データの分析** (ML-EDA): 表のファイルを ML-EDA で"
         "読み, 目的の列の無いレシピ (`task: none`. `recipe_from` の雛形) で"
         "このディレクトリの `" + dataset + "` に書き出す. 検証用の分割は"
         "必ず作る. 書き出した列を全て作るので, ID のような列 (行ごとに違う"
@@ -1422,8 +1422,8 @@ def table_readme(
         "ホットは `train.py` が学習用の分割から決めるので, レシピには足さない"
         + (f". 入れた表はこのディレクトリの `{raw}` に写した" if raw
            else ""),
-        "2. **モデルの作成** (ML-ModelControl, ML-CreateArchitecture): "
-        "ML-CreateArchitecture で組んだ定義を, config の `model.spec` の場所"
+        "2. **モデルの作成・選定** (ML-ModelControl): モデルの作成・選定の段階で組んだ定義を"
+        ", config の `model.spec` の場所"
         " (`models/model.yaml`) に保存する. 入力は雑音を加えた行 ((バッチ, "
         "幅) の float32. 幅は数の列の数と種類の列の値の種類の数の和で, "
         "`train.log` の初めの行に出る) と時刻 ((バッチ,) の int64. "
@@ -1432,7 +1432,7 @@ def table_readme(
         "の幅を合わせて使える. 定義が無いうちは, `train.py` の "
         "`PlaceholderModel` (印 TODO. 動くことを確かめるだけの小さなモデル) "
         "で学習する (config の `model.placeholder: true` がその目印)",
-        "3. **学習** (ML-Found, ML-Dashboard): `python train.py`. 数の列は"
+        "3. **学習・評価** (ML-Found): `python train.py`. 数の列は"
         "学習用の分割の平均と標準偏差で標準化し, 種類の列は学習用の分割の値"
         "でワンホットにした行に, 線形の雑音の予定 (config の `diffusion`) で"
         "雑音を加え, 加えた雑音を当てる (平均二乗誤差). 重みの指数移動平均 "
@@ -1464,8 +1464,8 @@ def table_readme(
         "表が返る (同じ種と行の数なら見本の表とほぼ同じ行. 整数と種類は "
         "95% 以上, 数は 1e-3 以内で一致). 仮のモデル (`PlaceholderModel`) は"
         "定義が無いので一式を作らない",
-        "", "`train.py` の印 (TODO) の所 (モデルなど) は書き足す. 問題の"
-        "設定を変えたら, 書き出し直すか手で直す.", "",
+        "", "`train.py` の印 (TODO) の所 (モデルなど) は書き足す. 問題を"
+        "変えたら, 書き出し直すか手で直す.", "",
     ]
     text = "\n".join(lines)
 

@@ -400,7 +400,7 @@ def test_make_project_check_errors(tmp_path: Path) -> None:
     readme = (tmp_path / "given" / "README.md").read_text("utf-8")
     assert "- `data.source`: 読めない 行\n" in readme
     assert "少ない" not in readme
-    assert "推論の段階 (ML-Provide) で問題の設定につなげない" in readme
+    assert "推論の段階で問題につなげない" in readme
 
     # 古いか別の問題の設定の結果と, 形の崩れた結果は使わず求め直す
     for stale in ({**inspected, "key": "old"}, [1],
@@ -600,7 +600,7 @@ def test_data_decision_error(tmp_path: Path) -> None:
     assert "推論の段階に渡す値を作るときには確かめない" in readme
     assert "作れないため" not in readme
     assert "意思決定の既定値は付けない (損得と制約に直すところが" in readme
-    assert "意思決定の既定値は問題の設定の損得と制約" not in readme
+    assert "意思決定の既定値は問題の損得と制約" not in readme
     script = (tmp_path / "project" / "train.py").read_text("utf-8")
     assert "DECISION = None" in script
 

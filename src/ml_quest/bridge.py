@@ -137,7 +137,7 @@ def recipe_from(problem: dict) -> dict:
     stages, exportable = export_stages(problem)
     require_column_part(problem, "レシピの下書き")
     data = stages["data"]
-    remaining = [f"問題の設定に直すところが残っています ({item['id']}): "
+    remaining = [f"問題に直すところが残っています ({item['id']}): "
                  f"{item['message']}" for item in exportable]
     if is_items_part(problem):
         start = {"load": load_of(data), "recipe": None,
@@ -795,7 +795,7 @@ def apply_anomaly(problem: dict, recipe: dict) -> dict:
             conflicts.append(finding(
                 "error", "data.recipe",
                 f"レシピの {key} ({recipe.get(key)}) が答えた{title} ("
-                f"{answered}) と違います. 問題の設定の答えに合わせるか, 答え"
+                f"{answered}) と違います. 問題の答えに合わせるか, 答え"
                 "を直してください"
             ))
     split = recipe.get("split")
@@ -856,7 +856,7 @@ def apply_uplift(problem: dict, recipe: dict) -> dict:
             conflicts.append(finding(
                 "error", "data.recipe",
                 f"レシピの {key} ({recipe.get(key)}) が答えた{title} ("
-                f"{answered}) と違います. 問題の設定の答えに合わせるか, 答え"
+                f"{answered}) と違います. 問題の答えに合わせるか, 答え"
                 "を直してください"
             ))
     split = recipe.get("split")
@@ -918,7 +918,7 @@ def apply_price(problem: dict, recipe: dict) -> dict:
             conflicts.append(finding(
                 "error", "data.recipe",
                 f"レシピの {key} ({recipe.get(key)}) が答えた{title} ("
-                f"{answered}) と違います. 問題の設定の答えに合わせるか, 答え"
+                f"{answered}) と違います. 問題の答えに合わせるか, 答え"
                 "を直してください"
             ))
     split = recipe.get("split")
@@ -980,7 +980,7 @@ def apply_demand(problem: dict, recipe: dict) -> dict:
             conflicts.append(finding(
                 "error", "data.recipe",
                 f"レシピの {key} ({recipe.get(key)}) が答えた{title} ("
-                f"{answered}) と違います. 問題の設定の答えに合わせるか, 答え"
+                f"{answered}) と違います. 問題の答えに合わせるか, 答え"
                 "を直してください"
             ))
     answered = active_value(problem, f"{PART}.demand.horizon")
@@ -989,7 +989,7 @@ def apply_demand(problem: dict, recipe: dict) -> dict:
         conflicts.append(finding(
             "error", "data.recipe",
             f"レシピの horizon ({recipe.get('horizon', DEMAND_HORIZON)}) が"
-            f"答えた先の期間の日数 ({answered}) と違います. 問題の設定の答え"
+            f"答えた先の期間の日数 ({answered}) と違います. 問題の答え"
             "に合わせるか, 答えを直してください"
         ))
     split = recipe.get("split")
@@ -1298,7 +1298,7 @@ def recipe_conflicts(problem: dict, recipe: dict) -> tuple[list, list]:
         conflicts.append(finding(
             "error", "information.forbidden",
             f"レシピが使ってはいけない列 {', '.join(forbidden)} を使って"
-            "います. レシピで落とすか, 問題の設定で使ってよいと決め直して"
+            "います. レシピで落とすか, 問題で使ってよいと決め直して"
             "ください"
         ))
 
@@ -1325,7 +1325,7 @@ def recipe_conflicts(problem: dict, recipe: dict) -> tuple[list, list]:
     if group != written:
         conflicts.append(finding(
             "warning", f"{PART}.group_column",
-            f"相手をまとめる列が, 問題の設定では {group or 'なし'}, レシピの"
+            f"相手をまとめる列が, 問題では {group or 'なし'}, レシピの"
             f"分割では {written or 'なし'} です (どちらかに合わせてください)"
         ))
     if active_value(problem, f"{PART}.split_time_column") and method and (
@@ -1537,9 +1537,9 @@ def apply_group(problem: dict, group: dict) -> dict:
             for message in errors
         ))
 
-    # 書き出したプロジェクトの config は変わらないので書き出し直しの案内
+    # 書き出した学習のプロジェクトの config は変わらないので書き出し直しの案内
     if changes and project_of(updated)["path"]:
-        changes.append("書き出したプロジェクトの config の group は変わらない"
+        changes.append("書き出した学習のプロジェクトの config の group は変わらない"
                        "ので, 骨組みを書き出し直してください")
     result = {"problem": updated, "changes": changes, "conflicts": [],
               "choices": []}

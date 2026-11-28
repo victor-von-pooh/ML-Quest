@@ -597,7 +597,7 @@ def report(
     if sha256:
         print(f"重みの hash (SHA-256): {sha256}")
     if sha256 and not pinned:
-        print("この hash を config の ready.sha256 (と問題の設定の重みの "
+        print("この hash を config の ready.sha256 (と問題の重みの "
               "hash) に書くと, 次から違う重みでは作りません")
     for note in info.get("notes") or []:
         print(f"注意: {note}")
@@ -671,7 +671,7 @@ if __name__ == "__main__":
 READY_GROUP_CONFIG = Template('''# 既製のモデルの埋め込みで写真を群に分け, 推論の一式を作る設定 (ML-Quest が
 # 問題の設定から書き出した骨組み). bundle.py が読む. 学習はしない
 
-# 埋め込みに使う既製のモデル (問題の設定の既製のモデルの答え)
+# 埋め込みに使う既製のモデル (問題の既製のモデルの答え)
 ready:
   # 出どころ (ML-Inference の READY_LIBRARIES の名前)
   library: $library
@@ -883,7 +883,7 @@ def ready_group_readme(
     # 筋道の要約
     ready = stages["inference"]["ready"]
     lines = [f"# {problem.get('name', '')}", "",
-             "ML-Quest の問題の設定 (`problem.yaml`) から書き出した, 既製の"
+             "ML-Quest で問題 (`problem.yaml`) から書き出した, 既製の"
              "モデルの埋め込みで写真を群に分ける骨組み (学習しない. 群の安定"
              "性と群の要約を残し, ML-Inference の推論の一式を作る).", "",
              "## 課題から行動まで", ""]
@@ -897,13 +897,13 @@ def ready_group_readme(
     pinned = (f"決めておいた hash (`{ready['sha256'][:12]}…`) と読んだ重み"
               "が違えば作らない" if ready["sha256"] else
               "hash を決めていないので比べずに作り, 求めた hash を表示する. "
-              "それを config の `ready.sha256` と問題の設定の重みの hash に"
+              "それを config の `ready.sha256` と問題の重みの hash に"
               "書くと, 次から同じ重みに固定できる")
     lines += [
         "", "## 次にすること", "",
-        "データの分析, モデルの作成, 学習の段階は通らない. 動かす環境には "
+        "データの分析, モデルの作成・選定, 学習・評価の段階は通らない. 動かす環境には "
         "ML-Inference (ML-EDA と PyTorch も入る) と, torchvision の重みを"
-        "読む ML-ModelControl の追加の依存 (`ml-modelcontrol[torchvision]`)"
+        "読む ML-ModelControl の任意の依存 (`ml-modelcontrol[torchvision]`)"
         " を入れる.", "",
         "1. **写真**: 群に分ける写真のディレクトリを config の "
         f"`data.photos` の場所 (`{photos}`) に置く (ML-EDA の画像の読み込み"
@@ -931,13 +931,13 @@ def ready_group_readme(
         + READY_BUNDLE + "`) に ML-Inference の既製の埋め込みの群分けの一式 "
         "(版 10. 群の中心から遠い行の閾値を持てば版 17) を作り, 写真を割り"
         "当て直して成果物の割り当てと比べる",
-        "3. **推論** (ML-Inference, ML-Provide): ML-Provide で作った一式を"
+        "3. **推論** (ML-Inference): 推論の段階で作った一式を"
         "登録し, 写真のファイルかディレクトリを渡すと, 写真ごとに最も近い群"
         "の番号 `group` とその中心までの距離 `distance` が返り, 群の要約と"
         "群の中心に近い写真も返る. 一式を作るときに重みのライセンスの注意が"
         "出たら, 使ってよいかを確かめる",
         "", "群の数を変えるなら config の `group.k` を変えて動かし直し, 群の"
-        "まとまりと安定性を比べる. 問題の設定の既製のモデルの答えを変えたら,"
+        "まとまりと安定性を比べる. 問題の既製のモデルの答えを変えたら,"
         " 書き出し直すか config を手で直す.", "",
     ]
     text = "\n".join(lines)

@@ -1108,7 +1108,7 @@ QUESTIONS: list[dict[str, Any]] = [
     {"id": f"{PART}.anomaly.capacity", "section": 7, "kind": "number",
      "required": True, "when": ANOMALY,
      "title": "人が 1 回に確かめられる件数の上限は (守る指標)",
-     "help": "推論の 1 回 (1 日分の記録など) で, 度合いの高い順に人の確認に"
+     "help": "推論の 1 回 (1 日分の記録など) で, 度合いの高い順に人の確かめに"
              "回す件数の上限 (1 以上の整数). これを超えて回すと確かめきれ"
              "ない. 評価の上位 K 件の適合率もこの K で数える. 例: 20"},
     {"id": "action.current", "section": 7, "kind": "baseline",
@@ -1209,7 +1209,7 @@ QUESTIONS: list[dict[str, Any]] = [
      "required": False, "when": REPORTED_BASELINE,
      "title": "今のやり方 (人の目視や今の仕組み) で, この指標は幾つですか "
               "(分かれば)", "title_metric": True,
-     "help": "画像や文, 領域, 点群の課題では, 今のやり方の結果を 1 件ずつ並べ"
+     "help": "画像や文, 領域, 点群の問題では, 今のやり方の結果を 1 件ずつ並べ"
              "られないので, ここに答えた値を学習したモデルのテスト用の値と並べ"
              "ます. 数えた件が違うので目安です. 例: 人が目で見て分けると 100 "
              "件中 85 件当たる → 0.85. 割合 (正解率, IoU) は 0 から 1, 誤差は"

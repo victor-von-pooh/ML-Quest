@@ -72,7 +72,7 @@ METHOD = $method
 # 結果の種類の名前
 OUTCOME_NAMES = $outcome_names
 
-# 元の表の読み方 (問題の設定の手元のデータの読み方. 推論の一式づくりが
+# 元の表の読み方 (問題の手元のデータの読み方. 推論の一式づくりが
 # ML-EDA の load_data に渡す. None は ML-EDA の推定)
 LOADER = $loader
 OPTIONS = $options
@@ -392,7 +392,7 @@ def check_config(cfg: Any) -> Optional[str]:
         message = ("config の uplift.budget は 1 以上の整数 (決めていなければ"
                    " null) にしてください")
     elif "model" not in cfg:
-        message = ("config に model がありません. 問題の設定から書き出し直して"
+        message = ("config に model がありません. 問題から書き出し直して"
                    "ください")
 
     return message
@@ -527,7 +527,7 @@ def spec_file(
 
     # 写しが無ければ理由を知らせて, プロジェクトの定義
     experiment.logger.warning(
-        "モデルの定義を実験に写せなかったので, プロジェクトの定義から"
+        "モデルの定義を実験に写せなかったので, 学習のプロジェクトの定義から"
         "組み立てます (理由は source.yaml の model_spec の status)"
     )
     path = spec
@@ -670,8 +670,8 @@ def train_uplift(
     if spec is None:
         experiment.logger.info(
             f"モデルの定義 ({cfg.model.spec or '場所なし'}) が無いので, "
-            "仮のモデル (PlaceholderModel) で学習します. ML-CreateArchitecture"
-            " で組んだ定義をその場所に置くと, 定義のモデルで学習します"
+            "仮のモデル (PlaceholderModel) で学習します. モデルの作成・選定の段階で組んだ定義を"
+            "その場所に置くと, 定義のモデルで学習します"
         )
     model = make_model(splits["train"]["x"].shape[1], cfg, spec, base_dir)
     trainer = UpliftTrainer(model, experiment, valid, effect, cfg)
@@ -1039,7 +1039,7 @@ def main() -> None:
                              cfg.data.batch_size)
              for split, part in splits.items()}
 
-    # 実験だけで見直すための問題の設定の写し (元の問題の設定の場所
+    # 実験だけで見直すための問題の設定の写し (元の問題の場所
     # origin も. モデルの定義の写しは ML-Found の start_experiment)
     run_dir = Path(experiment.run_dir)
     shutil.copy(PROJECT_DIR / "problem.yaml", run_dir / "problem.yaml")
@@ -1255,8 +1255,8 @@ def uplift_readme(
     decision = stages["inference"]["decision"]
     names = {item["value"]: item["label"] for item in UPLIFT_OUTCOMES}
     lines = [f"# {problem.get('name', '')}", "",
-             "ML-Quest の問題の設定 (`problem.yaml`) から書き出した, "
-             "ML-Found のプロジェクトの骨組み (無作為に配った記録の表で, "
+             "ML-Quest で問題 (`problem.yaml`) から書き出した, "
+             "ML-Found の学習のプロジェクトの骨組み (無作為に配った記録の表で, "
              "顧客ごとの効果を見積もり, 効果の評価と推論の段階が読む成果物を"
              "残す).", "",
              "## 課題から行動まで", ""]
@@ -1272,9 +1272,9 @@ def uplift_readme(
         "を入れる (config の `requires` の機能. 足りなければ学習の前に入れ方"
         "を示して止まる. ML-ModelControl と ML-Inference は定義を置くと"
         "使う).", "",
-        "1. **データの分析** (ML-EDA, ML-Fathom): ML-EDA の介入の記録の表 "
+        "1. **データの分析** (ML-EDA): ML-EDA の介入の記録の表 "
         "(版 1 の `task: uplift`) を config の `data.dataset` の場所 "
-        f"(`{dataset}`) に書き出す. ML-Fathom の「問題の設定から始める」か, "
+        f"(`{dataset}`) に書き出す. データの分析の段階の「この問題から始める」か, "
         "ML-Quest の `recipe_from` のレシピの雛形で ML-EDA の "
         f"`export_dataset` を使う. 処置の列は `{uplift['treatment']}`, 結果"
         f"の列は `{uplift['outcome']}` ({names[uplift['outcome_kind']]}), "
@@ -1290,8 +1290,8 @@ def uplift_readme(
 
     # 2. モデル
     lines.append(
-        "2. **モデルの作成** (ML-ModelControl, ML-CreateArchitecture): "
-        "ML-CreateArchitecture で組んだ定義を, config の `model.spec` の"
+        "2. **モデルの作成・選定** (ML-ModelControl): モデルの作成・選定の段階で組んだ定義を"
+        ", config の `model.spec` の"
         "場所 (`models/model.yaml`) に保存する. 入力は行の特徴 `x` ((件"
         "数, 学習に使う列の数) の float32. 処置の列は入れない) の 1 つ, "
         "出力に処置したときの結果の予測 `treated` としないときの予測 "
@@ -1307,7 +1307,7 @@ def uplift_readme(
     # 3. 学習と評価
     monitor = stages["training"]["monitor"]
     lines.append(
-        "3. **学習と評価** (ML-Found, ML-Dashboard): `python train.py`. "
+        "3. **学習・評価** (ML-Found): `python train.py`. "
         "処置の群の行は `treated`, 対照の群の行は `control` だけに損失 "
         "(0 と 1 はロジットの二値の交差エントロピー, 量は標準化した値の"
         "二乗誤差) を付けて学び, 検証のたびに検証用の行の効果の見積もりの "
@@ -1330,7 +1330,7 @@ def uplift_readme(
     budget = (f"{decision['budget']} 件. config の `uplift.budget`"
               if decision else "損得と制約に直すところが残っているので空")
     lines += [
-        "4. **推論** (ML-Inference, ML-Provide): 学習の後に, 実験の効果の"
+        "4. **推論** (ML-Inference): 学習の後に, 実験の効果の"
         "決め方 `uplift_estimator.json`, 前処理のレシピの写し "
         "`uplift_recipe.yaml`, 学習した重みと写した定義から, ML-Inference "
         "の効果の一式を実験の `inference/` に作る (config の `data.source` "
@@ -1341,8 +1341,8 @@ def uplift_readme(
         "`{type: treat, budget}` は, ML-Inference の効果の一式が読む形). "
         "効果は見積もりで, 無作為に配った記録を前提にする. 配った効果は, "
         "配る相手を無作為に分けて試して確かめる",
-        "", "`train.py` の印 (TODO) の所 (モデル) は書き足す. 問題の設定を"
-        "変えたら, 書き出し直すか手で直す.", "",
+        "", "`train.py` の印 (TODO) の所 (モデル) は書き足す. 問題を変えた"
+        "ら, 書き出し直すか手で直す.", "",
     ]
     text = "\n".join(lines)
 

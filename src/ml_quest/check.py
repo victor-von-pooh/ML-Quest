@@ -1002,7 +1002,7 @@ def check(problem: dict) -> list[dict]:
     """
     # 版でない値と新しい版は読み込み無し (読める項目だけを使うと黙って
     # 読み違えるため)
-    message = version_message(problem, "この問題の設定")
+    message = version_message(problem, "この問題")
     if message:
         found = [finding("error", "format_version", message)]
         return found
@@ -1095,7 +1095,7 @@ def split_errors(
     # 版と形の誤りがあれば, 他の確かめをしていないので全てを組めないものに
     found = check(problem) if found is None else found
     errors = [item for item in found if item["level"] == "error"]
-    if version_message(problem, "この問題の設定"):
+    if version_message(problem, "この問題"):
         return errors, []
     upgraded = upgrade_problem(problem)
     if check_v1(upgraded) + check_parts(upgraded) + check_shape(upgraded):
@@ -2505,7 +2505,7 @@ def check_parts(problem: dict) -> list[dict]:
         found.append(finding(
             "error", "ml.parts",
             f"受け持ちは今は 1 つだけ書けます (ml.parts に {len(parts)} つ"
-            "あります). 課題を分けるか, 1 つにしてください"
+            "あります). 問題を分けるか, 1 つにしてください"
         ))
     else:
         found += [

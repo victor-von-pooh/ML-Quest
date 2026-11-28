@@ -70,7 +70,7 @@ ROLE = "predict"
 OUTPUT = "value"
 METHOD = $method
 
-# 元の表の読み方 (問題の設定の手元のデータの読み方. 推論の一式づくりが
+# 元の表の読み方 (問題の手元のデータの読み方. 推論の一式づくりが
 # ML-EDA の load_data に渡す. None は ML-EDA の推定)
 LOADER = $loader
 OPTIONS = $options
@@ -558,7 +558,7 @@ def check_config(cfg: Any) -> Optional[str]:
         message = "config の anomaly.ridge は 0 より大きい数にしてください"
     elif anomaly.score == "autoencoder" and "model" not in cfg:
         message = ("config に model がありません. 度合いの決め方を変えた"
-                   "なら, 問題の設定から書き出し直してください")
+                   "なら, 問題から書き出し直してください")
 
     return message
 
@@ -702,7 +702,7 @@ def spec_file(
 
     # 写しが無ければ理由を知らせて, プロジェクトの定義
     experiment.logger.warning(
-        "モデルの定義を実験に写せなかったので, プロジェクトの定義から"
+        "モデルの定義を実験に写せなかったので, 学習のプロジェクトの定義から"
         "組み立てます (理由は source.yaml の model_spec の status)"
     )
     path = spec
@@ -815,8 +815,8 @@ def train_autoencoder(
     if spec is None:
         experiment.logger.info(
             f"モデルの定義 ({cfg.model.spec or '場所なし'}) が無いので, "
-            "仮のモデル (PlaceholderModel) で学習します. ML-CreateArchitecture"
-            " で組んだ定義をその場所に置くと, 定義のモデルで学習します"
+            "仮のモデル (PlaceholderModel) で学習します. モデルの作成・選定の段階で組んだ定義を"
+            "その場所に置くと, 定義のモデルで学習します"
         )
     model = make_model(valid[0].shape[1], cfg, spec, base_dir)
     trainer = AnomalyTrainer(model, experiment, valid, cfg)
@@ -1165,7 +1165,7 @@ def make_inference(
                 f"({check['rows']} 行. 差の最大 {check['max_diff']:.3g})")
     experiment.logger.info(
         f"推論の一式 (異常の度合い): {INFERENCE_DIR}/ ({compared}. 人の"
-        f"確認に回す件数の上限 {info['decision']['capacity']}. 版 "
+        f"確かめに回す件数の上限 {info['decision']['capacity']}. 版 "
         f"{info['format_version']})"
     )
     for note in info["notes"]:
@@ -1269,7 +1269,7 @@ def main() -> None:
             parts = distance_parts(part["x"], distance)
             found[split] = {"parts": parts, "scores": parts.mean(axis=1)}
 
-    # 実験だけで見直すための問題の設定の写し (元の問題の設定の場所
+    # 実験だけで見直すための問題の設定の写し (元の問題の場所
     # origin も. モデルの定義の写しは ML-Found の start_experiment)
     run_dir = Path(experiment.run_dir)
     shutil.copy(PROJECT_DIR / "problem.yaml", run_dir / "problem.yaml")
@@ -1319,7 +1319,7 @@ anomaly:
   score: $score
   # 評価の上位 K 件の K (既定は人が確かめる件数の上限)
   k: $k
-  # 人が 1 回に確かめる件数の上限 (度合いの上位から人の確認に回す)
+  # 人が 1 回に確かめる件数の上限 (度合いの上位から人の確かめに回す)
   capacity: $capacity
 $tail''')
 
@@ -1389,7 +1389,7 @@ def anomaly_script(problem: dict, literal: Callable) -> str:
     script: str
         train.py の中身
     """
-    # 頭 (元の表の読み方は問題の設定の手元のデータの読み方) と学習の流れ
+    # 頭 (元の表の読み方は問題の手元のデータの読み方) と学習の流れ
     names = {item["value"]: item["label"] for item in ANOMALY_SCORES}
     options = get_value(problem, "data.options")
     head = Template(ANOMALY_HEAD).substitute(
@@ -1517,8 +1517,8 @@ def anomaly_readme(
     autoencoder = anomaly["score"] == "autoencoder"
     names = {item["value"]: item["label"] for item in ANOMALY_SCORES}
     lines = [f"# {problem.get('name', '')}", "",
-             "ML-Quest の問題の設定 (`problem.yaml`) から書き出した, "
-             "ML-Found のプロジェクトの骨組み (正常の行が多い表の, 行ごとの"
+             "ML-Quest で問題 (`problem.yaml`) から書き出した, "
+             "ML-Found の学習のプロジェクトの骨組み (正常の行が多い表の, 行ごとの"
              "異常の度合いを作り, 度合いの評価と推論の段階が読む成果物を"
              "残す).", "",
              "## 課題から行動まで", ""]
@@ -1539,9 +1539,9 @@ def anomaly_readme(
         "機能. 足りなければ学習の前に入れ方を示して止まる"
         + (". ML-ModelControl は定義を置くと使う)." if autoencoder
            else ")."), "",
-        "1. **データの分析** (ML-EDA, ML-Fathom): ML-EDA の異常の検知の表 "
+        "1. **データの分析** (ML-EDA): ML-EDA の異常の検知の表 "
         "(版 1 の `task: anomaly`) を config の `data.dataset` の場所 "
-        f"(`{dataset}`) に書き出す. ML-Fathom の「問題の設定から始める」か, "
+        f"(`{dataset}`) に書き出す. データの分析の段階の「この問題から始める」か, "
         "ML-Quest の `recipe_from` のレシピの雛形で ML-EDA の "
         f"`export_dataset` を使う. 度合いに使う列は {columns}, {label}, "
         f"行の id は {key}. 学習用は正常の行だけで, 異常の行は検証用とテスト"
@@ -1554,8 +1554,8 @@ def anomaly_readme(
     # 2. モデル (自己符号化器だけ)
     if autoencoder:
         lines.append(
-            "2. **モデルの作成** (ML-ModelControl, ML-CreateArchitecture): "
-            "ML-CreateArchitecture で組んだ定義を, config の `model.spec` の"
+            "2. **モデルの作成・選定** (ML-ModelControl): モデルの作成・選定の段階で組んだ定義を"
+            ", config の `model.spec` の"
             "場所 (`models/model.yaml`) に保存する. 入力は行の特徴 `x` ((件"
             "数, 学習に使う列の数) の float32) の 1 つ, 出力に入力と同じ形の"
             "再構成 `recon`. 学習に使う列の数は `train.log` の初めの行に"
@@ -1588,7 +1588,7 @@ def anomaly_readme(
         "の繰り返しは無い)"
     )
     lines.append(
-        f"3. **学習と評価** (ML-Found, ML-Dashboard): {how}. 度合いは "
+        f"3. **学習・評価** (ML-Found): {how}. 度合いは "
         f"{names[anomaly['score']]}で, 大きいほど異常. 学習の後に, 検証用, "
         "テスト用と正解の欠けた行の分割ごとに, 異常の行があれば上位 K 件 "
         f"(K = {k}. config の `anomaly.k`. 既定は人が確かめる件数の上限) の"
@@ -1605,7 +1605,7 @@ def anomaly_readme(
 
     # 4. 推論
     lines += [
-        "4. **推論** (ML-Inference, ML-Provide): 学習の後に, 実験の度合いの"
+        "4. **推論** (ML-Inference): 学習の後に, 実験の度合いの"
         "決め方 `anomaly_scorer.json` と前処理のレシピの写し "
         "`anomaly_recipe.yaml` "
         + ("と, 学習した重みと写した定義 " if autoencoder else "")
@@ -1616,10 +1616,10 @@ def anomaly_readme(
         + "). 一式は新しい行にレシピの前処理をかけて度合いを出す. 推論の 1 回"
         "で, 度合いの高い順に人が確かめる件数の上限 "
         f"({anomaly['capacity']} 件. config の `anomaly.capacity`) まで人の"
-        "確認に回す (受け渡しの推論の意思決定 `{type: triage, capacity}` "
+        "確かめに回す (受け渡しの推論の意思決定 `{type: triage, capacity}` "
         "は, ML-Inference の異常の度合いの一式が読む形)",
-        "", "`train.py` の印 (TODO) の所 (モデル) は書き足す. 問題の設定を"
-        "変えたら, 書き出し直すか手で直す.", "",
+        "", "`train.py` の印 (TODO) の所 (モデル) は書き足す. 問題を変えた"
+        "ら, 書き出し直すか手で直す.", "",
     ]
     text = "\n".join(lines)
 

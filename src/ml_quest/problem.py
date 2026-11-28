@@ -1027,7 +1027,7 @@ def load_problem(path: Union[str, Path]) -> dict:
         version < 1
     ):
         raise ValueError(
-            f"{path.name} は問題の設定のファイルではありません "
+            f"{path.name} は問題のファイルではありません "
             "(format_version がありません)"
         )
     problem = upgrade_problem(problem, str(path.name))
@@ -1035,7 +1035,7 @@ def load_problem(path: Union[str, Path]) -> dict:
     return problem
 
 
-def upgrade_problem(problem: dict, name: str = "問題の設定") -> dict:
+def upgrade_problem(problem: dict, name: str = "問題") -> dict:
     """
     版 1 の問題の設定を版 2 に移す関数
 
@@ -1046,7 +1046,7 @@ def upgrade_problem(problem: dict, name: str = "問題の設定") -> dict:
     ----------
     problem: dict
         問題の設定
-    name: str = "問題の設定"
+    name: str = "問題"
         誤りの文に使う名前
 
     Returns
@@ -1141,7 +1141,7 @@ def version_message(problem: Any, name: str) -> Optional[str]:
     if not isinstance(version, int) or isinstance(version, bool) or (
         version < 1
     ):
-        message = (f"問題の設定ではありません ({name}. format_version が"
+        message = (f"問題のファイルではありません ({name}. format_version が"
                    " 1 以上の整数でありません)")
     elif version > FORMAT_VERSION:
         message = newer_message(version, name)
@@ -1167,7 +1167,7 @@ def newer_message(version: int, name: str) -> str:
     """
     # 読める版と, 直し方
     message = (
-        f"新しい版 (format_version: {version}) の問題の設定です ({name}). "
+        f"新しい版 (format_version: {version}) の問題です ({name}). "
         f"この ML-Quest が読めるのは版 {FORMAT_VERSION} までです. ML-Quest "
         "を新しくしてください"
     )

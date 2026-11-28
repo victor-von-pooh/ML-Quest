@@ -666,7 +666,7 @@ def report(
     if sha256:
         print(f"重みの hash (SHA-256): {sha256}")
     if sha256 and not pinned:
-        print("この hash を config の ready.sha256 (と問題の設定の重みの "
+        print("この hash を config の ready.sha256 (と問題の重みの "
               "hash) に書くと, 次から違う重みでは作りません")
     for note in info.get("notes") or []:
         print(f"注意: {note}")
@@ -738,7 +738,7 @@ SEARCH_CONFIG = Template('''# 既製のモデルの埋め込みで写真の索�
 # 設定 (ML-Quest が問題の設定から書き出した骨組み). bundle.py が読む. 学習は
 # しない
 
-# 埋め込みに使う既製のモデル (問題の設定の既製のモデルの答え)
+# 埋め込みに使う既製のモデル (問題の既製のモデルの答え)
 ready:
   # 出どころ (ML-Inference の READY_LIBRARIES の名前)
   library: $library
@@ -971,7 +971,7 @@ def search_readme(
     k = decision.get("k")
     limit = decision.get("max_latency_ms")
     lines = [f"# {problem.get('name', '')}", "",
-             "ML-Quest の問題の設定 (`problem.yaml`) から書き出した, 既製の"
+             "ML-Quest で問題 (`problem.yaml`) から書き出した, 既製の"
              "モデルの埋め込みで似た写真を探す骨組み (学習しない. 索引と評価"
              "を残し, ML-Inference の推論の一式を作る).", "",
              "## 課題から行動まで", ""]
@@ -981,7 +981,7 @@ def search_readme(
     pinned = (f"決めておいた hash (`{ready['sha256'][:12]}…`) と読んだ重み"
               "が違えば作らない" if ready["sha256"] else
               "hash を決めていないので比べずに作り, 求めた hash を表示する. "
-              "それを config の `ready.sha256` と問題の設定の重みの hash に"
+              "それを config の `ready.sha256` と問題の重みの hash に"
               "書くと, 次から同じ重みに固定できる")
     guard = (f"待ち時間の上限 {limit} ms (config の `search.max_latency_ms`."
              " 守る指標) を超えた問いの数を知らせる" if limit is not None
@@ -989,9 +989,9 @@ def search_readme(
              "`search.max_latency_ms` に書くと, 超えた問いの数を知らせる)")
     lines += [
         "", "## 次にすること", "",
-        "データの分析, モデルの作成, 学習の段階は通らない. 動かす環境には "
+        "データの分析, モデルの作成・選定, 学習・評価の段階は通らない. 動かす環境には "
         "ML-Inference (ML-EDA と PyTorch も入る) と, torchvision の重みを"
-        "読む ML-ModelControl の追加の依存 (`ml-modelcontrol[torchvision]`)"
+        "読む ML-ModelControl の任意の依存 (`ml-modelcontrol[torchvision]`)"
         " を入れる.", "",
         "1. **写真**: 索引にする写真のディレクトリを config の `data.photos`"
         f" の場所 (`{photos}`) に置く (ML-EDA の画像の読み込みで読む. 読め"
@@ -1016,13 +1016,13 @@ def search_readme(
         "`search_embeddings.npy`, 種類があれば評価の "
         "`evaluations/search_valid.json`) に残る. 続けて `bundle.path` (`"
         + READY_BUNDLE + "`) に ML-Inference の検索の一式 (版 15) を作る",
-        "3. **推論** (ML-Inference, ML-Provide): ML-Provide で作った一式を"
+        "3. **推論** (ML-Inference): 推論の段階で作った一式を"
         "登録し, 問いの写真のファイルかディレクトリを渡すと, 問いごとに索引"
         f"の写真から見た目の近い順に {k} 件 (場所, 種類, 余弦の近さ) と, 1 "
         f"件の問いの待ち時間が返る. {guard}. 一式を作るときに重みのライセンス"
         "の注意が出たら, 使ってよいかを確かめる",
         "", "返す件数を変えるなら config の `search.k` を変えて動かし直す. 問題"
-        "の設定の既製のモデルの答えを変えたら, 書き出し直すか config を手で"
+        "の既製のモデルの答えを変えたら, 書き出し直すか config を手で"
         "直す.", "",
     ]
     text = "\n".join(lines)

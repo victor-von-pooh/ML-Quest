@@ -66,7 +66,7 @@ def ready_values(config: dict) -> dict:
                if not isinstance(raw.get(key), str) or not raw[key].strip()]
     if missing:
         print(f"config の ready の {', '.join(missing)} を書いてください "
-              "(問題の設定の既製のモデルの答え)")
+              "(問題の既製のモデルの答え)")
         sys.exit(1)
     ready = {key: raw[key].strip() for key in READY_KEYS}
     sha256 = raw.get("sha256")
@@ -201,7 +201,7 @@ def report(info: dict, place: Path, pinned: Optional[str]) -> None:
     if sha256:
         print(f"重みの hash (SHA-256): {sha256}")
     if sha256 and not pinned:
-        print("この hash を config の ready.sha256 (と問題の設定の重みの "
+        print("この hash を config の ready.sha256 (と問題の重みの "
               "hash) に書くと, 次から違う重みでは作りません")
     for note in info.get("notes") or []:
         print(f"注意: {note}")
@@ -254,7 +254,7 @@ READY_CONFIG_TEXT = Template('''# 既製のモデルの推論の一式づくり�
 # 骨組み). bundle.py が読み, ML-Inference の make_ready_bundle に渡す.
 # 学習はしない
 
-# 一式づくりに渡す値 (問題の設定の既製のモデルの答え)
+# 一式づくりに渡す値 (問題の既製のモデルの答え)
 ready:
   # 出どころ (ML-Inference の READY_LIBRARIES の名前)
   library: $library
@@ -463,7 +463,7 @@ def ready_readme(problem: dict, stages: dict, raw: Optional[str]) -> str:
     # 筋道の要約
     ready = stages["inference"]["ready"]
     lines = [f"# {problem.get('name', '')}", "",
-             "ML-Quest の問題の設定 (`problem.yaml`) から書き出した, 既製の"
+             "ML-Quest で問題 (`problem.yaml`) から書き出した, 既製の"
              "モデルをそのまま使う骨組み (学習しない. ML-Inference の推論の"
              "一式を作る).", "", "## 課題から行動まで", ""]
     lines += [f"- {sentence}" for sentence in describe(problem)]
@@ -472,13 +472,13 @@ def ready_readme(problem: dict, stages: dict, raw: Optional[str]) -> str:
     pinned = (f"決めておいた hash (`{ready['sha256'][:12]}…`) と読んだ重み"
               "が違えば作らない" if ready["sha256"] else
               "hash を決めていないので比べずに作り, 求めた hash を表示する. "
-              "それを config の `ready.sha256` と問題の設定の重みの hash に"
+              "それを config の `ready.sha256` と問題の重みの hash に"
               "書くと, 次から同じ重みに固定できる")
     lines += [
         "", "## 次にすること", "",
-        "データの分析, モデルの作成, 学習の段階は通らない. 一式を作る環境"
+        "データの分析, モデルの作成・選定, 学習・評価の段階は通らない. 一式を作る環境"
         "には ML-Inference と, torchvision の重みを読む ML-ModelControl の"
-        "追加の依存 (`ml-modelcontrol[torchvision]`) を入れる.", "",
+        "任意の依存 (`ml-modelcontrol[torchvision]`) を入れる.", "",
         "1. **一式づくり** (ML-Inference): `python bundle.py`. config "
         f"(`{READY_CONFIG}`) の `ready` の値 (出どころ `{ready['library']}`, "
         f"モデル `{ready['model']}`, 重み `{ready['weights']}`) を "
@@ -488,7 +488,7 @@ def ready_readme(problem: dict, stages: dict, raw: Optional[str]) -> str:
         "`torch.hub.get_dir()` の `checkpoints` に置く. ネットワークを使え"
         f"ない場所では, そこに重みのファイルを置く). {pinned}. 種類の名前"
         "の表と前処理は重みの説明から読む",
-        "2. **推論** (ML-Inference, ML-Provide): ML-Provide で作った一式を"
+        "2. **推論** (ML-Inference): 推論の段階で作った一式を"
         "登録し, 画像のファイルかディレクトリを渡すと, 種類の名前と確信の"
         "度合いが返る"
         + (f" (入れたデータはこのディレクトリの `{raw}` に写した)" if raw
@@ -496,7 +496,7 @@ def ready_readme(problem: dict, stages: dict, raw: Optional[str]) -> str:
         + ". 一式を作るときに重みのライセンスの注意が出たら, 使ってよいか"
         "を確かめる. 比べる正解が無いので, 当たり具合は確かめ方 (9 の節) "
         "で別に確かめる",
-        "", "問題の設定の既製のモデルの答えを変えたら, 書き出し直すか "
+        "", "問題の既製のモデルの答えを変えたら, 書き出し直すか "
         "config を手で直す.", "",
     ]
     text = "\n".join(lines)

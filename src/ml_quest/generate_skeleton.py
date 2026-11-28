@@ -574,7 +574,7 @@ def spec_file(
 
     # 写しが無ければ理由を知らせて, プロジェクトの定義
     experiment.logger.warning(
-        "モデルの定義を実験に写せなかったので, プロジェクトの定義から"
+        "モデルの定義を実験に写せなかったので, 学習のプロジェクトの定義から"
         "組み立てます (理由は source.yaml の model_spec の status)"
     )
     path = spec
@@ -835,15 +835,15 @@ def main() -> None:
     if spec is None:
         experiment.logger.info(
             f"モデルの定義 ({cfg.model.spec or '場所なし'}) が無いので, "
-            "仮のモデル (PlaceholderModel) で学習します. ML-CreateArchitecture"
-            " で組んだ定義をその場所に置くと, 定義のモデルで学習します"
+            "仮のモデル (PlaceholderModel) で学習します. モデルの作成・選定の段階で組んだ定義を"
+            "その場所に置くと, 定義のモデルで学習します"
         )
     model = make_model(shape, cfg, spec, base_dir)
     trainer = DiffusionTrainer(model, experiment, noise_inputs(spec),
                                make_schedule(cfg), x_valid, cfg)
     trainer.fit(train_loader, valid_loader)
 
-    # 実験だけで見直せるように, 問題の設定の写し (元の問題の設定の場所
+    # 実験だけで見直せるように, 問題の設定の写し (元の問題の場所
     # origin も残る. モデルの定義は ML-Found が start_experiment で写す)
     run_dir = Path(experiment.run_dir)
     shutil.copy(PROJECT_DIR / "problem.yaml", run_dir / "problem.yaml")
@@ -1054,8 +1054,8 @@ def generate_readme(
     """
     # 筋道の要約
     lines = [f"# {problem.get('name', '')}", "",
-             "ML-Quest の問題の設定 (`problem.yaml`) から書き出した, "
-             "ML-Found のプロジェクトの骨組み (ML-EDA の画像のデータセットで, "
+             "ML-Quest で問題 (`problem.yaml`) から書き出した, "
+             "ML-Found の学習のプロジェクトの骨組み (ML-EDA の画像のデータセットで, "
              "条件の無い拡散のモデルを学ぶ).", "", "## 課題から行動まで", ""]
     lines += [f"- {sentence}" for sentence in describe(problem)]
 
@@ -1068,7 +1068,7 @@ def generate_readme(
         "で, 損失 (`valid/loss`. 毎回同じ時刻と雑音で数える) と, 見本と同じ"
         "種と回数で検証用の画像と同じ件数を作った FID (`valid/fid`. 作った"
         "画像と検証用の画像の分布の近さ. 小さいほど良い) を `history.csv` "
-        "に残す. FID の特徴は ML-Found の追加の依存 `fid` (pytorch-fid) の "
+        "に残す. FID の特徴は ML-Found の任意の依存 `fid` (pytorch-fid) の "
         "Inception で, 初めて使うときに学習済みの重み (約 91 MB) を取る "
         "(ネットワークの無い計算機には, 一度取った PyTorch のキャッシュを"
         "写す). FID は件数で偏るので, 比べる FID は同じ件数で数え, 件数は"
@@ -1082,7 +1082,7 @@ def generate_readme(
         "学習する環境には ML-EDA, ML-Found, ML-ModelControl, ML-Inference を"
         " 入れる (config の `requires` の機能. 足りなければ学習の前に入れ方を"
         "示して止まる. ML-ModelControl と ML-Inference は定義を置くと使う).", "",
-        "1. **データの分析** (ML-EDA, ML-Fathom): 画像のディレクトリを "
+        "1. **データの分析** (ML-EDA): 画像のディレクトリを "
         "ML-EDA の `image_folder` で読み, 目的の列の無いレシピ (`task: none`."
         " `recipe_from` の雛形) でこのディレクトリの `" + dataset + "` に"
         "書き出す. 検証用の分割は必ず作る. 画像の大きさがそろわないなら, "
@@ -1092,8 +1092,8 @@ def generate_readme(
         " (どちらもそろわないまま ML-EDA は書き出さない)"
         + (f". 入れた画像はこのディレクトリの `{raw}` に写した" if raw
            else ""),
-        "2. **モデルの作成** (ML-ModelControl, ML-CreateArchitecture): "
-        "ML-CreateArchitecture で組んだ定義を, config の `model.spec` の場所"
+        "2. **モデルの作成・選定** (ML-ModelControl): モデルの作成・選定の段階で組んだ定義を"
+        ", config の `model.spec` の場所"
         " (`models/model.yaml`) に保存する. 入力は雑音を加えた画像 ((バッチ, "
         "チャンネル, 高さ, 幅) の float32) と時刻 ((バッチ,) の int64. "
         "`dtype: int64` の入力を時刻とみなす) の 2 つ, 出力は画像と同じ形の"
@@ -1101,7 +1101,7 @@ def generate_readme(
         "が無いうちは, `train.py` の `PlaceholderModel` (印 TODO. 動くことを"
         "確かめるだけの小さなモデル) で学習する (config の "
         "`model.placeholder: true` がその目印)",
-        "3. **学習** (ML-Found, ML-Dashboard): `python train.py`. 画像は"
+        "3. **学習・評価** (ML-Found): `python train.py`. 画像は"
         "データセットの 0 から 1 の値のまま, 線形の雑音の予定 (config の "
         "`diffusion`) で雑音を加え, 加えた雑音を当てる (平均二乗誤差). "
         "重みの指数移動平均 (`trainer.ema.decay`. 既定 0.995) の重みで検証"
@@ -1116,15 +1116,15 @@ def generate_readme(
         "テスト用の分割があればテスト用の損失の `evaluations/`, 作った画像 "
         "8 件と見比べる検証用の本物の画像 4 件の見本 `samples/`). 損失と "
         "FID は今のやり方で数えられないので, 今のやり方とは比べない",
-        "4. **推論** (ML-Inference, ML-Provide): `model.spec` の場所に定義を"
+        "4. **推論** (ML-Inference): `model.spec` の場所に定義を"
         "置いて学習すると, `train.py` が学習の後に実験の中の `inference/` "
         "に雑音だけの推論の一式 (版 5. データセットを持たず, 件数と種で"
-        "画像を作る. 手順は学習と同じ雑音の予定の `ddim`) を作る. ML-Provide"
-        " でその `inference/` を登録し, 件数と種を渡すと画像が返る (値は"
+        "画像を作る. 手順は学習と同じ雑音の予定の `ddim`) を作る. 推論の段階でその"
+        " `inference/` を登録し, 件数と種を渡すと画像が返る (値は"
         "データセットと同じ 0 から 1 の尺度で, 外に出ることもある). 仮の"
         "モデル (`PlaceholderModel`) は定義が無いので一式を作らない",
-        "", "`train.py` の印 (TODO) の所 (モデルなど) は書き足す. 問題の"
-        "設定を変えたら, 書き出し直すか手で直す.", "",
+        "", "`train.py` の印 (TODO) の所 (モデルなど) は書き足す. 問題を"
+        "変えたら, 書き出し直すか手で直す.", "",
     ]
     text = "\n".join(lines)
 

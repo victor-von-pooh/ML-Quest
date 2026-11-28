@@ -202,7 +202,7 @@ def rank_encoding(
         encoding = None
         return encoding
 
-    # 問題の設定の手元のデータの読み方で読む (骨組みの LOADER と OPTIONS)
+    # 問題の手元のデータの読み方で読む (骨組みの LOADER と OPTIONS)
     path = Path(location).expanduser()
     if not path.is_file():
         raise FileNotFoundError(f"反応の表 {path} がありません")

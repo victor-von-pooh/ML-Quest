@@ -67,7 +67,7 @@ ROLE = "effect"
 OUTPUT = "effect"
 METHOD = $method
 
-# 元の表の読み方 (問題の設定の手元のデータの読み方. 推論の一式づくりが
+# 元の表の読み方 (問題の手元のデータの読み方. 推論の一式づくりが
 # ML-EDA の load_data に渡す. None は ML-EDA の推定)
 LOADER = $loader
 OPTIONS = $options
@@ -412,7 +412,7 @@ def check_config(cfg: Any) -> Optional[str]:
         message = ("config の price.max_change は 0 以上の数 (変える割合の"
                    "絶対値の上限) にしてください")
     elif "model" not in cfg:
-        message = ("config に model がありません. 問題の設定から書き出し直して"
+        message = ("config に model がありません. 問題から書き出し直して"
                    "ください")
 
     return message
@@ -545,7 +545,7 @@ def spec_file(
 
     # 写しが無ければ理由を知らせて, プロジェクトの定義
     experiment.logger.warning(
-        "モデルの定義を実験に写せなかったので, プロジェクトの定義から"
+        "モデルの定義を実験に写せなかったので, 学習のプロジェクトの定義から"
         "組み立てます (理由は source.yaml の model_spec の status)"
     )
     path = spec
@@ -679,8 +679,8 @@ def train_units(
     if spec is None:
         experiment.logger.info(
             f"モデルの定義 ({cfg.model.spec or '場所なし'}) が無いので, "
-            "仮のモデル (PlaceholderModel) で学習します. ML-CreateArchitecture"
-            " で組んだ定義をその場所に置くと, 定義のモデルで学習します"
+            "仮のモデル (PlaceholderModel) で学習します. モデルの作成・選定の段階で組んだ定義を"
+            "その場所に置くと, 定義のモデルで学習します"
         )
     model = make_model(splits["train"]["x"].shape[1], cfg, spec, base_dir,
                        scale)
@@ -1131,7 +1131,7 @@ def main() -> None:
                                    current[split], cfg)
               for split, part in splits.items()}
 
-    # 実験だけで見直すための問題の設定の写し (元の問題の設定の場所
+    # 実験だけで見直すための問題の設定の写し (元の問題の場所
     # origin も. モデルの定義の写しは ML-Found の start_experiment)
     run_dir = Path(experiment.run_dir)
     shutil.copy(PROJECT_DIR / "problem.yaml", run_dir / "problem.yaml")
@@ -1343,8 +1343,8 @@ def price_readme(
     price = stages["price"]
     decision = stages["inference"]["decision"]
     lines = [f"# {problem.get('name', '')}", "",
-             "ML-Quest の問題の設定 (`problem.yaml`) から書き出した, "
-             "ML-Found のプロジェクトの骨組み (試しに値段を変えた売れ行きの"
+             "ML-Quest で問題 (`problem.yaml`) から書き出した, "
+             "ML-Found の学習のプロジェクトの骨組み (試しに値段を変えた売れ行きの"
              "記録で, 値段を入れて売れた数を学び, 商品ごとに利益が最も大きい"
              "値段を選び, その評価と推論の段階が読む成果物を残す).", "",
              "## 課題から行動まで", ""]
@@ -1362,9 +1362,9 @@ def price_readme(
         "を入れる (config の `requires` の機能. 足りなければ学習の前に入れ方"
         "を示して止まる. ML-ModelControl と ML-Inference は定義を置くと"
         "使う).", "",
-        "1. **データの分析** (ML-EDA, ML-Fathom): ML-EDA の値段を変えた記録"
+        "1. **データの分析** (ML-EDA): ML-EDA の値段を変えた記録"
         "の表 (版 1 の `task: price`) を config の `data.dataset` の場所 "
-        f"(`{dataset}`) に書き出す. ML-Fathom の「問題の設定から始める」か, "
+        f"(`{dataset}`) に書き出す. データの分析の段階の「この問題から始める」か, "
         "ML-Quest の `recipe_from` のレシピの雛形で ML-EDA の "
         f"`export_dataset` を使う. 値段の列は `{price['price']}`, 売れた数の"
         f"列は `{price['units']}`, {cost}, {product}, 予測に使う列は "
@@ -1379,8 +1379,8 @@ def price_readme(
 
     # 2. モデル
     lines.append(
-        "2. **モデルの作成** (ML-ModelControl, ML-CreateArchitecture): "
-        "ML-CreateArchitecture で組んだ定義を, config の `model.spec` の"
+        "2. **モデルの作成・選定** (ML-ModelControl): モデルの作成・選定の段階で組んだ定義を"
+        ", config の `model.spec` の"
         "場所 (`models/model.yaml`) に保存する. 入力は行 `x` ((件数, 学習に"
         "使う列の数) の float32. 最後の列が前処理をかけた値段) の 1 つ, "
         "出力に売れた数の予測 `units` ((件数, 1). 売れた数のまま. 負に"
@@ -1395,7 +1395,7 @@ def price_readme(
     # 3. 学習と評価
     monitor = stages["training"]["monitor"]
     lines.append(
-        "3. **学習と評価** (ML-Found, ML-Dashboard): `python train.py`. "
+        "3. **学習・評価** (ML-Found): `python train.py`. "
         "売れた数と予測を, 学習用の行の売れた数の平均で割った値の二乗誤差を"
         "損失にして学び, "
         "検証のたびに検証用の行の売れた数の平均絶対誤差を `valid/mae` に"
@@ -1421,7 +1421,7 @@ def price_readme(
             else f"候補 {decision['candidates']}, 変える幅の上限 "
             f"{decision['max_change']}. config の `price`")
     lines += [
-        "4. **推論** (ML-Inference, ML-Provide): 学習の後に, 実験の値段の"
+        "4. **推論** (ML-Inference): 学習の後に, 実験の値段の"
         "決め方 `price_estimator.json`, 前処理のレシピの写し "
         "`price_recipe.yaml`, 学習した重みと写した定義から, ML-Inference "
         "の値段の一式を実験の `inference/` に作る (config の `data.source` "
@@ -1432,8 +1432,8 @@ def price_readme(
         "`{type: price, candidates, max_change}` は, ML-Inference の値段の"
         "一式が読む形). 選ぶ値段は見積もりで, 試しに値段を変えた記録を前提"
         "にする. 値段を変えた効き目は, 値段を試して確かめる",
-        "", "`train.py` の印 (TODO) の所 (モデル) は書き足す. 問題の設定を"
-        "変えたら, 書き出し直すか手で直す.", "",
+        "", "`train.py` の印 (TODO) の所 (モデル) は書き足す. 問題を変えた"
+        "ら, 書き出し直すか手で直す.", "",
     ]
     text = "\n".join(lines)
 

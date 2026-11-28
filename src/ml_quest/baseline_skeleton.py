@@ -150,8 +150,8 @@ def compare_baseline(
     if not DATA_FILE.exists():
         reason = f"{DATA_FILE} がありません"
     elif dataset.target != TARGET:
-        reason = (f"データセットの目的の列 {dataset.target} が問題の設定"
-                  f"の {TARGET} と違います")
+        reason = (f"データセットの目的の列 {dataset.target} が問題の "
+                  f"{TARGET} と違います")
     elif not dataset.features:
         reason = "学習に使う列が無いので, 元のデータの行とそろえられません"
     if reason:
@@ -594,10 +594,10 @@ def baseline_reason(
         reason = ("入れたデータが 1 件の中身で学ぶ画像, 文か音声で, データ"
                   "セットに学習に使う列が無く, 元のデータの同じ行が分からない")
     elif not isinstance(current, dict) or "type" not in current:
-        reason = ("問題の設定に今のやり方をデータで書いていない (今のやり方"
+        reason = ("問題に今のやり方をデータで書いていない (今のやり方"
                   "をデータで書く問い, action.current)")
     elif data_file is None:
-        reason = "問題の設定に手元のデータを入れていない"
+        reason = "問題に手元のデータを入れていない"
 
     # k 期前と平均は時刻の列と間隔, 分類は当たりのクラスと列
     elif current["type"] != "column" and (
@@ -857,7 +857,7 @@ def reported_code(problem: dict, literal: Callable, metric: str) -> str:
     # 相手の名前, 答えた値, 表の説明 (数え方と単位)
     name = active_value(problem, f"{PART}.baseline") or DEFAULT_NAME
     better = "大きい" if metric_better(metric) == "higher" else "小さい"
-    text = (f"{reported_label(problem)} の値は問題の設定で答えた値 ("
+    text = (f"{reported_label(problem)} の値は問題で答えた値 ("
             f"{PART}.evaluation.current) で, モデルの値はテスト用の分割で"
             f"求めた{METRIC_TITLES[metric]} ({REPORTED_METRICS[metric]})"
             f". 差 ({metric}_diff) はモデル"
@@ -894,7 +894,7 @@ def reported_sentence(problem: dict, metric: str) -> str:
     # 何と並べ, どう数え, どこに書き, どれだけ確かか
     value = reported_value(problem)
     sentence = (
-        "今のやり方とは同じ件で比べず, 問題の設定で答えた今のやり方での "
+        "今のやり方とは同じ件で比べず, 問題で答えた今のやり方での "
         f"`{metric}` の値 ({value:g}. `{PART}.evaluation.current`) と, "
         f"テスト用の分割のモデルの{METRIC_TITLES[metric]} ("
         f"{REPORTED_METRICS[metric]}) を評価の"
